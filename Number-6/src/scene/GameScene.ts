@@ -50,6 +50,7 @@ export default class GameScene extends Phaser.Scene {
       } catch {}
 
       this.playInstructionVoiceOnce();
+      this.playStageGuideOnce(this.stageOrder[this.stagePos] ?? 0);
     })();
   };
 
