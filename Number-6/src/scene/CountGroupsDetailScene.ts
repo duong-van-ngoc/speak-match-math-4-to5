@@ -80,6 +80,8 @@ export default class CountGroupsDetailScene extends Phaser.Scene {
   private readonly progressScoreTextBottomInsetRatio = 0.08;
   // Frame 97 score bar (Figma): width 750, height 100, rotation 90° => visual bbox is 100x750.
   private readonly progressBarDesign = { left: 297, top: 386, width: 100, height: 750 } as const;
+  // Manual tuning for the score bar position (screen px; positive dy = down).
+  private readonly progressBarOffsetPx = { dx: 0, dy: 54 } as const;
   // Increase perceived fill (tunable). 1.0 = linear; >1.0 fills faster.
   private readonly progressFillGain = 1.15;
 
@@ -390,8 +392,8 @@ export default class CountGroupsDetailScene extends Phaser.Scene {
     const pb = this.progressBarDesign;
     const pW = pb.width * pbScale;
     const pH = pb.height * pbScale;
-    const px = ox + (pb.left + pb.width / 2) * pbScale;
-    const py = oy + (pb.top + pb.height / 2) * pbScale;
+    const px = ox + (pb.left + pb.width / 2) * pbScale + this.progressBarOffsetPx.dx;
+    const py = oy + (pb.top + pb.height / 2) * pbScale + this.progressBarOffsetPx.dy;
     this.drawProgressBar(px, py, pW, pH);
 
     // Main vehicle card (centered within the board, leaving room for the progress bar)

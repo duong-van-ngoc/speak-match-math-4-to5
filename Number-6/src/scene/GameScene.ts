@@ -11,7 +11,7 @@ const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
 const AUDIO_UNLOCKED_EVENT = 'audio-unlocked';
 
 // ASSETS (keys only; loaded elsewhere)
-// - Voice: 'voice_join'
+// - Voice: 'voice_intro'
 
 type WindowGameApi = {
   setRandomGameViewportBg?: () => void;
@@ -31,6 +31,13 @@ export default class GameScene extends Phaser.Scene {
   private audioReady = false;
   private hasPlayedInstructionVoice = false;
   private playedStageGuides = new Set<number>();
+  private isRotateOverlayActive(): boolean {
+    try {
+      return (window as any).__rotateOverlayActive__ === true;
+    } catch {
+      return false;
+    }
+  }
 
   private readonly onAudioUnlocked = () => {
     (async () => {
@@ -43,7 +50,6 @@ export default class GameScene extends Phaser.Scene {
       } catch {}
 
       this.playInstructionVoiceOnce();
-      this.playStageGuideOnce(this.stageOrder[this.stagePos] ?? 0);
     })();
   };
 
@@ -118,10 +124,28 @@ export default class GameScene extends Phaser.Scene {
   private playInstructionVoiceOnce() {
     if (this.hasPlayedInstructionVoice) return;
     if (!this.audioReady) return;
+    if (this.isRotateOverlayActive()) return;
 
     this.hasPlayedInstructionVoice = true;
-    AudioManager.playWhenReady?.('voice_join');
-    this.input.once('pointerdown', () => AudioManager.stop('voice_join'));
+    // Stage 1 plays its own per-object prompt; replay it once after audio is unlocked.
+    const stageId = this.stageOrder[this.stagePos] ?? 0;
+    if (stageId === 0) {
+      try {
+        const s = this.scene.get('CountAndPaintScene') as any;
+        const idx = Number(s?.currentLevelIndex ?? 0) || 0;
+        const level = s?.levels?.[idx];
+        const objectKey = String(level?.objectKey ?? '');
+        if (objectKey) AudioManager.playStage1PaintPrompt(objectKey);
+      } catch {}
+      return;
+    }
+    if (stageId === 1) {
+      AudioManager.playVoiceInterrupt?.('voice_stage2_guide');
+      return;
+    }
+    if (stageId === 2) {
+      AudioManager.playVoiceInterrupt?.('voice_stage3_guide');
+    }
   }
 
   private playStageGuideOnce(stageId: number) {
@@ -218,7 +242,7 @@ export default class GameScene extends Phaser.Scene {
   private onStageDone() {
     const next = this.stagePos + 1;
     if (next < this.stageOrder.length) {
-      this.time.delayedCall(150, () => this.startStageSequence(next));
+      this.startStageSequence(next);
       return;
     }
     this.scene.start('EndGameScene', { total: 3 });

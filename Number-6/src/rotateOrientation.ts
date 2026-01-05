@@ -6,6 +6,25 @@ import { ensureBgmStarted } from "./main";
 let rotateOverlay: HTMLDivElement | null = null;
 let isRotateOverlayActive = false;
 let currentVoiceKey: string | null = null;
+let gameRef: Phaser.Game | null = null;
+let resumeVoiceSnapshot: { id: string; seek: number } | null = null;
+
+const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
+const AUDIO_UNLOCKED_EVENT = 'audio-unlocked';
+
+function unlockAudioFromOverlayGesture() {
+    try {
+        const win = window as unknown as Record<string, unknown>;
+        if (!win[AUDIO_UNLOCKED_KEY]) {
+            win[AUDIO_UNLOCKED_KEY] = true;
+            window.dispatchEvent(new Event(AUDIO_UNLOCKED_EVENT));
+        }
+    } catch {}
+
+    try {
+        void audioManager.unlockAndWarmup?.();
+    } catch {}
+}
 
 // chỉ attach 1 lần
 let globalBlockListenersAttached = false;
@@ -92,14 +111,11 @@ export function playVoiceLocked(
 
         currentVoiceKey = null;
 
-        const id = audioManager.play('voice_rotate');
-        if (id === undefined) {
-            console.warn(
-                `[Rotate] Không phát được audio key="voice_rotate" (Howler).`
-            );
-            return;
-        }
-
+        try {
+            audioManager.stopAllVoices?.();
+        } catch {}
+        // Interrupt any running voice and play rotate voice immediately.
+        audioManager.playVoiceInterrupt?.('voice_rotate');
         currentVoiceKey = 'voice_rotate';
         return;
     }
@@ -141,10 +157,16 @@ function attachGlobalBlockInputListeners() {
         }
         ev.preventDefault();
 
+        // Make sure audio is unlocked even though we stopPropagation() (so main.ts listeners may not fire).
+        unlockAudioFromOverlayGesture();
+
          // 2) LẦN ĐẦU bé chạm overlay -> bật BGM ở đây (gesture iOS cho phép)
         ensureBgmStarted();
         // 3) Gọi phát voice-rotate (đã có cooldown bên trong playVoiceLocked)
         try {
+            try {
+                audioManager.stopAllVoices?.();
+            } catch {}
             playVoiceLocked(null as any, 'voice_rotate');
         } catch (err) {
             console.warn(
@@ -233,6 +255,9 @@ function updateRotateHint() {
 
     const overlayWasActive = isRotateOverlayActive;
     isRotateOverlayActive = shouldShow;
+    try {
+        (window as any).__rotateOverlayActive__ = isRotateOverlayActive;
+    } catch {}
 
     const overlayTurnedOn = !overlayWasActive && shouldShow;
     const overlayTurnedOff = overlayWasActive && !shouldShow;
@@ -243,8 +268,16 @@ function updateRotateHint() {
     if (overlayTurnedOn) {
         try {
             // Khi đang ở màn dọc: chỉ phát voice_rotate, tạm dừng nhạc/intro nếu có
-            audioManager.stop('voice_intro');
-
+            try {
+                resumeVoiceSnapshot = audioManager.getActiveVoiceSnapshot?.() ?? null;
+            } catch {
+                resumeVoiceSnapshot = null;
+            }
+            try {
+                audioManager.stopAllVoices?.();
+            } catch {}
+            // Try to start BGM even in portrait (may still require a user gesture depending on browser policy).
+            ensureBgmStarted();
             playVoiceLocked(null as any, 'voice_rotate');
         } catch (e) {
             console.warn('[Rotate] auto play voice_rotate on overlay error:', e);
@@ -257,6 +290,45 @@ function updateRotateHint() {
             audioManager.stop('voice_rotate');
             currentVoiceKey = null;
         }
+        // Ensure BGM resumes after rotation.
+        ensureBgmStarted();
+
+        // Prefer resuming the interrupted guide voice (continue where it stopped).
+        try {
+            const snap = resumeVoiceSnapshot;
+            resumeVoiceSnapshot = null;
+            if (snap && audioManager.resumeVoiceSnapshot?.(snap)) {
+                return;
+            }
+        } catch {
+            resumeVoiceSnapshot = null;
+        }
+
+        // Stage 2 main screen: replay the whole "guide + choose item" flow after rotating to landscape.
+        try {
+            if (gameRef?.scene?.isActive?.('CountGroupsScene')) {
+                const s = gameRef.scene.getScene('CountGroupsScene') as any;
+                if (typeof s?.replayStage2GuideAndPrompt === 'function') {
+                    s.replayStage2GuideAndPrompt();
+                    return;
+                }
+            }
+        } catch {}
+
+        // If nothing was playing before rotate, play the current stage guide (voice-only UX).
+        // Stage 1: replay the current paint prompt (per object).
+        try {
+            if (gameRef?.scene?.isActive?.('CountAndPaintScene')) {
+                const s = gameRef.scene.getScene('CountAndPaintScene') as any;
+                const idx = Number(s?.currentLevelIndex ?? 0) || 0;
+                const level = s?.levels?.[idx];
+                const objectKey = String(level?.objectKey ?? '');
+                if (objectKey) {
+                    audioManager.playStage1PaintPrompt?.(objectKey);
+                    return;
+                }
+            }
+        } catch {}
 
         // Khi xoay ngang lại:
         // - Đánh dấu audio question đã được "unlock"
@@ -276,6 +348,28 @@ function updateRotateHint() {
                 '[Rotate] auto play question on rotate-off error:',
                 e
             );
+        }
+
+        // For Number-6: replay the current stage guide voice after rotating to landscape.
+        try {
+            const playGuide =
+                (window as any).playCurrentGuideVoice as
+                    | (() => void)
+                    | undefined;
+            if (typeof playGuide === 'function') {
+                playGuide();
+            } else if (gameRef) {
+                // Fall back to detecting the active Phaser scene.
+                if (gameRef.scene.isActive('CountGroupsDetailScene')) {
+                    audioManager.playVoiceInterrupt?.('voice_stage2_detail_enter');
+                } else if (gameRef.scene.isActive('CountGroupsScene')) {
+                    audioManager.playVoiceInterrupt?.('voice_stage2_guide');
+                } else if (gameRef.scene.isActive('ConnectSixScene')) {
+                    audioManager.playVoiceInterrupt?.('voice_stage3_guide');
+                }
+            }
+        } catch (e) {
+            console.warn('[Rotate] auto play guide on rotate-off error:', e);
         }
 
         // // Khi xoay ngang lại: bật lại BGM và intro (intro chỉ đọc 1 lần)
@@ -301,6 +395,7 @@ function updateRotateHint() {
  * Không cần truyền gì thêm. Đổi text / breakpoint → sửa rotateConfig ở trên.
  */
 export function initRotateOrientation(_game: Phaser.Game) {
+    gameRef = _game;
     ensureRotateOverlay();
     attachGlobalBlockInputListeners(); // chặn + replay khi overlay bật
     updateRotateHint();

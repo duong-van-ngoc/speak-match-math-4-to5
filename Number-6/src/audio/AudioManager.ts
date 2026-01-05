@@ -14,6 +14,8 @@ class AudioManager {
   private dynamicSources: Record<string, string> = {};
   private pendingReadyPlays: Record<string, boolean> = {};
   private sequenceToken = 0;
+  private voicePlayOrder = 0;
+  private voiceInstances: Record<string, Array<{ sid: number; order: number }>> = {};
 
   private unlocked = false;
   private unlocking = false;
@@ -26,6 +28,103 @@ class AudioManager {
 
   has(id: string): boolean {
     return !!this.sounds[id] || !!AUDIO_ASSETS[id] || !!this.dynamicSources[id];
+  }
+
+  private isRotateOverlayActive(): boolean {
+    try {
+      return (window as any).__rotateOverlayActive__ === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private shouldBlockWhileRotateOverlay(id: string): boolean {
+    if (!this.isRotateOverlayActive()) return false;
+    if (!this.isVoiceKey(id)) return false;
+    return id !== 'voice_rotate';
+  }
+
+  getActiveVoiceSnapshot(): { id: string; seek: number } | null {
+    let bestId: string | null = null;
+    let bestSeek = 0;
+    let bestOrder = -1;
+
+    for (const id of Object.keys(this.voiceInstances)) {
+      if (id === 'voice_rotate') continue;
+      const sound = this.sounds[id];
+      if (!sound) continue;
+
+      const inst = this.voiceInstances[id] ?? [];
+      for (const { sid, order } of inst) {
+        let playing = false;
+        try {
+          playing = !!(sound as any).playing?.(sid);
+        } catch {}
+        if (!playing) continue;
+
+        if (order <= bestOrder) continue;
+        bestOrder = order;
+        bestId = id;
+
+        try {
+          const v = (sound as any).seek?.(sid);
+          bestSeek = typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
+        } catch {
+          bestSeek = 0;
+        }
+      }
+    }
+
+    return bestId ? { id: bestId, seek: bestSeek } : null;
+  }
+
+  resumeVoiceSnapshot(snapshot: { id: string; seek: number } | null): boolean {
+    if (!snapshot) return false;
+    const id = snapshot.id;
+    if (!id) return false;
+    if (!this.isVoiceKey(id)) return false;
+    if (id === 'voice_rotate') return false;
+    if (this.unlocking) return false;
+    if (this.shouldBlockWhileRotateOverlay(id)) return false;
+
+    const sound = this.sounds[id];
+    if (!sound) return false;
+
+    const playFrom = () => {
+      try {
+        this.stopAllVoices();
+      } catch {}
+
+      let sid: number | undefined;
+      try {
+        sid = sound.play() as unknown as number;
+      } catch {
+        sid = undefined;
+      }
+      if (!sid) return;
+
+      try {
+        this.lastPlayTimes[id] = Date.now();
+      } catch {}
+
+      this.trackVoiceInstance(id, sid);
+      try {
+        (sound as any).seek?.(snapshot.seek ?? 0, sid);
+      } catch {}
+    };
+
+    const state = (sound as any).state?.() as 'unloaded' | 'loading' | 'loaded' | undefined;
+    if (!state || state === 'loaded') {
+      playFrom();
+      return true;
+    }
+
+    try {
+      sound.off('load');
+      sound.once('load', () => playFrom());
+      if (state === 'unloaded') sound.load();
+    } catch {}
+    return true;
   }
 
   loadAll(): Promise<void> {
@@ -66,7 +165,7 @@ class AudioManager {
   }
 
   async unlockAndWarmup(
-    ids: string[] = ['sfx_click', 'sfx_correct', 'sfx_wrong', 'voice_stage3_guide', 'voice_stage2_guide', 'voice_join']
+    ids: string[] = ['sfx_click', 'sfx_correct', 'sfx_wrong', 'voice_stage3_guide', 'voice_stage2_guide', 'voice_intro']
   ) {
     if (this.unlocked || this.unlocking) return;
     this.unlocking = true;
@@ -157,6 +256,7 @@ class AudioManager {
 
   async playAndWait(id: string, opts?: { timeoutMs?: number }): Promise<boolean> {
     if (this.unlocking) return false;
+    if (this.shouldBlockWhileRotateOverlay(id)) return false;
 
     const sound = this.sounds[id];
     if (!sound) {
@@ -222,6 +322,7 @@ class AudioManager {
 
   play(id: string): number | undefined {
     if (this.unlocking) return;
+    if (this.shouldBlockWhileRotateOverlay(id)) return;
 
     const now = Date.now();
     const cooldown = this.getCooldown(id);
@@ -249,6 +350,7 @@ class AudioManager {
 
   playWhenReady(id: string): void {
     if (this.unlocking) return;
+    if (this.shouldBlockWhileRotateOverlay(id)) return;
 
     const sound = this.sounds[id];
     if (!sound) {
@@ -317,11 +419,39 @@ class AudioManager {
     }
 
     this.lastPlayTimes[id] = now;
-    return sound.play();
+    const sid = sound.play() as unknown as number | undefined;
+    this.trackVoiceInstance(id, sid);
+    return sid;
   }
 
   private isVoiceKey(id: string) {
     return id.startsWith('voice_') || id.startsWith('correct_answer_') || id.startsWith('prompt_');
+  }
+
+  private trackVoiceInstance(id: string, sid: number | undefined) {
+    if (!sid) return;
+    if (!this.isVoiceKey(id)) return;
+    const sound = this.sounds[id];
+    if (!sound) return;
+
+    const entry = { sid, order: ++this.voicePlayOrder };
+    (this.voiceInstances[id] ??= []).push(entry);
+
+    const cleanup = () => {
+      const list = this.voiceInstances[id];
+      if (!list) return;
+      const next = list.filter((x) => x.sid !== sid);
+      if (next.length === 0) {
+        delete this.voiceInstances[id];
+      } else {
+        this.voiceInstances[id] = next;
+      }
+    };
+
+    try {
+      sound.once('end', cleanup, sid as any);
+      sound.once('stop', cleanup, sid as any);
+    } catch {}
   }
 
   private cancelPendingVoicePlays(): void {
@@ -344,6 +474,7 @@ class AudioManager {
     if (!id) return;
     if (!this.has(id)) return;
     if (this.unlocking) return;
+    if (this.shouldBlockWhileRotateOverlay(id)) return;
 
     this.cancelPendingVoicePlays();
     this.stopAllVoices();
@@ -354,6 +485,7 @@ class AudioManager {
     if (!id) return Promise.resolve(false);
     if (!this.has(id)) return Promise.resolve(false);
     if (this.unlocking) return Promise.resolve(false);
+    if (this.shouldBlockWhileRotateOverlay(id)) return Promise.resolve(false);
 
     this.cancelPendingVoicePlays();
     this.stopAllVoices();
@@ -400,6 +532,7 @@ class AudioManager {
   stopAllVoices(): void {
     this.stopByPrefixes(['voice_', 'correct_answer_', 'prompt_']);
     this.cancelPendingVoicePlays();
+    this.voiceInstances = {};
   }
 
   playCorrectAnswer(): void {

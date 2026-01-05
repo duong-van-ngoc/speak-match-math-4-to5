@@ -12,11 +12,11 @@ export default class PreloadScene extends Phaser.Scene {
 
     // ===== UI & Banner (CŨ) =====
     this.load.image('banner_question', 'assets/button/Rectangle 1.png');
-    this.load.image('answer_correct', 'assets/button/V.png');
-    this.load.image('answer_wrong', 'assets/button/X.png');
+    // this.load.image('answer_correct', 'assets/button/V.png');
+    // this.load.image('answer_wrong', 'assets/button/X.png');
     this.load.image('btn_next', 'assets/button/next.png');
-    this.load.image('answer_default', 'assets/button/Ellipse 17.png');
-    // this.load.image('btn_primary_pressed', 'assets/button/HTU.png');
+    // this.load.image('answer_default', 'assets/button/Ellipse 17.png');
+    this.load.image('btn_primary_pressed', 'assets/button/HTU.png');
     this.load.image('btn_replay', 'assets/button/replay.png');
     this.load.image('next_end', 'assets/button/next_end.png');
     // Line asset for connect game
@@ -95,9 +95,9 @@ export default class PreloadScene extends Phaser.Scene {
 
     // --- Pick X + result badges (UI mới GameScene) ---
     // GameScene dùng key: pick_x, result_correct, result_wrong
-    this.load.image('pick_x', 'assets/button/X.png');                   
-    this.load.image('result_correct', 'assets/button/image 86.png');   
-    this.load.image('result_wrong', 'assets/button/image 77.png');       
+    // this.load.image('pick_x', 'assets/button/X.png');                   
+    // this.load.image('result_correct', 'assets/button/image 86.png');   
+    // this.load.image('result_wrong', 'assets/button/image 77.png');       
 
     // --- BalanceScene corner char (góc dưới-trái BalanceScene) ---
     // BalanceScene dùng key: 'char'

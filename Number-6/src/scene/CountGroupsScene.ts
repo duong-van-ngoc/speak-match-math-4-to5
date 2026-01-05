@@ -63,6 +63,22 @@ export default class CountGroupsScene extends Phaser.Scene {
         super('CountGroupsScene');
     }
 
+    // Called by rotateOrientation.ts when rotating from portrait -> landscape on stage 2 main screen.
+    public replayStage2GuideAndPrompt() {
+        if (!(this.scene as any)?.isActive?.()) return;
+        void (async () => {
+        try {
+            if (AudioManager.has('voice_stage2_guide')) {
+            await AudioManager.playVoiceInterruptAndWait?.('voice_stage2_guide', { timeoutMs: 8000 });
+            }
+        } catch {}
+        if (!this.scene.isActive()) return;
+        const next = this.getNextStage2Target();
+        if (!next) return;
+        this.showHintAt(next);
+        })();
+    }
+
     init() {
         // Scene instance can be reused across replays; reset one-time flags.
         this.stage2IntroPlayed = false;

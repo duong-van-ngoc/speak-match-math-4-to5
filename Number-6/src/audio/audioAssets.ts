@@ -23,7 +23,6 @@ export const AUDIO_ASSETS: Record<string, AudioAssetConfig> = {
   bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.1, html5: false },
 
   complete: { src: `${BASE_PATH}vic_sound.mp3`, cooldownMs: 1500 },
-  voice_intro: { src: `${BASE_PATH}voice_intro.mp3`, cooldownMs: 3000 },
   voice_need_finish: { src: `${BASE_PATH}voice_need_finish.mp3` },
   voice_end: { src: `${BASE_PATH}voice_end.mp3` },
   finish: { src: `${BASE_PATH}finish.mp3` },
