@@ -1,10 +1,8 @@
 import Phaser from 'phaser';
 import AudioManager from '../audio/AudioManager';
-import CountGroupsScene from './CountGroupsScene';
-import ConnectSixScene from './ConnectSixScene';
 import { COUNT_AND_PAINT_COMPLETE_EVENT, CountAndPaintScene } from './QuantityScene';
-import { CONNECT_SIX_ASSET_KEYS } from '../assets/assetKeys';
 import { getReplayMode } from '../config/replayMode';
+import { sdk, game } from '../main';
 
 /* ===================== AUDIO GLOBAL FLAG ===================== */
 const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
@@ -23,14 +21,11 @@ export default class GameScene extends Phaser.Scene {
   public levelIndex = 0;
   // Total randomizable "levels" for replay: reuse CountAndPaintScene's internal levels count (currently 5).
   public readonly totalLevels = 5;
-  private startStage = 0; // 0: Count&Paint, 1: CountGroups, 2: ConnectSix
-  private stageOrder: number[] = [0, 1, 2];
+  private stageOrder: number[] = [0];
   private stagePos = 0;
-  private connectSixStart = 0;
 
   private audioReady = false;
   private hasPlayedInstructionVoice = false;
-  private playedStageGuides = new Set<number>();
   private isRotateOverlayActive(): boolean {
     try {
       return (window as any).__rotateOverlayActive__ === true;
@@ -50,7 +45,6 @@ export default class GameScene extends Phaser.Scene {
       } catch {}
 
       this.playInstructionVoiceOnce();
-      this.playStageGuideOnce(this.stageOrder[this.stagePos] ?? 0);
     })();
   };
 
@@ -61,7 +55,6 @@ export default class GameScene extends Phaser.Scene {
   init(data: { score?: number }) {
     this.score = data.score ?? 0;
     this.hasPlayedInstructionVoice = false;
-    this.playedStageGuides = new Set();
     this.stagePos = 0;
     const replayMode = getReplayMode();
     // Allow replay button to randomize a "level" pack.
@@ -73,23 +66,8 @@ export default class GameScene extends Phaser.Scene {
         : replayMode === 'debug'
           ? Phaser.Math.Between(0, max - 1)
           : 0;
-
-    const sStart = (data as any)?.startStage;
-    this.startStage =
-      typeof sStart === 'number' && Number.isFinite(sStart)
-        ? Math.max(0, Math.min(2, Math.floor(sStart)))
-        : replayMode === 'debug'
-          ? Phaser.Math.Between(0, 2)
-          : 0;
-    this.stageOrder = replayMode === 'debug' ? this.buildCyclicOrder(3, this.startStage) : [0, 1, 2];
-
-    const cStart = (data as any)?.connectSixStart;
-    this.connectSixStart =
-      typeof cStart === 'number' && Number.isFinite(cStart)
-        ? Math.max(0, Math.min(2, cStart))
-        : replayMode === 'debug'
-          ? Phaser.Math.Between(0, 2)
-          : 0;
+    // Only Stage 1 (Count&Paint) is used in this game variant.
+    this.stageOrder = [0];
 
     const win = window as unknown as Record<string, unknown>;
     this.audioReady = !!win[AUDIO_UNLOCKED_KEY];
@@ -115,6 +93,16 @@ export default class GameScene extends Phaser.Scene {
     this.playInstructionVoiceOnce();
 
     this.ensureMiniGameScenesAdded();
+    // Khởi tạo trạng thái lưu điểm cho SDK
+    (window as any).irukaGameState = {
+      startTime: Date.now(),
+      currentScore: 0,
+    };
+    // Khởi tạo tổng số level cho SDK
+    game.setTotal(this.totalLevels);
+    sdk.score(this.score, 0);
+    sdk.progress({ levelIndex: this.levelIndex, total: this.totalLevels });
+
     this.startStageSequence(0);
   }
 
@@ -140,43 +128,12 @@ export default class GameScene extends Phaser.Scene {
       } catch {}
       return;
     }
-    if (stageId === 1) {
-      AudioManager.playVoiceInterrupt?.('voice_stage2_guide');
-      return;
-    }
-    if (stageId === 2) {
-      AudioManager.playVoiceInterrupt?.('voice_stage3_guide');
-    }
-  }
-
-  private playStageGuideOnce(stageId: number) {
-    if (!this.audioReady) return;
-    if (this.playedStageGuides.has(stageId)) return;
-    if (stageId !== 0 && stageId !== 1 && stageId !== 2) return;
-    // Stage 1/2 have their own per-level/per-item audio prompts.
-    if (stageId === 0 || stageId === 1) return;
-    this.playedStageGuides.add(stageId);
-    try {
-      AudioManager.playStageGuide(stageId);
-    } catch {}
   }
 
   private ensureMiniGameScenesAdded() {
     try {
       if (!this.scene.get('CountAndPaintScene')) {
         this.scene.add('CountAndPaintScene', CountAndPaintScene, false);
-      }
-    } catch {}
-
-    try {
-      if (!this.scene.get('CountGroupsScene')) {
-        this.scene.add('CountGroupsScene', CountGroupsScene, false);
-      }
-    } catch {}
-
-    try {
-      if (!this.scene.get('ConnectSixScene')) {
-        this.scene.add('ConnectSixScene', ConnectSixScene, false);
       }
     } catch {}
   }
@@ -216,28 +173,6 @@ export default class GameScene extends Phaser.Scene {
       this.scene.bringToTop('CountAndPaintScene');
       return;
     }
-
-    if (stageId === 1) {
-      this.scene.launch('CountGroupsScene', { score: this.score });
-      this.scene.bringToTop('CountGroupsScene');
-
-      const countGroups = this.scene.get('CountGroupsScene');
-      countGroups.events.off('minigame:done');
-      countGroups.events.once('minigame:done', () => {
-        try {
-          this.scene.stop('CountGroupsDetailScene');
-        } catch {}
-        try {
-          this.scene.stop('CountGroupsScene');
-        } catch {}
-        this.onStageDone();
-      });
-      return;
-    }
-
-    // stageId === 2 (ConnectSix)
-    this.playStageGuideOnce(2);
-    this.runConnectSixOnce(() => this.onStageDone());
   }
 
   private onStageDone() {
@@ -246,28 +181,9 @@ export default class GameScene extends Phaser.Scene {
       this.startStageSequence(next);
       return;
     }
-    this.scene.start('EndGameScene', { total: 3 });
-  }
-
-  private runConnectSixOnce(onDone: (() => void) | undefined) {
-    const pack = this.getConnectSixPack(this.connectSixStart);
-
-    try {
-      this.scene.stop('ConnectSixScene');
-    } catch {}
-
-    this.scene.launch('ConnectSixScene', { pack });
-    this.scene.bringToTop('ConnectSixScene');
-
-    const connectSix = this.scene.get('ConnectSixScene');
-    connectSix.events.off('minigame:done');
-    connectSix.events.once('minigame:done', () => {
-      try {
-        this.scene.stop('ConnectSixScene');
-      } catch {}
-
-      onDone?.();
-    });
+    // Khi hoàn thành stage, gửi thông tin hoàn thành cho SDK
+    game.finalizeAttempt();
+    this.scene.start('EndGameScene', { total: this.totalLevels, score: this.score });
   }
 
   private buildCyclicOrder(count: number, startIndex: number) {
@@ -276,18 +192,5 @@ export default class GameScene extends Phaser.Scene {
     const out: number[] = [];
     for (let i = 0; i < n; i++) out.push((start + i) % n);
     return out;
-  }
-
-  private getConnectSixPack(levelIndex: number) {
-    void levelIndex;
-    // ConnectSix chỉ có 1 pack: 6 xe máy, 6 thuyền, 5 xe đạp, 4 máy bay.
-    return {
-      groups: [
-        { id: 'scooters', label: 'xe máy', count: 6, spriteKey: CONNECT_SIX_ASSET_KEYS.groupScooters6, x: 260, y: 170, cols: 3 },
-        { id: 'boats', label: 'thuyền', count: 6, spriteKey: CONNECT_SIX_ASSET_KEYS.groupBoats6, x: 1020, y: 170, cols: 3 },
-        { id: 'bikes', label: 'xe đạp', count: 5, spriteKey: CONNECT_SIX_ASSET_KEYS.groupBikes5, x: 260, y: 560, cols: 3 },
-        { id: 'helis', label: 'máy bay', count: 4, spriteKey: CONNECT_SIX_ASSET_KEYS.groupHelis4, x: 1020, y: 560, cols: 2 },
-      ],
-    };
   }
 }

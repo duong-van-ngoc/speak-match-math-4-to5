@@ -24,7 +24,7 @@ export function getReplayMode(): ReplayMode {
   } catch {}
 
   // Default: strict (debug/test must be explicitly enabled via query/localStorage)
-  return 'strict';
+  return 'debug';
 }
 
 export function setReplayMode(mode: ReplayMode) {

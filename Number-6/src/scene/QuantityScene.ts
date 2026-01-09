@@ -173,6 +173,16 @@ export class CountAndPaintScene extends Phaser.Scene {
     private autoCheckScheduled = false;
     private hasPaintedSinceLastRelease = false;
 
+    private hintHand?: Phaser.GameObjects.Image;
+    private hintHandTween?: Phaser.Tweens.Tween;
+    private hintHandTimer?: Phaser.Time.TimerEvent;
+    private hasShownIntroHintHand = false;
+    private readonly hintHandKey = 'hand_hint';
+    private readonly hintHandDelayMs = 2800;
+    private readonly hintHandBaseScale = 0.42;
+    // Match other stages' hand hint placement (slightly offset from target).
+    private readonly hintHandOffset = { x: 40, y: 40 };
+
     constructor() {
         super('CountAndPaintScene');
         }
@@ -197,6 +207,7 @@ export class CountAndPaintScene extends Phaser.Scene {
 
         this.levelOrderPos = 0;
         this.currentLevelIndex = this.levelOrder[0] ?? 0;
+        this.hasShownIntroHintHand = false;
     }
 
     create() {
@@ -206,6 +217,7 @@ export class CountAndPaintScene extends Phaser.Scene {
 
         this.ensurePlaceholderTextures();
         this.createBoard();
+        this.createHintHand();
         // Banner like Arrange High/Low (optional assets; safe no-op if missing).
         createTopBanner(
         this,
@@ -222,12 +234,16 @@ export class CountAndPaintScene extends Phaser.Scene {
     this.layoutUi();
     // Start from the requested/randomized level index (set in init()).
     this.showLevel(this.currentLevelIndex);
+    this.scheduleHintHand();
+    // Extra safety: ensure the hint appears right after entering the game.
+    this.time.delayedCall(120, () => this.maybeShowIntroHintHand());
 
     const maybeCheckOnRelease = () => {
         if (this.state !== 'playing') return;
         if (!this.hasPaintedSinceLastRelease) return;
         this.hasPaintedSinceLastRelease = false;
         this.maybeScheduleAutoCheck();
+        this.scheduleHintHand();
     };
 
     this.input.on('pointerup', maybeCheckOnRelease);
@@ -237,6 +253,12 @@ export class CountAndPaintScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
         this.input.off('pointerup', maybeCheckOnRelease);
         this.input.off('pointerupoutside', maybeCheckOnRelease);
+        this.clearHintHandTimer();
+        this.hideHintHand();
+        try {
+          this.hintHand?.destroy();
+        } catch {}
+        this.hintHand = undefined;
     });
     }
 
@@ -247,6 +269,8 @@ export class CountAndPaintScene extends Phaser.Scene {
         this.state = 'playing';
         this.autoCheckScheduled = false;
         this.hasPaintedSinceLastRelease = false;
+        this.hideHintHand();
+        this.clearHintHandTimer();
 
         const level = this.levels[this.currentLevelIndex];
         this.drawObjects(level);
@@ -254,6 +278,8 @@ export class CountAndPaintScene extends Phaser.Scene {
         try {
           AudioManager.playStage1PaintPrompt(level.objectKey);
         } catch {}
+        this.maybeShowIntroHintHand();
+        this.scheduleHintHand();
     }
 
         private nextLevel() {
@@ -504,6 +530,8 @@ export class CountAndPaintScene extends Phaser.Scene {
 
                 circle.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
                     if (this.state !== 'playing') return;
+                    this.hideHintHand();
+                    this.clearHintHandTimer();
                     // Cho phép chạm vào vòng đã tô để xóa (bé có thể sửa “tô quá” mà không cần reset tất cả).
                     if (circle.getData('isFilled')) {
                         this.clearFilledCircle(circle);
@@ -527,6 +555,9 @@ export class CountAndPaintScene extends Phaser.Scene {
                 const paintGfx = circle.getData('paintGfx') as Phaser.GameObjects.Graphics;
                 if (!paintGfx) return;
                 if (circle.getData('isFilled')) return;
+                // Once the child starts painting, hide the hint hand immediately.
+                this.hideHintHand();
+                this.clearHintHandTimer();
 
                 const dx = pointer.worldX - circle.x;
                 const dy = pointer.worldY - circle.y;
@@ -611,6 +642,91 @@ export class CountAndPaintScene extends Phaser.Scene {
 
             // Xem thao tác xóa như một “thay đổi” để auto-check khi thả tay.
             this.hasPaintedSinceLastRelease = true;
+            this.scheduleHintHand();
+        }
+
+        private getUiScale() {
+            return Math.min(this.scale.width / 1280, this.scale.height / 720);
+        }
+
+        private createHintHand() {
+            if (this.hintHand) return;
+            if (!this.textures.exists(this.hintHandKey)) return;
+            this.hintHand = this.add.image(0, 0, this.hintHandKey).setDepth(20).setVisible(false);
+            this.hintHand.setOrigin(0.5, 0.5);
+        }
+
+        private clearHintHandTimer() {
+            if (!this.hintHandTimer) return;
+            try {
+                this.hintHandTimer.remove(false);
+            } catch {}
+            this.hintHandTimer = undefined;
+        }
+
+        private hideHintHand() {
+            try {
+                this.hintHandTween?.stop();
+            } catch {}
+            this.hintHandTween = undefined;
+            this.hintHand?.setVisible(false);
+        }
+
+        private getNextHintCircle(): Phaser.GameObjects.Image | undefined {
+            for (const c of this.circleSprites) {
+                if (!c.getData('isFilled')) return c;
+            }
+            return this.circleSprites[0];
+        }
+
+        private scheduleHintHand() {
+            if (!this.scene.isActive()) return;
+            if (this.state !== 'playing') return;
+            if (!this.hintHand) return;
+            // If the hint is already visible/animating, keep it.
+            if (this.hintHand.visible) return;
+
+            this.clearHintHandTimer();
+            this.hintHandTimer = this.time.delayedCall(this.hintHandDelayMs, () => {
+                if (!this.scene.isActive()) return;
+                if (this.state !== 'playing') return;
+                void this.showHintHandNow();
+            });
+        }
+
+        private maybeShowIntroHintHand() {
+            if (this.hasShownIntroHintHand) return;
+            if (!this.scene.isActive()) return;
+            if (this.state !== 'playing') return;
+            if (!this.hintHand) return;
+
+            // Show immediately when entering stage 1.
+            if (this.showHintHandNow()) this.hasShownIntroHintHand = true;
+        }
+
+        private showHintHandNow(): boolean {
+            if (!this.hintHand) return false;
+            const target = this.getNextHintCircle();
+            if (!target) return false;
+
+            const k = this.getUiScale();
+            const baseScale = this.hintHandBaseScale * k;
+            this.hintHand.setScale(baseScale);
+            this.hintHand.setPosition(target.x + this.hintHandOffset.x * k, target.y + this.hintHandOffset.y * k);
+            this.hintHand.setVisible(true);
+
+            try {
+                this.hintHandTween?.stop();
+            } catch {}
+            this.hintHandTween = this.tweens.add({
+                targets: this.hintHand,
+                scale: baseScale * 1.06,
+                duration: 260,
+                yoyo: true,
+                repeat: -1,
+                ease: 'Sine.easeInOut',
+            });
+            return true;
         }
 
         private maybeScheduleAutoCheck() {
@@ -888,6 +1004,17 @@ export class CountAndPaintScene extends Phaser.Scene {
                 createRect(COUNT_AND_PAINT_ASSET_KEYS.airplane, 0xfbbf24);
                 createRect(COUNT_AND_PAINT_ASSET_KEYS.boat, 0x38bdf8);
                 createRect(COUNT_AND_PAINT_ASSET_KEYS.scooter, 0x34d399);
+
+            if (!this.textures.exists(this.hintHandKey)) {
+            // Hint hand fallback (should not happen if PreloadScene loaded assets/icon/hand.png).
+            const g = this.make.graphics({ x: 0, y: 0 }, false);
+            g.fillStyle(0xfbbf24, 1);
+            g.fillRoundedRect(0, 0, 120, 120, 28);
+            g.lineStyle(6, 0xffffff, 0.9);
+            g.strokeRoundedRect(8, 8, 104, 104, 24);
+            g.generateTexture(this.hintHandKey, 120, 120);
+            g.destroy();
+            }
 
             if (!this.textures.exists(COUNT_AND_PAINT_ASSET_KEYS.circleEmpty)) {
             // UI vòng tròn: 128x128, viền 3px, màu #0A6080 (theo thiết kế)

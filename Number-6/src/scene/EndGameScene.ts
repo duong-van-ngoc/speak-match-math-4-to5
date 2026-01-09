@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import AudioManager from "../audio/AudioManager";
 import { ensureBgmStarted } from "../main";
 import { buildReplayStartData, getReplayMode } from "../config/replayMode";
+import { sdk, game } from "../main";
 
 function hideGameButtons() {
     (window as any).setGameButtonsVisible?.(false);
@@ -104,6 +105,8 @@ export default class EndGameScene extends Phaser.Scene {
             AudioManager.play("sfx_click");
             this.clearDimBackground();
             this.stopConfetti();
+            // Gửi số lần chơi lại cho SDK
+            game.retryFromStart();
             this.scene.stop('EndGameScene');
             const mode = getReplayMode();
             const data = buildReplayStartData({ mode });
@@ -125,24 +128,12 @@ export default class EndGameScene extends Phaser.Scene {
             AudioManager.play("sfx_click");
             this.clearDimBackground();
             this.stopConfetti();
+            // Gửi hoàn thành cho SDK khi thoát
+            sdk.complete({
+                timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+                extras: { reason: "user_exit", stats: game.prepareSubmitData() },
+            });
             this.scene.start('LessonSelectScene');
-            const host = (window as any).irukaHost;
-            const state = (window as any).irukaGameState || {};
-            if (host && typeof host.complete === 'function') {
-                const timeMs = state.startTime
-                    ? Date.now() - state.startTime
-                    : 0;
-                const score = state.currentScore || 0;
-                host.complete({
-                    score,
-                    timeMs,
-                    extras: {
-                        reason: 'user_exit',
-                    },
-                });
-            } else {
-                this.scene.start('LessonSelectScene');
-            }
         });
 
         [replayBtn, exitBtn].forEach((btn) => {

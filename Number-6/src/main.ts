@@ -7,6 +7,75 @@ import { initRotateOrientation } from "./rotateOrientation";
 import PreloadScene from "./scene/PreloadScene";
 import { buildReplayStartData, getReplayMode } from "./config/replayMode";
 
+// ================== TÍCH HỢP SDK GAMEHUB ==================
+import { game as hubGame } from "@iruka-edu/mini-game-sdk";
+export const game = hubGame;
+
+let phaserGame: Phaser.Game | null = null;
+
+function applyResize(width: number, height: number) {
+    const gameDiv = document.getElementById('game-container');
+    if (gameDiv) {
+        gameDiv.style.width = `${width}px`;
+        gameDiv.style.height = `${height}px`;
+    }
+    // Phaser Scale FIT: gọi resize để canvas update
+    phaserGame?.scale.resize(width, height);
+}
+
+function broadcastSetState(payload: any) {
+    // chuyển xuống scene đang chạy để bạn route helper (audio/score/timer/result...)
+    const scene = phaserGame?.scene.getScenes(true)[0] as any;
+    scene?.applyHubState?.(payload);
+}
+
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+  // fallback: origin của referrer (hub)
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch {}
+  return "*"; // nếu protocol của bạn bắt buộc origin cụ thể thì KHÔNG dùng "*"
+}
+
+export const sdk = game.createGameSdk({
+  hubOrigin: getHubOrigin(),
+  onInit(_ctx: unknown) {
+    // reset stats session nếu bạn muốn
+    // game.resetAll(); hoặc statsCore.resetAll()
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+    });
+  },
+  onStart() {
+    phaserGame?.scene.resume("GameScene");
+    phaserGame?.scene.resume("EndGameScene");
+  },
+  onPause() {
+    phaserGame?.scene.pause("GameScene");
+  },
+  onResume() {
+    phaserGame?.scene.resume("GameScene");
+  },
+  onResize(size: { width: number; height: number }) {
+    applyResize(size.width, size.height);
+  },
+  onSetState(state: unknown) {
+    broadcastSetState(state);
+  },
+  onQuit() {
+    // QUIT: chốt attempt là quit + gửi complete
+    game.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: game.prepareSubmitData() },
+    });
+  },
+});
+
 const AUDIO_UNLOCKED_KEY = "__audioUnlocked__";
 const AUDIO_UNLOCKED_EVENT = "audio-unlocked";
 
@@ -143,7 +212,8 @@ if (container instanceof HTMLDivElement) {
 }
 
 // Giữ tham chiếu game để tránh tạo nhiều lần (HMR, reload…)
-let game: Phaser.Game | null = null;
+// NOTE: this is the Phaser game instance (do NOT confuse with hub `game` from SDK above).
+let gameInstance: Phaser.Game | null = null;
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 
@@ -209,7 +279,7 @@ function setupHtmlButtons() {
   const replayBtn = document.getElementById("btn-replay");
   if (replayBtn) {
     replayBtn.addEventListener("click", () => {
-      if (!game) return;
+      if (!gameInstance) return;
 
       // Unlock audio ngay trên thao tác click DOM.
       unlockAudioFromUserGesture();
@@ -222,15 +292,15 @@ function setupHtmlButtons() {
       // - debug: randomize start stage/pack to test quickly
       const stopSafe = (key: string) => {
         try {
-          if (game?.scene?.isActive(key) || game?.scene?.isSleeping(key) || game?.scene?.isPaused(key)) {
-            game?.scene?.stop(key);
+          if (gameInstance?.scene?.isActive(key) || gameInstance?.scene?.isSleeping(key) || gameInstance?.scene?.isPaused(key)) {
+            gameInstance?.scene?.stop(key);
           }
         } catch {}
       };
 
       const gs = ((): GameScene | null => {
         try {
-          return game.scene.getScene("GameScene") as GameScene;
+          return gameInstance.scene.getScene("GameScene") as GameScene;
         } catch {
           return null;
         }
@@ -246,7 +316,7 @@ function setupHtmlButtons() {
       stopSafe("CountAndPaintScene");
       stopSafe("GameScene");
 
-      game.scene.start("GameScene", data);
+      gameInstance.scene.start("GameScene", data);
       ensureBgmStarted();
     });
   }
@@ -304,10 +374,11 @@ async function initGame() {
   // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
   // setupGlobalBgm();
 
-  if (!game) {
+  if (!gameInstance) {
     // setRandomIntroViewportBg();
-    game = new Phaser.Game(config);
-    initRotateOrientation(game); 
+    gameInstance = new Phaser.Game(config);
+    phaserGame = gameInstance;
+    initRotateOrientation(gameInstance); 
     setupHtmlButtons();
   }
 
