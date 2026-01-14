@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import AudioManager from './AudioManager';
+import { sdk } from './main';
+import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
 
 /* ===================== AUDIO GLOBAL FLAG ===================== */
 const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
@@ -165,19 +167,18 @@ export default class GameScene extends Phaser.Scene {
     } catch {}
   }
   private readonly onAudioUnlocked = () => {
-    (async () => {
-      const win = window as unknown as Record<string, unknown>;
-      win[AUDIO_UNLOCKED_KEY] = true;
-      this.audioReady = true;
+    const win = window as unknown as Record<string, unknown>;
+    win[AUDIO_UNLOCKED_KEY] = true;
+    this.audioReady = true;
 
-      try {
-        await AudioManager.unlockAndWarmup?.();
-      } catch {}
+    // Không await để nhạc nền và voice có thể bắt đầu cùng lúc.
+    try {
+      void AudioManager.unlockAndWarmup?.();
+    } catch {}
 
-      // Khi vừa unlock lần đầu, phát voice hướng dẫn ngay (nếu chưa phát).
-      this.consumePendingInstructionVoice();
-      this.playInstructionVoice();
-    })();
+    // Khi vừa unlock lần đầu, phát voice hướng dẫn ngay (nếu chưa phát).
+    this.consumePendingInstructionVoice();
+    this.playInstructionVoice();
   };
 
   constructor() {
@@ -198,11 +199,61 @@ export default class GameScene extends Phaser.Scene {
     this.gameState = 'INTRO';
     this.cancelGuideHandSchedule();
     this.destroyGuideHand();
+
+    // SDK: set tổng số câu hỏi (ví dụ 4 cặp cần nối)
+    irukaGame.setTotal(4);
+    // Khởi tạo trạng thái game cho SDK
+    (window as any).irukaGameState = {
+      startTime: Date.now(),
+      currentScore: this.score,
+    };
+    sdk.score(this.score, 0);
+    sdk.progress({ levelIndex: 0, total: 4 });
+
     this.guideHandShownOnce = false;
     this.roundInteracted = false;
 
     const win = window as unknown as Record<string, unknown>;
     this.audioReady = !!win[AUDIO_UNLOCKED_KEY];
+  }
+
+  // Khi trả lời đúng hoặc hoàn thành thử thách nhỏ
+  private recordCorrect() {
+    irukaGame.recordCorrect({ scoreDelta: 1 });
+    (window as any).irukaGameState.currentScore = this.score;
+    sdk.score(this.score, 1);
+    sdk.progress({
+      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
+      score: this.score,
+    });
+  }
+
+  // Khi trả lời sai
+  private recordWrong() {
+    irukaGame.recordWrong();
+  }
+
+  // Khi gợi ý
+  private addHint() {
+    irukaGame.addHint();
+  }
+
+  // Khi lưu tiến trình/chuyển level
+  private saveProgress() {
+    sdk.requestSave({
+      score: this.score,
+      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
+    });
+    sdk.progress({
+      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
+      total: 4,
+      score: this.score,
+    });
+  }
+
+  // Khi hoàn thành game
+  private finalizeAttempt() {
+    irukaGame.finalizeAttempt();
   }
 
   /* ===================== CREATE ===================== */
@@ -312,6 +363,10 @@ export default class GameScene extends Phaser.Scene {
     const play = () => {
       if (!force && this.hasPlayedInstructionVoice) return;
       if (force) AudioManager.stop('voice_join');
+      // Bắt đầu BGM và voice hướng dẫn cùng lúc (khi đã unlock audio).
+      try {
+        (window as any).ensureBgmStarted?.();
+      } catch {}
       AudioManager.playWhenReady?.('voice_join');
       this.hasPlayedInstructionVoice = true;
       // Nếu bé click/drag nhanh sau khi voice chạy thì cắt voice để tránh gây khó chịu.
@@ -708,6 +763,7 @@ export default class GameScene extends Phaser.Scene {
     if (!leftImg || !rightImg) return;
 
     this.guideHandShownOnce = true;
+    this.addHint();
     this.guideHandMatchKey = matchKey;
 
     const baseScale = (this.scale.height / 720) * GUIDE_HAND_SCALE;
@@ -966,6 +1022,7 @@ export default class GameScene extends Phaser.Scene {
 
       this.matched.add(left);
       this.score = this.matched.size;
+      this.recordCorrect();
 
       leftImg?.disableInteractive().setAlpha(0.9);
       rightImg?.disableInteractive().setAlpha(0.9);
@@ -986,6 +1043,8 @@ export default class GameScene extends Phaser.Scene {
 
       if (this.matched.size >= LEFT_IDS.length) {
         this.gameState = 'LEVEL_END';
+        this.saveProgress();
+        this.finalizeAttempt();
         this.time.delayedCall(1000, () => {
           this.scene.start('EndGameScene', {
             lessonId: '',
@@ -1004,6 +1063,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     AudioManager.play('sfx_wrong');
+    this.recordWrong();
 
     this.draggingLine?.setVisible(false);
 
