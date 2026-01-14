@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <link href="https://fonts.googleapis.com/css2?family=Baloo+Chettan+2:wght@800&family=Baloo+2:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+    <title>Number 7</title>
+    <!-- Minimal viewport and style for logic transfer -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+    html,
+    body {
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background: transparent;
+    }
+
+    #game-container {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        touch-action: none;
+        overflow: hidden;
+        /* Để background của viewport (nếu có) không bị phóng to cắt mất,
+           platform có thể set background-image vào game-container */
+        background-repeat: no-repeat;
+        background-position: center center;
+        background-size: contain;
+    }
+
+    canvas {
+        display: block; /* loại bỏ margin tự động của canvas */
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .top-btn {
+        position: absolute;
+        top: 2%;
+        z-index: 9999;
+
+        /* Auto fit theo tỉ lệ màn hình */
+        width: 11.1vmin;
+        height: 11.1vmin;
+
+        border: none;
+        /*border-radius: 5%;*/
+        background-color: transparent;
+        background-repeat: no-repeat;
+        background-position: center;
+        background-size: contain;
+        cursor: pointer;
+    }
+
+    #btn-replay {
+        right: 2%;
+        /* icon nút quay lại – dùng chính file png bạn preload */
+        background-image: url('assets/button/replay.png');
+    }
+
+    #btn-next {
+        display : none;
+    }
+
+
+
+    </style>
+    </head>
+
+    <body>
+        <!-- Nút HTML, nằm ngoài game-container -->
+        <button id="btn-replay" class="top-btn"></button>
+        <button id="btn-next" class="top-btn"></button>
+
+        <div id="game-container"></div>
+        <script>
+          (function () {
+            const replayBtn = document.getElementById('btn-replay');
+            const nextBtn = document.getElementById('btn-next');
+
+
+            // Hàm để Phaser gọi (đã dùng trong GameScene/BalanceScene)
+            (window).setGameButtonsVisible = function (visible) {
+              if (!replayBtn || !nextBtn) return;
+              const display = visible ? 'block' : 'none';
+              replayBtn.style.display = display;
+              nextBtn.style.display = display;
+            };
+
+            // Hàm set background viewport cho game-container, tránh zoom to
+            (window).setRandomGameViewportBg = function () {
+              const container = document.getElementById('game-container');
+              if (!container) return;
+              // Ví dụ chọn ngẫu nhiên 1 số background (nếu platform không override)
+              const bgs = [
+                'url(assets/bg_1.png)',
+                'url(assets/bg_2.png)',
+                'url(assets/bg_3.png)'
+              ];
+              const idx = Math.floor(Math.random() * bgs.length);
+              container.style.backgroundImage = bgs[idx];
+              container.style.backgroundRepeat = 'no-repeat';
+              container.style.backgroundPosition = 'center center';
+              container.style.backgroundSize = 'contain'; // không zoom quá
+            };
+
+            // Log vị trí & kích thước sau khi layout xong
+            window.addEventListener('load', () => {
+            });
+          })();
+        </script>
+        <script type="module" src="/src/main.ts"></script>
+    </body>
+</html>
