@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import AudioManager from './AudioManager';
+import { sdk } from './main';
+import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
 
 /* ===================== AUDIO GLOBAL FLAG ===================== */
 const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
@@ -335,6 +337,14 @@ export default class GameScene extends Phaser.Scene {
 
   /* ===================== CREATE ===================== */
   create() {
+    // SDK: set tổng số level
+    irukaGame.setTotal?.(this.levels?.length || 2);
+    (window as any).irukaGameState = {
+      startTime: Date.now(),
+      currentScore: 0,
+    };
+    sdk?.score?.(this.score, 0);
+    sdk?.progress?.({ levelIndex: 0, total: this.levels?.length || 2 });
     this.input.dragDistanceThreshold = DRAG_DISTANCE_THRESHOLD;
     this.input.dragTimeThreshold = DRAG_TIME_THRESHOLD;
 
@@ -1142,6 +1152,13 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private onCorrect() {
+    irukaGame.recordCorrect?.({ scoreDelta: 1 });
+    (window as any).irukaGameState.currentScore = this.score;
+    sdk?.score?.(this.score, 1);
+    sdk?.progress?.({
+      levelIndex: this.levelIndex,
+      score: this.score,
+    });
     if (this.gameState !== 'WAIT_DRAG') return;
     this.gameState = 'LEVEL_END';
     this.stopGuideVoice();
@@ -1182,6 +1199,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private onWrong() {
+    irukaGame.recordWrong?.();
     this.stopGuideVoice();
     this.feedbackText.setText('Thử lại nhé!');
     this.resultBadge.setTexture(ASSET.img.resultWrong).setVisible(true);
@@ -1196,6 +1214,9 @@ export default class GameScene extends Phaser.Scene {
     AudioManager.stopSound(this.currentVoiceId);
     this.currentVoiceId = undefined;
   }
+
+  // Gợi ý cho bé
+
 
   private playVoiceForLevel(force = false) {
     // Khi đang ở màn dọc (rotate overlay) thì không phát voice hướng dẫn để tránh chồng với voice_rotate.

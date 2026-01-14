@@ -6,6 +6,68 @@ import AudioManager from "./AudioManager";
 import { initRotateOrientation } from "./rotateOrientation";
 import PreloadScene from "./PreloadScene";
 import BalanceScene from "./BalanceScene";
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
+// ========== SDK KẾT NỐI GAMEHUB ==========
+export let gamePhaser: Phaser.Game;
+
+function applyResize(width: number, height: number) {
+    const gameDiv = document.getElementById('game-container');
+    if (gameDiv) {
+        gameDiv.style.width = `${width}px`;
+        gameDiv.style.height = `${height}px`;
+    }
+    // Phaser Scale FIT: gọi resize để canvas update
+    gamePhaser?.scale.resize(width, height);
+}
+
+function broadcastSetState(payload: any) {
+    // chuyển xuống scene đang chạy để bạn route helper (audio/score/timer/result...)
+    const scene = gamePhaser?.scene.getScenes(true)[0] as any;
+    scene?.applyHubState?.(payload);
+}
+
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch {}
+  return "*";
+}
+
+export const sdk = irukaGame.createGameSdk({
+  hubOrigin: getHubOrigin(),
+  onInit() {
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+    });
+  },
+  onStart() {
+    gamePhaser?.scene.resume("GameScene");
+    gamePhaser?.scene.resume("EndGameScene");
+  },
+  onPause() {
+    gamePhaser?.scene.pause("GameScene");
+  },
+  onResume() {
+    gamePhaser?.scene.resume("GameScene");
+  },
+  onResize(size) {
+    applyResize(size.width, size.height);
+  },
+  onSetState(state) {
+    broadcastSetState(state);
+  },
+  onQuit() {
+    irukaGame.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+    });
+  },
+});
 
 const AUDIO_UNLOCKED_KEY = "__audioUnlocked__";
 const AUDIO_UNLOCKED_EVENT = "audio-unlocked";
@@ -311,14 +373,10 @@ async function initGame() {
     console.warn("Không load được audio, chạy game luôn.", e);
   }
 
-  // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
-  // setupGlobalBgm();
-
-  if (!game) {
-    // setRandomIntroViewportBg();
+  if (!gamePhaser) {
     setRandomGameViewportBg();
-    game = new Phaser.Game(config);
-    initRotateOrientation(game); 
+    gamePhaser = new Phaser.Game(config);
+    initRotateOrientation(gamePhaser);
     setupHtmlButtons();
   }
 
