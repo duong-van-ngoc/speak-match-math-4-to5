@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
 import GameScene from "./GameScene";
 import EndGameScene from "./EndGameScene";
 import AudioManager from "./AudioManager";
@@ -91,7 +92,66 @@ if (container instanceof HTMLDivElement) {
 }
 
 // Giữ tham chiếu game để tránh tạo nhiều lần (HMR, reload…)
-let game: Phaser.Game | null = null;
+let gamePhaser: Phaser.Game | null = null;
+// ================== SDK GAMEHUB ==================
+function applyResize(width: number, height: number) {
+    const gameDiv = document.getElementById('game-container');
+    if (gameDiv) {
+        gameDiv.style.width = `${width}px`;
+        gameDiv.style.height = `${height}px`;
+    }
+    // Phaser Scale FIT: gọi resize để canvas update
+    gamePhaser?.scale.resize(width, height);
+}
+
+function broadcastSetState(payload: any) {
+    // chuyển xuống scene đang chạy để bạn route helper (audio/score/timer/result...)
+    const scene = gamePhaser?.scene.getScenes(true)[0] as any;
+    scene?.applyHubState?.(payload);
+}
+
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch {}
+  return "*";
+}
+
+export const sdk = irukaGame.createGameSdk({
+  hubOrigin: getHubOrigin(),
+  onInit() {
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+    });
+  },
+  onStart() {
+    gamePhaser?.scene.resume("GameScene");
+    gamePhaser?.scene.resume("EndGameScene");
+  },
+  onPause() {
+    gamePhaser?.scene.pause("GameScene");
+  },
+  onResume() {
+    gamePhaser?.scene.resume("GameScene");
+  },
+  onResize(size) {
+    applyResize(size.width, size.height);
+  },
+  onSetState(state) {
+    broadcastSetState(state);
+  },
+  onQuit() {
+    irukaGame.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+    });
+  },
+});
 
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 export function ensureBgmStarted() {
@@ -145,12 +205,12 @@ function setupHtmlButtons() {
   const replayBtn = document.getElementById("btn-replay");
   if (replayBtn) {
     replayBtn.addEventListener("click", () => {
-      if (!game) return;
+      if (!gamePhaser) return;
 
       // Dừng toàn bộ âm thanh trước khi chơi lại để tránh lồng nhau
       AudioManager.stopAll();
 
-      const gs = game.scene.getScene("GameScene") as GameScene | null;
+      const gs = gamePhaser.scene.getScene("GameScene") as GameScene | null;
 
       const total = getTotalLevels(gs);
       const startIndex = Phaser.Math.Between(0, Math.max(0, total - 1));
@@ -164,12 +224,12 @@ function setupHtmlButtons() {
       };
 
       // ✅ “ở đâu cũng replay được”: đang ở GameScene thì restart, còn lại thì start GameScene
-      if (gs && game.scene.isActive("GameScene")) {
+      if (gs && gamePhaser.scene.isActive("GameScene")) {
         gs.scene.restart(data);
       } else {
         // nếu đang ở EndGameScene thì stop để khỏi chồng scene
-        if (game.scene.isActive("EndGameScene")) game.scene.stop("EndGameScene");
-        game.scene.start("GameScene", data);
+        if (gamePhaser.scene.isActive("EndGameScene")) gamePhaser.scene.stop("EndGameScene");
+        gamePhaser.scene.start("GameScene", data);
       }
 
       ensureBgmStarted();
@@ -221,9 +281,9 @@ async function initGame() {
     console.warn("Không load được audio, chạy game luôn.", e);
   }
 
-  if (!game) {
-    game = new Phaser.Game(config);
-    initRotateOrientation(game); // Khởi tạo xoay màn hình cho game nếu cần
+  if (!gamePhaser) {
+    gamePhaser = new Phaser.Game(config);
+    initRotateOrientation(gamePhaser); // Khởi tạo xoay màn hình cho game nếu cần
     setupHtmlButtons(); // Cài đặt các nút HTML
   }
 

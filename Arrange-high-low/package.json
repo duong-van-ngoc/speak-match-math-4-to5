@@ -7,9 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "setup": "pnpm dlx dotenv-cli -- pnpm add @iruka-edu/game-core @iruka-edu/mini-game-sdk"
   },
   "dependencies": {
+    "@iruka-edu/game-core": "^0.1.2",
+    "@iruka-edu/mini-game-sdk": "^0.1.1",
     "howler": "^2.2.4",
     "phaser": "^3.90.0",
     "react": "^19.2.0",

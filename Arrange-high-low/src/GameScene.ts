@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import AudioManager from './AudioManager';
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
+import { sdk } from "./main";
 
 /* ===================== AUDIO GLOBAL FLAG ===================== */
 // ✅ dùng window để nhớ “đã unlock audio” xuyên scene / replay
@@ -330,6 +332,12 @@ export default class GameScene extends Phaser.Scene {
   }
 
   create() {
+    // SDK: set tổng số level cho gamehub
+    irukaGame.setTotal(5); // hoặc this.levels.length nếu đã có
+    (window as any).irukaGameState = {
+      startTime: Date.now(),
+      currentScore: 0,
+    };
     // ✅ iOS/Android: unlock + phát BGM + phát voice lần đầu sau gesture
     this.input.once('pointerdown', async () => {
       // ✅ FIX: nhớ trạng thái trước khi unlock (để replay không force voice lần nữa)
@@ -514,6 +522,9 @@ this.feedbackText = this.add.text(this.questionBanner.x, this.questionBanner.y +
 
     this.layoutBoard();
     this.startLevel();
+    // SDK: gửi score và progress ban đầu
+    sdk.score(this.score, 0);
+    sdk.progress({ levelIndex: 0, total: this.levels.length });
   }
 
   private setCanvasCursor(cursor: string) {
@@ -1268,6 +1279,14 @@ private updateHintForLevel() {
     this.stopGuideVoice();
 
     this.score++;
+    // SDK: cập nhật điểm và tiến trình khi đúng
+    irukaGame.recordCorrect({ scoreDelta: 1 });
+    (window as any).irukaGameState.currentScore = this.score;
+    sdk.score(this.score, 1);
+    sdk.progress({
+      levelIndex: this.levelIndex,
+      score: this.score,
+    });
     this.subgameDone = true;
 
     this.feedbackText.setText('Đúng rồi!');
@@ -1287,6 +1306,8 @@ private updateHintForLevel() {
   }
 
   private onWrong() {
+    // SDK: ghi nhận trả lời sai
+    irukaGame.recordWrong();
     this.stopGuideVoice();
 
     this.feedbackText.setText('Thử lại nhé!');
@@ -1300,5 +1321,33 @@ private updateHintForLevel() {
       if (this.gameState !== 'WAIT_DRAG') return;
       this.resultBadge.setVisible(false);
     });
+  }
+
+  // Khi sử dụng gợi ý cho bé
+  useHint() {
+    irukaGame.addHint();
+  }
+
+  // Khi chuyển level, lưu và gửi tiến trình
+  saveAndProgress() {
+    sdk.requestSave({
+      score: this.score,
+      levelIndex: this.levelIndex,
+    });
+    sdk.progress({
+      levelIndex: this.levelIndex,
+      total: this.levels.length,
+      score: this.score,
+    });
+  }
+
+  // Khi chuyển sang màn EndGame
+  finalizeAttempt() {
+    irukaGame.finalizeAttempt();
+  }
+
+  // Khi restart game
+  retryFromStart() {
+    irukaGame.retryFromStart();
   }
 }
