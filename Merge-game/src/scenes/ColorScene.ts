@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import type { GameData } from '../data/gameData';
 import { COLORS } from '../data/gameData';
 import { FLOW_GO_END, type FlowEndPayload } from '../flow/events';
-import { BOARD_ASSET_KEYS, COLOR_SCENE_ASSETS, loadAssetGroups, VOICE_GUIDE_ASSET_KEYS } from '../assets';
+import { BOARD_ASSET_KEYS, COLOR_SCENE_ASSETS, loadAssetGroups } from '../assets';
 import AudioManager from '../AudioManager';
 import type { NumBox } from '../ui/helpers';
 
@@ -59,6 +59,14 @@ export class ColorScene extends Phaser.Scene {
     'question2', // Level 2: Question (1).png
   ];
 
+  // private guideHand?: Phaser.GameObjects.Image;
+  // private guideHandTween?: Phaser.Tweens.Tween;
+
+  private paletteGuideHand?: Phaser.GameObjects.Image;
+  private paletteGuideHandTween?: Phaser.Tweens.Tween;
+  private paletteGuideHandTimeout?: Phaser.Time.TimerEvent;
+  private paletteGuideHandShown = false;
+
   constructor() {
     super('ColorScene');
   }
@@ -89,9 +97,7 @@ export class ColorScene extends Phaser.Scene {
 
   preload() {
     loadAssetGroups(this, 'shared', 'colorScene', 'numbers', 'ui', 'countConnect');
-    // Load guide voice audio manually (loadAssetGroups only loads images)
-    this.load.audio('voice_guide_color1', 'assets/audio/ball.mp3');
-    this.load.audio('voice_guide_color2', 'assets/audio/marble.mp3');
+    // Không load audio hướng dẫn ở đây, AudioManager sẽ quản lý và load bằng howler
   }
 
   create() {
@@ -111,7 +117,7 @@ export class ColorScene extends Phaser.Scene {
     this.colorLevelLabel = this.add
       .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
         fontFamily: 'Baloo, Arial',
-        fontSize: '26px',
+        fontSize: '44px', // tăng kích thước chữ banner
         color: '#0b1b2a',
       })
       .setOrigin(0.5, 0)
@@ -124,8 +130,11 @@ export class ColorScene extends Phaser.Scene {
     this.layoutBoard();
 
     this.applyCurrentColorLevel();
-
-    // Phát voice hướng dẫn cho màn đầu tiên
+    // Đảm bảo bàn tay hiện ngay khi vào màn đầu tiên
+    this.time.delayedCall(0, () => {
+      this.showPaletteGuideHand(true);
+    });
+    // Phát voice hướng dẫn cho màn đầu tiên (không ảnh hưởng bàn tay)
     this.playGuideVoiceForCurrentLevel();
 
     this.boxes.forEach((b) => {
@@ -135,24 +144,50 @@ export class ColorScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off('resize', this.layoutBoard, this);
     });
+
+    this.input.once('pointerdown', () => {
+      this.hidePaletteGuideHand();
+      // Nếu bé chưa chọn màu sau 3s thì hiện lại bàn tay
+      this.paletteGuideHandTimeout = this.time.delayedCall(3000, () => {
+        if (!this.paletteSelectedIndex || this.paletteSelectedIndex === -1) {
+          this.showPaletteGuideHand(false);
+        }
+      });
+    });
   }
   // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager (howler)
+  // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager
   private playGuideVoiceForCurrentLevel() {
+    // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
     const voiceKeys = [
-      VOICE_GUIDE_ASSET_KEYS.color1,
-      VOICE_GUIDE_ASSET_KEYS.color2,
+      'voice_guide_color_1',
+      'voice_guide_color_2',
     ];
+    voiceKeys.forEach((k) => AudioManager.stop(k));
     const key = voiceKeys[this.currentColorLevelIndex] || voiceKeys[0];
     AudioManager.playWhenReady(key);
   }
 
   // Phát âm thanh đúng
+
+  // Phát âm thanh đúng tiếng Việt, random 1 trong 4 file
+  private playCorrectAnswerSound() {
+    // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh đúng
+    ['voice_guide_color_1', 'voice_guide_color_2'].forEach((k) => AudioManager.stop(k));
+    const idx = Math.floor(Math.random() * 4) + 1; // 1-4
+    const key = `correct_answer_${idx}`;
+    AudioManager.playWhenReady?.(key);
+  }
+
   private playCorrectSound() {
     AudioManager.play('sfx_correct');
+    this.playCorrectAnswerSound();
   }
 
   // Phát âm thanh sai
   private playWrongSound() {
+    // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh sai
+    ['voice_guide_color_1', 'voice_guide_color_2'].forEach((k) => AudioManager.stop(k));
     AudioManager.play('sfx_wrong');
   }
 
@@ -258,9 +293,11 @@ export class ColorScene extends Phaser.Scene {
     this.updateColorLevelLabel();
     this.positionObjects();
     this.updateBannerTextImage();
-
     // Phát voice hướng dẫn khi chuyển màn
     this.playGuideVoiceForCurrentLevel();
+    // Reset trạng thái đã hiện bàn tay, không gọi showPaletteGuideHand ở đây để tránh xóa bàn tay vừa hiện ở create
+    this.paletteGuideHandShown = false;
+    this.hidePaletteGuideHand();
   }
 
   private resetForNextColorLevel() {
@@ -272,6 +309,10 @@ export class ColorScene extends Phaser.Scene {
     });
 
     this.applyCurrentColorLevel();
+    // Hiển thị lại bàn tay hướng dẫn ở ô màu lần đầu tiên
+    this.paletteGuideHandShown = false;
+    this.showPaletteGuideHand(true);
+    this.hidePaletteGuideHand();
   }
 
   private advanceColorLevel() {
@@ -295,6 +336,7 @@ export class ColorScene extends Phaser.Scene {
     if (box.painted || !this.selected) {
       this.cameras.main.shake(120, 0.01);
       this.playWrongSound();
+      // Không hiện lại bàn tay ở ô màu khi tô sai
       return;
     }
 
@@ -304,6 +346,7 @@ export class ColorScene extends Phaser.Scene {
     if (!isCorrect) {
       this.cameras.main.shake(120, 0.012);
       this.playWrongSound();
+      // Không hiện lại bàn tay ở ô màu khi tô sai
       return;
     }
 
@@ -312,6 +355,8 @@ export class ColorScene extends Phaser.Scene {
     }
     box.painted = true;
     this.playCorrectSound();
+    // Ẩn bàn tay khi tô đúng
+    this.hidePaletteGuideHand();
     this.advanceColorLevel();
   }
 
@@ -400,8 +445,8 @@ export class ColorScene extends Phaser.Scene {
 
     const w = this.scale.width;
     const h = this.scale.height;
-    const maxW = Math.min(1100, w * 0.92);
-    const maxH = Math.min(520, h * 0.75);
+    const maxW = Math.min(1100, w * 0.92); // board nhỏ lại
+    const maxH = Math.min(540, h * 0.8); 
     const ratio = this.getBoardAssetRatio();
     let boardW = maxW;
     let boardH = maxH;
@@ -615,9 +660,9 @@ export class ColorScene extends Phaser.Scene {
     this.bannerBg.setPosition(x, y);
 
     if (this.bannerTextImage) {
-      // Use the correct ratio for the current banner text image
+      // Tăng kích thước asset banner text lên 1.1 lần so với mặc định
       const textRatio = this.getTextureRatio(this.bannerTextImage.texture.key) ?? 1;
-      const textWidth = targetWidth * 0.7;
+      const textWidth = targetWidth * 0.85; // tăng từ 0.7 lên 0.77
       const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
       this.bannerTextImage.setDisplaySize(textWidth, textHeight);
       this.bannerTextImage.setPosition(x, y);
@@ -632,5 +677,99 @@ export class ColorScene extends Phaser.Scene {
     const width = (src as any).width || 1;
     const height = (src as any).height || 1;
     return width / height;
+  }
+
+  // private showGuideHand() {
+  //   // Xóa bàn tay cũ nếu có
+  //   if (this.guideHand) {
+  //     this.guideHand.destroy();
+  //     this.guideHand = undefined;
+  //   }
+  //   if (this.guideHandTween) {
+  //     this.guideHandTween.stop();
+  //     this.guideHandTween = undefined;
+  //   }
+  //   // Chỉ hiện khi chưa tô đúng
+  //   const box = this.boxes.find(b => !b.painted);
+  //   if (!box || !box.image) return;
+  //   // Tạo sprite bàn tay ở ô số cần tô (asset là 'guide_hand')
+  //   if (this.textures.exists('guide_hand')) {
+  //     this.guideHand = this.add.image(box.image.x, box.image.y + 60, 'guide_hand')
+  //       .setOrigin(0.2, 0.1)
+  //       .setScale(0.5)
+  //       .setDepth(100)
+  //       .setAlpha(0.92);
+  //     // Tween di chuyển bàn tay lên xuống trên ô số cần tô
+  //     this.guideHandTween = this.tweens.add({
+  //       targets: this.guideHand,
+  //       y: box.image.y + 30,
+  //       duration: 700,
+  //       ease: 'Cubic.InOut',
+  //       yoyo: true,
+  //       repeat: -1,
+  //     });
+  //   }
+  //   // Hiện thêm bàn tay ở ô màu cần chọn
+  //   const level = this.getCurrentColorLevel();
+  //   const paletteIndex = this.paletteDefs.findIndex(def => def.c === level.targetColor);
+  //   const paletteDot = this.paletteDots[paletteIndex];
+  //   if (paletteDot && this.textures.exists('guide_hand')) {
+  //     const hand = this.add.image(paletteDot.x, paletteDot.y - 20, 'guide_hand')
+  //       .setOrigin(0.2, 0.1)
+  //       .setScale(0.45)
+  //       .setDepth(100)
+  //       .setAlpha(0.92);
+  //     this.tweens.add({
+  //       targets: hand,
+  //       y: paletteDot.y - 30,
+  //       duration: 700,
+  //       ease: 'Cubic.InOut',
+  //       yoyo: true,
+  //       repeat: -1,
+  //     });
+  //     // Lưu lại để xóa khi cần
+  //     (this as any)._paletteGuideHand = hand;
+  //   }
+  // }
+  private showPaletteGuideHand(first: boolean) {
+    // Xóa bàn tay cũ nếu có
+    this.hidePaletteGuideHand();
+    // Chỉ hiện lần đầu hoặc khi timeout
+    if (first && this.paletteGuideHandShown) return;
+    const level = this.getCurrentColorLevel();
+    const paletteIndex = this.paletteDefs.findIndex(def => def.c === level.targetColor);
+    const paletteDot = this.paletteDots[paletteIndex];
+    if (paletteDot && this.textures.exists('guide_hand')) {
+      // Dịch bàn tay xuống thêm 40px và sang phải 20px, nhỏ lại
+      this.paletteGuideHand = this.add.image(paletteDot.x + 20, paletteDot.y + 5, 'guide_hand')
+        .setOrigin(0.2, 0.1)
+        .setScale(0.5)
+        .setDepth(100)
+        .setAlpha(0.92);
+      // Animation nhấp nháy: scale lên xuống
+      this.paletteGuideHandTween = this.tweens.add({
+        targets: this.paletteGuideHand,
+        scale: { from: 0.36, to: 0.48 },
+        duration: 500,
+        ease: 'Sine.InOut',
+        yoyo: true,
+        repeat: -1,
+      });
+      if (first) this.paletteGuideHandShown = true;
+    }
+  }
+  private hidePaletteGuideHand() {
+    if (this.paletteGuideHand) {
+      this.paletteGuideHand.destroy();
+      this.paletteGuideHand = undefined;
+    }
+    if (this.paletteGuideHandTween) {
+      this.paletteGuideHandTween.stop();
+      this.paletteGuideHandTween = undefined;
+    }
+    if (this.paletteGuideHandTimeout) {
+      this.paletteGuideHandTimeout.remove(false);
+      this.paletteGuideHandTimeout = undefined;
+    }
   }
 }

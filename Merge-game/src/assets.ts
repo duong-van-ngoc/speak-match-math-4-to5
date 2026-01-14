@@ -1,3 +1,5 @@
+// Asset hình cho số phần đếm (khác số thang số)
+
 import Phaser from 'phaser';
 
 export const ASSET_ROOT = 'assets';
@@ -31,7 +33,17 @@ export const COLOR_SCENE_ASSETS = {
 export const NUMBER_ASSETS = {
   keys: ['number_1', 'number_2', 'number_3', 'number_4', 'number_5'],
 };
+export const COUNTING_NUMBER_ASSETS = {
+  keys: [
+    'counting_number_1',
+    'counting_number_2',
+  ],
+};
 
+export const COUNTING_NUMBER_IMAGE_ASSETS: PreloadImageAsset[] = [
+  { key: COUNTING_NUMBER_ASSETS.keys[0], path: assetPath('number/1.png') },
+  { key: COUNTING_NUMBER_ASSETS.keys[1], path: assetPath('number/2.png') },
+];
 export const UI_ASSET_KEYS = {
   answerCorrect: 'answer_correct',
   answerWrong: 'answer_wrong',
@@ -126,6 +138,7 @@ export const ASSET_GROUPS = {
   countConnect: COUNT_CONNECT_IMAGE_ASSETS,
   colorScene: COLOR_SCENE_IMAGE_ASSETS,
   numbers: NUMBER_IMAGE_ASSETS,
+  countingNumbers: COUNTING_NUMBER_IMAGE_ASSETS,
   endScene: END_SCENE_IMAGE_ASSETS,
   ui: GAME_UI_IMAGE_ASSETS,
   audio: VOICE_GUIDE_ASSETS,

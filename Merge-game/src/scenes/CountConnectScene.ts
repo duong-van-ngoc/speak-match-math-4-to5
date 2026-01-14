@@ -1,13 +1,13 @@
-    import Phaser from 'phaser';
+import Phaser from 'phaser';
     import type { GameData } from '../data/gameData';
     import type { NumBox } from '../ui/helpers';
     import { FLOW_GO_COLOR } from '../flow/events';
     // import { COLORS } from '../data/gameData';
     import {
-    BOARD_ASSET_KEYS,
-    COUNT_CONNECT_ASSETS,
-    // NUMBER_ASSETS,
-    loadAssetGroups,
+        BOARD_ASSET_KEYS,
+        COUNT_CONNECT_ASSETS,
+        // NUMBER_ASSETS,
+        loadAssetGroups,
     } from '../assets';
     import AudioManager from '../AudioManager';
 
@@ -32,6 +32,16 @@
     };
 
     export class CountConnectScene extends Phaser.Scene {
+        // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
+        private playGuideVoiceForCurrentLevel() {
+            // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
+            const voiceKeys = [
+                'voice_guide_connect',
+            ];
+            voiceKeys.forEach((k) => AudioManager.stop(k));
+            const key = voiceKeys[this.currentCountLevelIndex] || voiceKeys[0];
+            AudioManager.playWhenReady(key);
+        }
     private dataGame!: GameData;
 
     private boxes: NumBox[] = [];
@@ -54,7 +64,7 @@
 
     private numberRowY?: number;
 
-    private countingLabels: Phaser.GameObjects.Text[] = [];
+    private countingLabels: Array<Phaser.GameObjects.Text | Phaser.GameObjects.Image> = [];
     private isCountingSequence = false;
 
     private countLevels: CountLevel[] = [];
@@ -68,6 +78,11 @@
     private readonly boardAssetKey = BOARD_ASSET_KEYS.frame;
     private readonly bannerBgKey = BOARD_ASSET_KEYS.bannerBg;
     private readonly bannerTextKey = BOARD_ASSET_KEYS.bannerText;
+
+    private guideHand?: Phaser.GameObjects.Image;
+    private guideHandTween?: Phaser.Tweens.Tween;
+    private guideHandTimeout?: Phaser.Time.TimerEvent;
+    private guideHandShown = false;
 
     constructor() {
         super('CountConnectScene');
@@ -105,7 +120,7 @@
     }
 
     preload() {
-        loadAssetGroups(this, 'shared', 'countConnect', 'numbers', 'ui');
+        loadAssetGroups(this, 'shared', 'countConnect', 'numbers', 'countingNumbers', 'ui');
     }
 
     create() {
@@ -208,6 +223,20 @@
 
         this.applyCurrentLevelToObjects();
 
+        // Phát voice hướng dẫn cho màn hiện tại
+        this.playGuideVoiceForCurrentLevel();
+
+        // Hiển thị bàn tay hướng dẫn nối khi vào màn chơi
+        this.showGuideHand(true);
+        this.input.once('pointerdown', () => {
+            this.hideGuideHand();
+            // Nếu bé chưa kéo sau 3s thì hiện lại bàn tay
+            this.guideHandTimeout = this.time.delayedCall(3000, () => {
+                if (!this.dragging) {
+                    this.showGuideHand(false);
+                }
+            });
+        });
         this.input.on('pointerdown', this.onDown, this);
         this.input.on('pointermove', this.onMove, this);
         this.input.on('pointerup', this.onUp, this);
@@ -249,8 +278,9 @@
         const bag = this.bags.find((b) => b.getBounds().contains(pointer.x, pointer.y));
         if (!bag) return;
         if (this.locked.has(bag)) return;
-
         this.dragging = { bag, startX: bag.x, startY: bag.y };
+        // Ẩn bàn tay hướng dẫn khi người chơi bắt đầu kéo
+        this.hideGuideHand();
     }
 
     private onMove(pointer: Phaser.Input.Pointer) {
@@ -278,9 +308,13 @@
         this.lines.clear();
 
         if (!hit || hit.n !== count) {
-        this.cameras.main.shake(120, 0.01);
-        this.dragging = undefined;
-        return;
+            this.cameras.main.shake(120, 0.01);
+            // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh sai
+            ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
+            AudioManager.play('sfx_wrong');
+            this.dragging = undefined;
+            // Không hiện lại bàn tay khi sai
+            return;
         }
 
         // đúng: “khóa” object + highlight ô
@@ -298,15 +332,29 @@
             this.redrawFixedLines();
         }
 
-        this.dragging = undefined;
+        // Phát âm thanh đúng mỗi lần ghép đúng
+        AudioManager.play('sfx_correct');
+            // Phát âm thanh đúng theo thứ tự (correct_answer_1, 2, 3, 4)
+            this.playCorrectAnswerSound();
 
+
+        this.dragging = undefined;
         if (this.locked.size === this.bags.length) {
             this.time.delayedCall(450, () => {
                 this.showCountingSequence(() => {
                     this.advanceCountLevel();
                 });
             });
-        }
+        } // Không hiện lại bàn tay khi chưa xong
+    }
+
+    // Phát âm thanh đúng tiếng Việt, random 1 trong 4 file
+    private playCorrectAnswerSound() {
+        // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh đúng
+        ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
+        const idx = Math.floor(Math.random() * 4) + 1; // 1-4
+        const key = `correct_answer_${idx}`;
+        AudioManager.playWhenReady?.(key);
     }
 
     private findBox(x: number, y: number) {
@@ -371,10 +419,17 @@
         // đổi texture + count theo level
         this.applyCurrentLevelToObjects();
 
+        // Phát lại voice hướng dẫn khi chuyển màn
+        this.playGuideVoiceForCurrentLevel();
+
         // dùng asset cho thang số
         this.replaceNumberBoxesWithAssets();
 
         this.redrawFixedLines();
+        // Hiển thị lại bàn tay hướng dẫn nối lần đầu tiên khi qua màn mới
+        this.guideHandShown = false;
+        this.showGuideHand(true);
+        this.hideGuideHand();
     }
 
     private advanceCountLevel() {
@@ -629,10 +684,10 @@
         this.bannerBg.setPosition(x, y);
 
         if (this.bannerTextImage) {
+        // Tăng kích thước asset banner text lên 1.1 lần so với mặc định
         const textRatio = this.getTextureRatio(this.bannerTextKey) ?? 1;
-        const textWidth = targetWidth * 0.7;
+        const textWidth = targetWidth * 0.8; // tăng từ 0.7 lên 0.77
         const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
-
         this.bannerTextImage.setDisplaySize(textWidth, textHeight);
         this.bannerTextImage.setPosition(x, y);
         }
@@ -657,55 +712,61 @@
         const stepDelay = 380;
 
         const runStep = (index: number) => {
-        if (index >= sortedBags.length) {
-            this.time.delayedCall(360, () => {
-            this.isCountingSequence = false;
-            onDone?.();
+            if (index >= sortedBags.length) {
+                this.time.delayedCall(360, () => {
+                    this.isCountingSequence = false;
+                    onDone?.();
+                });
+                return;
+            }
+
+            const bag = sortedBags[index];
+            const bounds = bag.getBounds();
+            const labelX = bounds.centerX;
+            const labelY = bounds.bottom + 12;
+
+            const bagCount = bag.getData('count') as number;
+            const assetKey = `counting_number_${bagCount}`;
+            let label: Phaser.GameObjects.Image | Phaser.GameObjects.Text;
+            if (this.textures.exists(assetKey)) {
+                label = this.add.image(labelX, labelY, assetKey)
+                    .setOrigin(0.5, 0)
+                    .setScale(0.7)
+                    .setDepth(12);
+            } else {
+                label = this.add.text(labelX, labelY, String(bagCount), {
+                    fontFamily: 'Baloo, Arial',
+                    fontSize: '62px',
+                    color: '#0b1b2a',
+                })
+                    .setOrigin(0.5, 0)
+                    .setScale(0.45)
+                    .setDepth(12);
+            }
+            this.countingLabels.push(label as Phaser.GameObjects.Text | Phaser.GameObjects.Image);
+
+            const originalY = bag.y;
+            this.tweens.add({
+                targets: bag,
+                y: originalY - 10,
+                duration: 140,
+                yoyo: true,
+                ease: 'Quad.Out',
+                onComplete: () => bag.setY(originalY),
             });
-            return;
-        }
 
-        const bag = sortedBags[index];
-        const bounds = bag.getBounds();
-        const labelX = bounds.centerX;
-        const labelY = bounds.bottom + 12;
+            this.tweens.add({
+                targets: label,
+                scaleX: 1.1,
+                scaleY: 1.1,
+                duration: 160,
+                yoyo: true,
+                ease: 'Back.Out',
+            });
 
-        const bagCount = bag.getData('count') as number;
+            AudioManager.playWhenReady?.(`voice_count_${bagCount}`);
 
-        const label = this.add
-            .text(labelX, labelY, String(bagCount), {
-            fontFamily: 'Baloo, Arial',
-            fontSize: '62px',
-            color: '#0b1b2a',
-            })
-            .setOrigin(0.5, 0)
-            .setScale(0.45)
-            .setDepth(12);
-
-        this.countingLabels.push(label);
-
-        const originalY = bag.y;
-        this.tweens.add({
-            targets: bag,
-            y: originalY - 10,
-            duration: 140,
-            yoyo: true,
-            ease: 'Quad.Out',
-            onComplete: () => bag.setY(originalY),
-        });
-
-        this.tweens.add({
-            targets: label,
-            scaleX: 1.1,
-            scaleY: 1.1,
-            duration: 160,
-            yoyo: true,
-            ease: 'Back.Out',
-        });
-
-        AudioManager.playWhenReady?.(`voice_count_${index + 1}`);
-
-        this.time.delayedCall(stepDelay, () => runStep(index + 1));
+            this.time.delayedCall(stepDelay, () => runStep(index + 1));
         };
 
         runStep(0);
@@ -714,5 +775,55 @@
     private clearCountingLabels() {
         this.countingLabels.forEach((label) => label.destroy());
         this.countingLabels = [];
+    }
+
+    // Hiển thị bàn tay hướng dẫn nối từ object đến số đúng
+    private showGuideHand(first: boolean) {
+        // Xóa bàn tay cũ nếu có
+        this.hideGuideHand();
+        // Chỉ hiện lần đầu hoặc khi timeout
+        if (first && this.guideHandShown) return;
+        // Chỉ hiện khi chưa ghép đúng hết
+        if (this.locked.size === this.bags.length) return;
+        if (!this.bags.length || !this.boxes.length) return;
+        // Chọn object chưa nối
+        const bag = this.bags.find(b => !this.locked.has(b));
+        if (!bag) return;
+        const count = bag.getData('count') as number;
+        // Tìm box đúng
+        const box = this.boxes.find(b => b.n === count);
+        if (!box || !box.image) return;
+        // Tạo sprite bàn tay (asset là 'guide_hand')
+        if (!this.textures.exists('guide_hand')) return;
+        this.guideHand = this.add.image(bag.x, bag.y, 'guide_hand')
+            .setOrigin(0.2, 0.1)
+            .setScale(0.5)
+            .setDepth(100)
+            .setAlpha(0.92);
+        // Tween di chuyển bàn tay từ object đến số đúng
+        this.guideHandTween = this.tweens.add({
+            targets: this.guideHand,
+            x: box.image.x,
+            y: box.image.y,
+            duration: 900,
+            ease: 'Cubic.InOut',
+            yoyo: true,
+            repeat: -1,
+        });
+        if (first) this.guideHandShown = true;
+    }
+    private hideGuideHand() {
+        if (this.guideHand) {
+            this.guideHand.destroy();
+            this.guideHand = undefined;
+        }
+        if (this.guideHandTween) {
+            this.guideHandTween.stop();
+            this.guideHandTween = undefined;
+        }
+        if (this.guideHandTimeout) {
+            this.guideHandTimeout.remove(false);
+            this.guideHandTimeout = undefined;
+        }
     }
     }

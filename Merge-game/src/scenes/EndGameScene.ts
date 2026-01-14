@@ -9,11 +9,11 @@ function hideGameButtons() {
 }
 
 
-type DifficultyLevel = 1 | 2 | 3;
+// type DifficultyLevel = 1 | 2 | 3;
 
 export default class EndGameScene extends Phaser.Scene {
-    private lessonId!: string;
-    private difficulty: DifficultyLevel = 3;
+    // private lessonId!: string;
+    // private difficulty: DifficultyLevel = 3;
     private containerEl: HTMLElement | null = null;
     private confettiEvent?: Phaser.Time.TimerEvent;
 
@@ -32,15 +32,15 @@ export default class EndGameScene extends Phaser.Scene {
         }
     }
 
-    init(data: {
-        lessonId?: string;
-        score: number;
-        total: number;
-        difficulty?: DifficultyLevel;
-    }) {
-        this.lessonId = data.lessonId ?? '';
-        this.difficulty = data.difficulty ?? 3;
-    }
+    // init(data: {
+    //     lessonId?: string;
+    //     score: number;
+    //     total: number;
+    //     difficulty?: DifficultyLevel;
+    // }) {
+    //     // this.lessonId = data.lessonId ?? '';
+    //     // this.difficulty = data.difficulty ?? 3;
+    // }
 
     create() {
         const w = this.scale.width;

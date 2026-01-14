@@ -23,13 +23,19 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.3, html5: false },
 
   complete: { src: `${BASE_PATH}vic_sound.mp3` },
-  voice_intro: { src: `${BASE_PATH}voice_intro.mp3` },
-  voice_join: { src: `${BASE_PATH}join.mp3`, volume: 1.0 },
   voice_need_finish: { src: `${BASE_PATH}voice_need_finish.mp3` },
 
   voice_complete: { src: `${BASE_PATH}complete.mp3`, volume: 0.35 },
   fireworks: { src: `${BASE_PATH}fireworks.mp3`, volume: 1.0 },
   applause: { src: `${BASE_PATH}applause.mp3`, volume: 1.0 },
+  // Instruction voices for scenes
+  voice_guide_connect: { src: `${BASE_PATH}count.mp3`, volume: 0.8 },
+  voice_guide_color_1: { src: `${BASE_PATH}ball.mp3`, volume: 0.8 },
+  voice_guide_color_2: { src: `${BASE_PATH}marble.mp3`, volume: 0.8 },
+  // Counting voices
+  voice_count_1: { src: `${BASE_PATH}1.mp3`, volume: 1.0 },
+  voice_count_2: { src: `${BASE_PATH}2.mp3`, volume: 1.0 },
+
 };
 
 const isIOS = () => {
