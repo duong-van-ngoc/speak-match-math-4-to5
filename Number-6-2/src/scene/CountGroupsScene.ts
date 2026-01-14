@@ -167,7 +167,24 @@ export default class CountGroupsScene extends Phaser.Scene {
         window.removeEventListener(AUDIO_UNLOCKED_EVENT, onAudioUnlocked);
         });
 
+        if (!this.isAudioUnlocked()) {
+        const onFirstPointer = () => {
+            try {
+            const win = window as any;
+            if (!win[AUDIO_UNLOCKED_KEY]) {
+                win[AUDIO_UNLOCKED_KEY] = true;
+                window.dispatchEvent(new Event(AUDIO_UNLOCKED_EVENT));
+            }
+            } catch {}
+            this.startStage2AudioFlow();
+        };
+        window.addEventListener('pointerdown', onFirstPointer, { once: true, capture: true });
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            window.removeEventListener('pointerdown', onFirstPointer, { capture: true } as any);
+        });
+        } else {
         this.startStage2AudioFlow();
+        }
     }
 
     private getNextStage2Target(): (typeof this.stage2Order)[number] | null {
@@ -184,12 +201,12 @@ export default class CountGroupsScene extends Phaser.Scene {
     }
 
     private startStage2AudioFlow() {
-        if (!this.isAudioUnlocked()) return;
         if (this.stage2IntroPlayed) return;
         void (async () => {
         try {
             // Ensure audio is fully unlocked before playing guide/prompt.
             await AudioManager.unlockAndWarmup?.();
+            await (AudioManager as any).waitForUnlock?.();
         } catch {}
         if (this.stage2IntroPlayed) return;
         this.stage2IntroPlayed = true;

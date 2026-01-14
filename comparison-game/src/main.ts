@@ -1,4 +1,11 @@
 import Phaser from "phaser";
+import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
+
+// Khởi tạo SDK (singleton)
+export const sdk = irukaGame.createGameSdk({
+  hubOrigin: window.location.origin,
+});
+export { irukaGame };
 //import OverlayScene from "./OverlayScene";
 import GameScene from "./GameScene";
 import EndGameScene from "./EndGameScene";

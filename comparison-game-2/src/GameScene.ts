@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import type { LevelConfig } from './types';
 import AudioManager from './AudioManager';
 import { ChoiceFeedback } from './ChoiceFeedback'; // ✅ file riêng
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
 
 type GameState =
   | 'SHOW_LEVEL'
@@ -105,6 +106,7 @@ const STACK_BIAS_BY_KEY: Record<string, { x: number; y: number }> = {
   aquarium2: { x: -10, y: -25 },
 };
 
+
 export default class GameScene extends Phaser.Scene {
   public levels: LevelConfig[] = [];
   public levelIndex = 0;
@@ -173,11 +175,21 @@ export default class GameScene extends Phaser.Scene {
       this.levelSubjects = saved.subjects;
       this.levelQuestions = saved.questions;
     }
+
+    // SDK: set tổng số câu hỏi
+    irukaGame.setTotal(this.levels.length);
+    // Khởi tạo trạng thái game cho SDK
+    (window as any).irukaGameState = {
+      startTime: Date.now(),
+      currentScore: this.score,
+    };
   }
 
   public isLevelComplete(): boolean {
     return this.subgameDone;
   }
+
+  // ...existing code...
 
   /** ✅ căn trái/phải theo board, dùng displayWidth thật của nút để khỏi “kênh” */
   private layoutColumns(btnY: number, stackY: number) {
@@ -201,6 +213,7 @@ export default class GameScene extends Phaser.Scene {
     this.leftStack.setPosition(this.leftBtn.x, stackY);
     this.rightStack.setPosition(this.rightBtn.x, stackY);
   }
+  // ...existing code...
 
   /** ✅ căn trên/dưới: block(stack + gap + button) nằm cân giữa trong board */
   private layoutVerticalBalanced() {

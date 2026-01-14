@@ -14,6 +14,8 @@
     "vite": "^7.2.4"
   },
   "dependencies": {
+    "@iruka-edu/game-core": "file:../Match12/node_modules/@iruka-edu/game-core",
+    "@iruka-edu/mini-game-sdk": "file:../Match12/node_modules/@iruka-edu/mini-game-sdk",
     "howler": "^2.2.4",
     "phaser": "^3.90.0"
   }

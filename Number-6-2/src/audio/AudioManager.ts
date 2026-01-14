@@ -195,6 +195,20 @@ class AudioManager {
     }
   }
 
+  waitForUnlock(): Promise<void> {
+    if (!this.unlocking) return Promise.resolve();
+    return new Promise((resolve) => {
+      const check = () => {
+        if (!this.unlocking) {
+          resolve();
+          return;
+        }
+        setTimeout(check, 25);
+      };
+      check();
+    });
+  }
+
   private warmupOne(id: string): Promise<void> {
     const sound = this.sounds[id];
     if (!sound) return Promise.resolve();

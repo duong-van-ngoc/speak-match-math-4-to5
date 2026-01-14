@@ -112,8 +112,6 @@ export class SummaryScene extends Phaser.Scene {
             AudioManager.play('sfx-click');
             this.clearDimBackground();
             this.stopConfetti();
-            this.scene.start('LessonSelectScene');
-
             // ✅ Gửi COMPLETE cho Game Hub
             const host = (window as any).irukaHost;
             const state = (window as any).irukaGameState || {};
@@ -131,10 +129,7 @@ export class SummaryScene extends Phaser.Scene {
                         reason: 'user_exit', // cho hub biết là user tự thoát
                     },
                 });
-            } else {
-                // Fallback: nếu chạy ngoài Game Hub (dev standalone)
-                this.scene.start('LessonSelectScene');
-            }
+            } 
         });
 
         // Hover effect (nếu cần trên desktop)

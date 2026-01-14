@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
 //import OverlayScene from "./OverlayScene";
 import GameScene from "./GameScene";
 import EndGameScene from "./EndGameScene";
@@ -112,7 +113,72 @@ if (container instanceof HTMLDivElement) {
 }
 
 // Giữ tham chiếu game để tránh tạo nhiều lần (HMR, reload…)
-let game: Phaser.Game | null = null;
+let gamePhaser: Phaser.Game | null = null;
+// ========== SDK: Resize, State, Hub ===========
+function applyResize(width: number, height: number) {
+    const gameDiv = document.getElementById('game-container');
+    if (gameDiv) {
+        gameDiv.style.width = `${width}px`;
+        gameDiv.style.height = `${height}px`;
+    }
+    // Phaser Scale FIT: gọi resize để canvas update
+    gamePhaser?.scale.resize(width, height);
+}
+
+function broadcastSetState(payload: any) {
+    // chuyển xuống scene đang chạy để bạn route helper (audio/score/timer/result...)
+    const scene = gamePhaser?.scene.getScenes(true)[0] as any;
+    scene?.applyHubState?.(payload);
+}
+
+// lấy hubOrigin: tốt nhất từ query param, fallback document.referrer
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+  // fallback: origin của referrer (hub)
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch {}
+  return "*"; // nếu protocol của bạn bắt buộc origin cụ thể thì KHÔNG dùng "*"
+}
+
+export const sdk = irukaGame.createGameSdk({
+  hubOrigin: getHubOrigin(),
+  onInit() {
+    // reset stats session nếu bạn muốn
+    // irukaGame.resetAll(); hoặc statsCore.resetAll()
+    // báo READY sau INIT
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+    });
+  },
+  onStart() {
+    gamePhaser?.scene.resume("GameScene");
+    gamePhaser?.scene.resume("EndGameScene");
+  },
+  onPause() {
+    gamePhaser?.scene.pause("GameScene");
+  },
+  onResume() {
+    gamePhaser?.scene.resume("GameScene");
+  },
+  onResize(size) {
+    applyResize(size.width, size.height);
+  },
+  onSetState(state) {
+    broadcastSetState(state);
+  },
+  onQuit() {
+    // QUIT: chốt attempt là quit + gửi complete
+    irukaGame.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+    });
+  },
+});
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 
@@ -177,26 +243,26 @@ function setupHtmlButtons() {
   const replayBtn = document.getElementById("btn-replay");
   if (replayBtn) {
     replayBtn.addEventListener("click", () => {
-      if (!game) return;
+      if (!gamePhaser) return;
 
       // Dừng toàn bộ âm thanh trước khi chơi lại để tránh lồng nhau
       AudioManager.stopAll();
 
       // Nếu đang ở màn phụ (BalanceScene) → dừng màn phụ và quay lại GameScene của level hiện tại
-      const balance = game.scene.getScene("BalanceScene") as BalanceScene | null;
+      const balance = gamePhaser.scene.getScene("BalanceScene") as BalanceScene | null;
       if (balance && balance.scene.isActive()) {
         // Khi đang ở màn phụ → quay lại GameScene với level ngẫu nhiên, score reset
         const maxLevel = 3; // 4 level: 0..3
         const randomLevelIndex = Math.floor(Math.random() * (maxLevel + 1));
 
-        game.scene.stop("BalanceScene");
-        game.scene.start("GameScene", { levelIndex: randomLevelIndex, score: 0 });
+        gamePhaser.scene.stop("BalanceScene");
+        gamePhaser.scene.start("GameScene", { levelIndex: randomLevelIndex, score: 0 });
         ensureBgmStarted();
         return;
       }
 
       // Ngược lại, đang ở GameScene → restart lại với level ngẫu nhiên (không chỉ 1 màn)
-      const scene = game.scene.getScene("GameScene") as GameScene | null;
+      const scene = gamePhaser.scene.getScene("GameScene") as GameScene | null;
       if (!scene) return;
 
       const maxLevel = 3; // 4 level: 0..3
@@ -261,10 +327,10 @@ try {
   // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
   // setupGlobalBgm();
 
-  if (!game) {
+  if (!gamePhaser) {
     // setRandomIntroViewportBg();
-    game = new Phaser.Game(config);
-    initRotateOrientation(game); 
+    gamePhaser = new Phaser.Game(config);
+    initRotateOrientation(gamePhaser); 
     setupHtmlButtons();
   }
 

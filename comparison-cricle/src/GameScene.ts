@@ -1,5 +1,7 @@
-import Phaser from 'phaser';
 import AudioManager from './AudioManager';
+import Phaser from 'phaser';
+import { sdk } from './main';
+import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
 
 type Subject = 'BALL' | 'CAKE';
 
@@ -477,6 +479,15 @@ export default class GameScene extends Phaser.Scene {
   }
 
   create() {
+        // SDK: set tổng số level
+        irukaGame.setTotal(this.levels.length);
+        // Khởi tạo trạng thái game cho SDK
+        (window as any).irukaGameState = {
+          startTime: Date.now(),
+          currentScore: 0,
+        };
+        sdk.score(this.score, 0);
+        sdk.progress({ levelIndex: 0, total: this.levels.length });
     const { width, height } = this.scale;
 
     if ((window as any).setGameButtonsVisible) (window as any).setGameButtonsVisible(true);
@@ -649,6 +660,10 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private startLevel() {
+      // Cập nhật tiến trình mỗi lần vào level mới
+      sdk.progress({ levelIndex: this.levelIndex, total: this.levels.length, score: this.score });
+      // Cập nhật điểm cho SDK
+      sdk.score(this.score, 0);
     this.hideResultStamp();
     this.clearSnapEllipse();
 
@@ -1141,6 +1156,25 @@ export default class GameScene extends Phaser.Scene {
 
   // ============ XỬ LÝ ĐÚNG/SAI ============
   private handleChoice(side: Side, snap?: SnapData) {
+        // Khi trả lời đúng, cập nhật điểm và tiến trình cho SDK
+        irukaGame.recordCorrect({ scoreDelta: 1 });
+        (window as any).irukaGameState.currentScore = this.score;
+        sdk.score(this.score, 1);
+        sdk.progress({
+          levelIndex: this.levelIndex,
+          score: this.score,
+        });
+        // Khi chuyển level, lưu và gửi tiến trình cho SDK
+        sdk.requestSave({
+          score: this.score,
+          levelIndex: this.levelIndex,
+        });
+      // Khi hoàn thành game, gửi thông tin hoàn thành cho SDK
+      irukaGame.finalizeAttempt();
+      // Khi gợi ý cho bé
+      irukaGame.addHint();
+      // Khi reset game (nút replay), tính số lần chơi lại
+      (window as any).retryFromStart = () => irukaGame.retryFromStart();
     if (this.gameState === 'LEVEL_END' || this.gameState === 'GAME_END') return;
     if (this.gameState !== 'WAIT_CHOICE' && this.gameState !== 'CHECK_CHOICE') return;
 

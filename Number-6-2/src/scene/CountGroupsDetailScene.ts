@@ -38,6 +38,7 @@ export default class CountGroupsDetailScene extends Phaser.Scene {
   private micBtnBaseScale = 1;
   private speakerBtnBaseScale = 1;
   private speakerPlayToken = 0;
+  private wasBgmPlaying = false;
 
   private recognizing = false;
   private recognizer?: any;
@@ -831,12 +832,14 @@ export default class CountGroupsDetailScene extends Phaser.Scene {
     try {
       AudioManager.stopAllVoices?.();
     } catch {}
+    this.pauseBgmForListening();
 
     this.stopListening();
     const rec = new SpeechRecognitionCtor();
     this.recognizer = rec;
     this.recognizing = true;
     this.startMicAnim();
+    this.pauseBgmForListening();
 
     rec.lang = 'vi-VN';
     rec.interimResults = false;
@@ -932,6 +935,24 @@ export default class CountGroupsDetailScene extends Phaser.Scene {
     } catch {}
     this.recognizer = undefined;
     this.stopMicAnim();
+    this.resumeBgmAfterListening();
+  }
+
+  private pauseBgmForListening() {
+    this.wasBgmPlaying = true;
+    try {
+      AudioManager.stop('bgm_main');
+    } catch {}
+  }
+
+  private resumeBgmAfterListening() {
+    if (!this.wasBgmPlaying) return;
+    this.wasBgmPlaying = false;
+    try {
+      if (!AudioManager.isPlaying('bgm_main')) {
+        AudioManager.playWhenReady?.('bgm_main');
+      }
+    } catch {}
   }
 
   private setAccuracyScore(score: number) {

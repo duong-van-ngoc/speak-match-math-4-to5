@@ -44,7 +44,7 @@ const SOUND_MAP: Record<string, SoundConfig> = {
     "bgm_main": {
         src: `${BASE_PATH}bgm_main.mp3`,
         loop: true,
-        volume: 0.35, // tuỳ bạn, có thể giữ 1.0
+        volume: 0.2, // nhỏ hơn voice đọc
         html5: false,
         },
         
@@ -58,10 +58,18 @@ const SOUND_MAP: Record<string, SoundConfig> = {
     "applause": { src: `${BASE_PATH}applause.mp3`, volume: 1.0 },
 };
 
+const BGM_ID = "bgm_main";
+const PRIORITY_KEYS = [BGM_ID, "voice_intro"];
+
 class AudioManager {
     // Khai báo kiểu dữ liệu cho Map chứa các đối tượng Howl
     private sounds: Record<string, Howl> = {};
-    private isLoaded: boolean = false;
+    private retryTimers: Record<string, number | undefined> = {};
+    private duckCount = 0;
+    private readonly bgmBaseVolume = SOUND_MAP[BGM_ID]?.volume ?? 1.0;
+    private readonly bgmDuckVolume = Math.max(0, Math.min(1, this.bgmBaseVolume * 0.35));
+    private loadStarted = false;
+    private loadPromise: Promise<void> | null = null;
 
     
     constructor() {
@@ -76,33 +84,37 @@ class AudioManager {
      * @returns {Promise<void>}
      */
     loadAll(): Promise<void> {
-        return new Promise((resolve) => {
-            const keys = Object.keys(SOUND_MAP);
+        if (this.loadPromise) return this.loadPromise;
+        if (this.loadStarted) return Promise.resolve();
+        this.loadStarted = true;
+
+        const keys = Object.keys(SOUND_MAP);
+        const total = keys.length;
+        if (total === 0) {
+            this.loadPromise = Promise.resolve();
+            return this.loadPromise;
+        }
+
+        this.loadPromise = new Promise((resolve) => {
             let loadedCount = 0;
-            const total = keys.length;
 
-            if (total === 0) return resolve();
+            const onLoaded = () => {
+                loadedCount++;
+                if (loadedCount === total) resolve();
+            };
 
-            keys.forEach((key) => {
+            const createHowl = (key: string) => {
+                if (this.sounds[key]) return;
                 const config = SOUND_MAP[key];
-
+                const isPriority = PRIORITY_KEYS.includes(key);
                 this.sounds[key] = new Howl({
                     src: [config.src],
                     loop: config.loop ?? false,
                     volume: config.volume ?? 1.0,
-                    // Cho phép cấu hình riêng: mặc định giữ html5 = true,
-                    // riêng bgm_main đã set html5: false để dùng WebAudio.
                     html5: config.html5 ?? true,
-
-                    onload: () => {
-                        loadedCount++;
-                        if (loadedCount === total) {
-                            this.isLoaded = true;
-                            resolve();
-                        }
-                    },
+                    preload: isPriority,
+                    onload: onLoaded,
                     onloaderror: (id: number, error: unknown) => {
-                        // Chúng ta vẫn có thể chuyển nó sang string để ghi log nếu muốn
                         const errorMessage =
                             error instanceof Error
                                 ? error.message
@@ -111,16 +123,23 @@ class AudioManager {
                         console.error(
                             `[Howler Load Error] Key: ${key}, ID: ${id}, Msg: ${errorMessage}. Check file path: ${config.src}`
                         );
-
-                        loadedCount++;
-                        if (loadedCount === total) {
-                            this.isLoaded = true;
-                            resolve();
-                        }
+                        onLoaded();
                     },
                 });
-            });
+            };
+
+            keys.forEach(createHowl);
+
+            PRIORITY_KEYS.forEach((k) => this.sounds[k]?.load());
+
+            window.setTimeout(() => {
+                keys
+                    .filter((k) => !PRIORITY_KEYS.includes(k))
+                    .forEach((k) => this.sounds[k]?.load());
+            }, 0);
         });
+
+        return this.loadPromise;
     }
 
     /**
@@ -131,20 +150,109 @@ class AudioManager {
    // src/AudioManager.ts
 
 play(id: string): number | undefined {
-  if (!this.isLoaded || !this.sounds[id]) {
-    console.warn(
-      `[AudioManager] Sound ID not found or not loaded: ${id}`
-    );
+  if (!this.sounds[id]) {
+    console.warn(`[AudioManager] Sound ID not found: ${id}`);
     return;
   }
 
-  // Bỏ hoàn toàn phần if (id === "bgm_main") ...
-  return this.sounds[id].play();
+  const isVoice =
+    id.startsWith("voice_") || id.startsWith("prompt_") || id.startsWith("correct_answer_");
+
+  if (isVoice) this.duckBgmStart();
+
+  let soundId: number | undefined;
+  try {
+    soundId = this.sounds[id].play();
+  } catch (e) {
+    if (isVoice) this.duckBgmEnd();
+    throw e;
+  }
+
+  if (isVoice) {
+    this.sounds[id].once("end", () => this.duckBgmEnd());
+    this.sounds[id].once("stop", () => this.duckBgmEnd());
+  }
+
+  return soundId;
 }
 
 isPlaying(id: string): boolean {
   const sound = this.sounds[id];
   return !!sound && sound.playing();
+}
+
+private setBgmVolume(volume: number) {
+  const bgm = this.sounds[BGM_ID];
+  if (!bgm) return;
+  bgm.volume(Math.max(0, Math.min(1, volume)));
+}
+
+private duckBgmStart() {
+  if (!this.sounds[BGM_ID]) return;
+  this.duckCount++;
+  if (this.duckCount === 1) this.setBgmVolume(this.bgmDuckVolume);
+}
+
+private duckBgmEnd() {
+  if (!this.sounds[BGM_ID]) return;
+  if (this.duckCount > 0) this.duckCount--;
+  if (this.duckCount === 0) this.setBgmVolume(this.bgmBaseVolume);
+}
+
+unlock(): void {
+  const anyHowler = Howler as any;
+  const ctx: AudioContext | undefined = anyHowler.ctx || anyHowler._audioContext || anyHowler.context;
+  if (ctx && ctx.state === "suspended" && typeof ctx.resume === "function") {
+    try {
+      ctx.resume();
+    } catch {}
+  }
+}
+
+cancelRetry(id: string): void {
+  const timer = this.retryTimers[id];
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    delete this.retryTimers[id];
+  }
+}
+
+playWithRetry(
+  id: string,
+  options?: { retries?: number; delayMs?: number }
+): void {
+  const retries = options?.retries ?? 8;
+  const delayMs = options?.delayMs ?? 120;
+
+  this.cancelRetry(id);
+  const howl = this.sounds[id];
+  if (!howl) {
+    console.warn(`[AudioManager] Sound ID not found: ${id}`);
+    return;
+  }
+
+  let attemptsLeft = retries;
+  const tryPlay = () => {
+    this.unlock();
+    try {
+      howl.stop();
+    } catch {}
+    try {
+      howl.play();
+    } catch {}
+  };
+
+  const scheduleRetry = () => {
+    if (attemptsLeft <= 0) return;
+    attemptsLeft--;
+    this.retryTimers[id] = window.setTimeout(() => {
+      tryPlay();
+      scheduleRetry();
+    }, delayMs);
+  };
+
+  howl.once("playerror", () => scheduleRetry());
+  tryPlay();
 }
 
 
@@ -154,7 +262,11 @@ isPlaying(id: string): boolean {
      * @param {string} id - ID âm thanh
      */
     stop(id: string): void {
-        if (!this.isLoaded || !this.sounds[id]) return;
+        if (!this.sounds[id]) return;
+        this.cancelRetry(id);
+        if (id.startsWith("voice_") || id.startsWith("prompt_") || id.startsWith("correct_answer_")) {
+          this.duckBgmEnd();
+        }
         this.sounds[id].stop();
     }
 
@@ -165,6 +277,9 @@ isPlaying(id: string): boolean {
     }
 
     stopAll(): void {
+        Object.keys(this.retryTimers).forEach((key) => this.cancelRetry(key));
+        this.duckCount = 0;
+        this.setBgmVolume(this.bgmBaseVolume);
         Howler.stop();
     }
 

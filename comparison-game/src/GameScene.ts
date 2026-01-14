@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { sdk } from './main';
 import type { LevelConfig, CompareMode } from './types';
 import AudioManager from './AudioManager';
 
@@ -159,6 +160,15 @@ export default class GameScene extends Phaser.Scene {
     }
     if ((window as any).setRandomGameViewportBg) {
       (window as any).setRandomGameViewportBg();
+    }
+
+    // SDK: báo bắt đầu màn chơi mới
+    if (sdk && typeof sdk.progress === 'function') {
+      sdk.progress({
+        event: 'startLevel',
+        level: this.levelIndex + 1,
+        total: this.levels.length,
+      });
     }
     // Phát voice câu hỏi:
     // - Lần đầu: chờ 1 user gesture để unlock audio
@@ -407,7 +417,15 @@ export default class GameScene extends Phaser.Scene {
 
   // =============== BẮT ĐẦU MÀN ===============
   private startLevel() {
+
     if (this.levelIndex >= this.levels.length) {
+      // SDK: báo hoàn thành game
+      if (sdk && typeof sdk.complete === 'function') {
+        sdk.complete({
+          score: this.score,
+          timeMs: 0,
+        });
+      }
       this.scene.start('EndGameScene', {
         score: this.score,
         total: this.levels.length,
@@ -441,6 +459,16 @@ export default class GameScene extends Phaser.Scene {
 
   // ============ XỬ LÝ CHỌN =============
   private handleChoice(side: 'LEFT' | 'RIGHT') {
+
+    // SDK: báo người chơi đã chọn đáp án
+    if (sdk && typeof sdk.progress === 'function') {
+      sdk.progress({
+        event: 'answer',
+        level: this.levelIndex + 1,
+        side,
+      });
+    }
+
     // Ngắt ngay voice câu hỏi, giữ nguyên nhạc nền
     ['more_b', 'less_b', 'more_f', 'less_f'].forEach((key) => {
       AudioManager.stopSound(key);
@@ -459,6 +487,14 @@ export default class GameScene extends Phaser.Scene {
         : chosenCount > otherCount;
 
     if (isCorrect) {
+      // SDK: báo trả lời đúng
+      if (sdk && typeof sdk.progress === 'function') {
+        sdk.progress({
+          event: 'correct',
+          level: this.levelIndex + 1,
+        });
+      }
+
       // đã trả lời đúng và chuẩn bị sang màn phụ
       this.subgameEntered = true;
 
@@ -520,6 +556,13 @@ export default class GameScene extends Phaser.Scene {
         });
       });
     } else {
+      // SDK: báo trả lời sai
+      if (sdk && typeof sdk.progress === 'function') {
+        sdk.progress({
+          event: 'wrong',
+          level: this.levelIndex + 1,
+        });
+      }
       // dùng âm thanh sai từ AudioManager
       AudioManager.play('sfx_wrong');
 

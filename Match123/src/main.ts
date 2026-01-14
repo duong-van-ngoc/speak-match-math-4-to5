@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
 //import OverlayScene from "./OverlayScene";
 import GameScene from "./GameScene";
 import EndGameScene from "./EndGameScene";
@@ -122,11 +123,10 @@ let game: Phaser.Game | null = null;
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 
 export function ensureBgmStarted() {
-  console.log("[BGM] ensure play bgm_main");
-  // Chỉ bật nếu chưa phát; để BGM chạy liên tục xuyên suốt các màn
-  if (!AudioManager.isPlaying("bgm_main")) {
-    AudioManager.play("bgm_main");
-  }
+  // Chỉ bật nếu chưa phát; để BGM chạy liên tục xuyên suốt các màn.
+  // Thêm retry để tránh trường hợp đã click unlock nhưng audio context vẫn chưa resume kịp.
+  if (AudioManager.isPlaying("bgm_main")) return;
+  AudioManager.playWithRetry("bgm_main", { retries: 12, delayMs: 150 });
 }
 
 
@@ -184,7 +184,7 @@ function setupHtmlButtons() {
       if (!game) return;
       const scene = game.scene.getScene("GameScene") as GameScene;
       if (!scene) return;
-      scene.scene.restart({ level: scene.level });
+      (scene as any).handleReplayClick?.();
     });
   }
 
@@ -222,6 +222,65 @@ function waitForFredoka(): Promise<void> {
     }, 10);
   });
 }
+
+// ================== SDK (IRUKA HUB) ==================
+function applyResize(width: number, height: number) {
+  const gameDiv = document.getElementById("game-container");
+  if (gameDiv) {
+    gameDiv.style.width = `${width}px`;
+    gameDiv.style.height = `${height}px`;
+  }
+  game?.scale.resize(width, height);
+}
+
+function broadcastSetState(payload: any) {
+  const scene = game?.scene.getScenes(true)[0] as any;
+  scene?.applyHubState?.(payload);
+}
+
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch {}
+  return "*";
+}
+
+export const sdk = irukaGame.createGameSdk({
+  hubOrigin: getHubOrigin(),
+  onInit(_ctx: any) {
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+    });
+  },
+  onStart() {
+    game?.scene.resume("GameScene");
+    game?.scene.resume("EndGameScene");
+  },
+  onPause() {
+    game?.scene.pause("GameScene");
+  },
+  onResume() {
+    game?.scene.resume("GameScene");
+  },
+  onResize(size: any) {
+    applyResize(size.width, size.height);
+  },
+  onSetState(state: any) {
+    broadcastSetState(state);
+  },
+  onQuit() {
+    irukaGame.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs:
+        Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+    });
+  },
+});
 // ================== KHỞI TẠO GAME ==================
 async function initGame() {
   try {
@@ -230,11 +289,11 @@ async function initGame() {
     console.warn("Không load kịp font Fredoka, chạy game luôn.");
   }
 
-  try {
-    await AudioManager.loadAll();
-  } catch (e) {
-    console.warn("Không load được audio, chạy game luôn.", e);
-  }
+  // Bắt đầu load audio ngay, nhưng KHÔNG chặn việc vào game.
+  // (bgm_main + voice_intro được ưu tiên preload để lần chạm đầu phát luôn)
+  AudioManager.loadAll().catch((e) => {
+    console.warn("Không load được audio.", e);
+  });
 
   // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
   // setupGlobalBgm();

@@ -60,6 +60,9 @@
     private groupsData: GroupViewDef[] = [];
 
     init(data: { pack?: { groups: GroupViewDef[] } }) {
+        this.finishing = false;
+        this.draggingGroupId = null;
+        this.dragStartByGroupId.clear();
         // Nếu GameScene truyền pack thì dùng, không có thì fallback demo
         this.groupsData =
         data?.pack?.groups ??
@@ -76,6 +79,7 @@
     }
 
     create() {
+        this.input.enabled = true;
         try {
         (window as any).setGameButtonsVisible?.(true);
         } catch {}
@@ -246,13 +250,6 @@
         // Only finish the stage after the "correct" voice is done playing.
         try {
         await AudioManager.playCorrectAnswerAndWait();
-        } catch {}
-
-        // Optional completion voice.
-        try {
-        if (AudioManager.has('voice_complete')) {
-            await AudioManager.playVoiceInterruptAndWait?.('voice_complete', { timeoutMs: 8000 });
-        }
         } catch {}
 
         this.events.emit('minigame:done', {

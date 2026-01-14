@@ -112,8 +112,8 @@ if (container instanceof HTMLDivElement) {
   container.style.background = "transparent";
 }
 
-// Giữ tham chiếu game để tránh tạo nhiều lần (HMR, reload…)
-let game: Phaser.Game | null = null;
+// Giữ tham chiếu gamePhaser để tránh tạo nhiều lần (HMR, reload…)
+let gamePhaser: Phaser.Game | null = null;
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 
@@ -178,25 +178,18 @@ function setupHtmlButtons() {
   const replayBtn = document.getElementById("btn-replay");
   if (replayBtn) {
     replayBtn.addEventListener("click", () => {
-      if (!game) return;
-
-      // Dừng toàn bộ âm thanh trước khi chơi lại để tránh lồng nhau
+      if (!gamePhaser) return;
       AudioManager.stopAll();
-
-      // Nếu đang ở màn phụ (BalanceScene) → dừng màn phụ và quay lại GameScene của level hiện tại
-      const balance = game.scene.getScene("BalanceScene") as BalanceScene | null;
+      const balance = gamePhaser.scene.getScene("BalanceScene") as BalanceScene | null;
       if (balance && balance.scene.isActive()) {
         const levelIndex = balance.levelIndex ?? 0;
         const score = balance.score ?? 0;
-
-        game.scene.stop("BalanceScene");
-        game.scene.start("GameScene", { levelIndex, score });
+        gamePhaser.scene.stop("BalanceScene");
+        gamePhaser.scene.start("GameScene", { levelIndex, score });
         ensureBgmStarted();
         return;
       }
-
-      // Ngược lại, đang ở GameScene → restart lại level hiện tại
-      const scene = game.scene.getScene("GameScene") as GameScene | null;
+      const scene = gamePhaser.scene.getScene("GameScene") as GameScene | null;
       if (!scene) return;
       scene.scene.restart({
         levelIndex: scene.levelIndex,
@@ -254,13 +247,9 @@ async function initGame() {
     console.warn("Không load được audio, chạy game luôn.", e);
   }
 
-  // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
-  // setupGlobalBgm();
-
-  if (!game) {
-    // setRandomIntroViewportBg();
-    game = new Phaser.Game(config);
-    initRotateOrientation(game); 
+  if (!gamePhaser) {
+    gamePhaser = new Phaser.Game(config);
+    initRotateOrientation(gamePhaser); 
     setupHtmlButtons();
   }
 
@@ -276,5 +265,66 @@ async function initGame() {
     }
   }, 50);
 }
+
+// ========== IRUKA MINI GAME SDK INTEGRATION ==========
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
+
+function applyResize(width: number, height: number) {
+    const gameDiv = document.getElementById('game-container');
+    if (gameDiv) {
+        gameDiv.style.width = `${width}px`;
+        gameDiv.style.height = `${height}px`;
+    }
+    gamePhaser?.scale.resize(width, height);
+}
+
+function broadcastSetState(payload: any) {
+    const scene = gamePhaser?.scene.getScenes(true)[0] as any;
+    scene?.applyHubState?.(payload);
+}
+
+
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch {}
+  return "*";
+}
+
+export const sdk = irukaGame.createGameSdk({
+  hubOrigin: getHubOrigin(),
+  onInit() {
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+    });
+  },
+  onStart() {
+    gamePhaser?.scene.resume("GameScene");
+    gamePhaser?.scene.resume("EndGameScene");
+  },
+  onPause() {
+    gamePhaser?.scene.pause("GameScene");
+  },
+  onResume() {
+    gamePhaser?.scene.resume("GameScene");
+  },
+  onResize(size) {
+    applyResize(size.width, size.height);
+  },
+  onSetState(state) {
+    broadcastSetState(state);
+  },
+  onQuit() {
+    irukaGame.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+    });
+  },
+});
 
 document.addEventListener("DOMContentLoaded", initGame);

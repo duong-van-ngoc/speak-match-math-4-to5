@@ -1,7 +1,6 @@
 import Phaser from "phaser";
 import { preloadGameAssets, BUTTON_ASSET_URLS } from "./assetLoader";
 import AudioManager from "./AudioManager";
-import { hasIntroPlayed, markIntroPlayed } from "./rotateOrientation";
 import { ensureBgmStarted } from "./main";
 
 // ========== TYPES ==========
@@ -45,30 +44,29 @@ interface LevelConfig {
 }
 
 // ========== CONSTANTS ==========
-// Dịch ngang: 0.0 = mép trái, 1.0 = mép phải
-const HOLE_OFFSET_X_RATIO = 0.2;
+// Tâm lỗ (centroid của chấm lỗ) theo px trong ảnh gốc `public/assets/card/card.png` và `card2.png`.
+// Same logic/values as Match12.
+const HOLE_CENTER_PX_CARD = { x: 651.45, y: 113.96 }; // card.png (lỗ bên phải)
+const HOLE_CENTER_PX_CARD2 = { x: 32.47, y: 108.94 }; // card2.png (lỗ bên trái)
+const HOLE_DIAMETER_PX = 26;
 
-// Dịch dọc: 0.5 = giữa; <0.5 lên trên; >0.5 xuống dưới
-const HOLE_OFFSET_Y_LEFT_RATIO = 0.494;
-const HOLE_OFFSET_Y_RIGHT_RATIO = 0.494;
+const LINE_INNER_FACTOR = 0.08; // nhỏ hơn -> line tiến gần tâm lỗ hơn
+const LINE_THICKNESS_FACTOR = 0.8;
+const MATCH_TINT = 0xffee5e;
 
-// Bán kính lỗ = tỉ lệ theo chiều cao card gốc (225px, lỗ 32px)
-const HOLE_RADIUS_RATIO = (32 / 2) / 225;
+const AUDIO_UNLOCKED_KEY = "__audioUnlocked__";
+const HAND_TUTORIAL_KEY =
+  "__match_hand_tutorial_shown__" +
+  (typeof window !== "undefined" ? window.location.pathname : "");
 
-//const HOLE_ALONG_FACTOR = 0.85;
-const LINE_THICKNESS_FACTOR = 0.55;
-//const LINE_TRIM_FACTOR = 0.12;
-const LINE_INNER_FACTOR = 0.55;
+// Độ lệch lỗ theo đường chéo (không dùng)
+const HOLE_SLOPE_OFFSET_RATIO = 0;
 
-
-// Độ lệch lỗ theo đường chéo (chưa dùng, để 0)
-const HOLE_SLOPE_OFFSET_RATIO = 0.026;
-
-// Offset tinh chỉnh theo index từng thẻ
-const HOLE_OFFSET_NUMBER_DX = [0.139, 0.133, 0.138, 0.138];
-const HOLE_OFFSET_NUMBER_DY = [-0.06, -0.048, -0.04, -0.017];
-const HOLE_OFFSET_OBJECT_DX = [-0.138, -0.133, -0.133, -0.138];
-const HOLE_OFFSET_OBJECT_DY = [-0.06, -0.064, -0.048, -0.019];
+// Offset tinh chỉnh theo index từng thẻ (không dùng)
+const HOLE_OFFSET_NUMBER_DX = [0, 0, 0, 0];
+const HOLE_OFFSET_NUMBER_DY = [0, 0, 0, 0];
+const HOLE_OFFSET_OBJECT_DX = [0, 0, 0, 0];
+const HOLE_OFFSET_OBJECT_DY = [0, 0, 0, 0];
 
 
 // Tay hướng dẫn
@@ -164,8 +162,13 @@ export default class GameScene extends Phaser.Scene {
   objects: ImageWithData[] = [];
 
   matches: boolean[] = [];
-  permanentLines: Phaser.GameObjects.Image[] = [];
+  objectsMatched: boolean[] = [];
+  matchedObjectIdx: Array<number | null> = [];
+  matchedLines: Array<Phaser.GameObjects.Image | null> = [];
   dragLine: Phaser.GameObjects.Image | null = null;
+  seenLevels: boolean[] = [];
+  private introPlayedThisLevel = false;
+  private introCanceledThisLevel = false;
 
   isDragging: boolean = false;
   dragStartIdx: number | null = null;
@@ -189,13 +192,74 @@ export default class GameScene extends Phaser.Scene {
     preloadGameAssets(this);
   }
 
-  init(data: { level?: number }) {
-    this.level = typeof data.level === "number" ? data.level : 0;
+  init(data: { level?: number; seenLevels?: boolean[]; resetProgress?: boolean }) {
+    const requestedLevel =
+      typeof data.level === "number"
+        ? data.level
+        : Math.floor(Math.random() * Math.max(1, this.levels.length));
+    this.level = requestedLevel;
+
+    if (data.resetProgress || !Array.isArray(data.seenLevels)) {
+      this.seenLevels = Array(this.levels.length).fill(false);
+    } else {
+      const next = [...data.seenLevels];
+      while (next.length < this.levels.length) next.push(false);
+      this.seenLevels = next.slice(0, this.levels.length);
+    }
+  }
+
+  private playIntroOnce() {
+    if (this.introPlayedThisLevel) return;
+    this.introPlayedThisLevel = true;
+    this.introCanceledThisLevel = false;
+    AudioManager.cancelRetry("voice_intro");
+    AudioManager.stop("voice_intro");
+    AudioManager.playWithRetry("voice_intro", { retries: 12, delayMs: 150 });
+  }
+
+  private handleAnyPointerDown() {
+    ensureBgmStarted();
+    const win = window as any;
+    if (!win[AUDIO_UNLOCKED_KEY]) {
+      win[AUDIO_UNLOCKED_KEY] = true;
+      this.playIntroOnce();
+      return;
+    }
+    if (this.introPlayedThisLevel && !this.introCanceledThisLevel) {
+      this.introCanceledThisLevel = true;
+      AudioManager.cancelRetry("voice_intro");
+      AudioManager.stop("voice_intro");
+    }
+  }
+
+  private hideHandHint() {
+    if (!this.handHint) return;
+    this.tweens.add({
+      targets: this.handHint,
+      alpha: 0,
+      duration: 200,
+      onComplete: () => {
+        this.handHint?.destroy();
+        this.handHint = null;
+      },
+    });
+  }
+
+  handleReplayClick() {
+    AudioManager.play("sfx_click");
+    this.scene.restart({
+      level: Math.floor(Math.random() * Math.max(1, this.levels.length)),
+      seenLevels: Array(this.levels.length).fill(false),
+      resetProgress: true,
+    });
   }
 
   // Bán kính lỗ theo chiều cao thẻ hiện tại
   getHoleRadius(card: Phaser.GameObjects.Image): number {
-    return card.displayHeight * HOLE_RADIUS_RATIO;
+    const src = card.texture.getSourceImage() as HTMLImageElement | undefined;
+    const texH = src?.height || card.texture.get().height || 1;
+    const scaleY = card.displayHeight / texH;
+    return (HOLE_DIAMETER_PX / 2) * scaleY;
   }
 
   // Tính tâm lỗ trên 1 card
@@ -204,12 +268,6 @@ export default class GameScene extends Phaser.Scene {
     side: "left" | "right" = "right",
     slopeDir: number = 0
   ): HolePos {
-    const offsetX = card.displayWidth * HOLE_OFFSET_X_RATIO;
-
-    const yRatio =
-      side === "right" ? HOLE_OFFSET_Y_RIGHT_RATIO : HOLE_OFFSET_Y_LEFT_RATIO;
-
-    const baseOffsetY = card.displayHeight * (yRatio - 0.5);
     const slopeOffset = slopeDir * card.displayHeight * HOLE_SLOPE_OFFSET_RATIO;
 
     let idx = card.customData?.index ?? 0;
@@ -226,16 +284,21 @@ export default class GameScene extends Phaser.Scene {
       extraDY = card.displayHeight * (HOLE_OFFSET_OBJECT_DY[idx] || 0);
     }
 
-    const baseX =
-      side === "right"
-        ? card.x + card.displayWidth / 2 - offsetX
-        : card.x - card.displayWidth / 2 + offsetX;
+    const src = card.texture.getSourceImage() as HTMLImageElement | undefined;
+    const texW = src?.width || card.texture.get().width || 1;
+    const texH = src?.height || card.texture.get().height || 1;
 
-    const baseY = card.y + baseOffsetY + slopeOffset;
+    const hole = side === "right" ? HOLE_CENTER_PX_CARD : HOLE_CENTER_PX_CARD2;
+
+    const rx = hole.x / Math.max(1, texW);
+    const ry = hole.y / Math.max(1, texH);
+
+    const topLeftX = card.x - card.displayWidth * card.originX;
+    const topLeftY = card.y - card.displayHeight * card.originY;
 
     return {
-      x: baseX + extraDX,
-      y: baseY + extraDY,
+      x: topLeftX + rx * card.displayWidth + extraDX,
+      y: topLeftY + ry * card.displayHeight + slopeOffset + extraDY,
     };
   }
 
@@ -266,56 +329,75 @@ export default class GameScene extends Phaser.Scene {
     return { x0, y0, bodyLen, thickness, angle };
   }
 
-  drawAllLines() {
-    this.permanentLines.forEach((l) => l.destroy());
-    this.permanentLines = [];
+  // Logic vẽ line giống Join-hands-feet / Match12: line nằm giữa 2 điểm, setRotation + setDisplaySize.
+  updateLineSprite(
+    line: Phaser.GameObjects.Image,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    thickness: number,
+    trimStart = 0,
+    trimEnd = 0
+  ) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    const baseDist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    const ux = dx / baseDist;
+    const uy = dy / baseDist;
 
+    const maxTrim = Math.max(0, baseDist / 2 - 1);
+    const s = Math.min(Math.max(0, trimStart), maxTrim);
+    const e = Math.min(Math.max(0, trimEnd), maxTrim);
+
+    const ax1 = x1 + ux * s;
+    const ay1 = y1 + uy * s;
+    const ax2 = x2 - ux * e;
+    const ay2 = y2 - uy * e;
+
+    dx = ax2 - ax1;
+    dy = ay2 - ay1;
+    const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    const angle = Math.atan2(dy, dx);
+
+    line.setPosition((ax1 + ax2) / 2, (ay1 + ay2) / 2);
+    line.setRotation(angle);
+    line.setDisplaySize(dist, thickness);
+  }
+
+  drawAllLines() {
     if (!this.matches) return;
 
     for (let i = 0; i < this.matches.length; i++) {
-      if (!this.matches[i]) continue;
-
-      const startCard = this.numbers[i];
-      const n = startCard.customData!.number;
-
-      const objIdx = this.objects.findIndex(
-        (o) =>
-          o.customData!.number === n && o.texture.key.startsWith("card_yellow2")
-      );
-      if (objIdx === -1) continue;
-
-      const endCard = this.objects[objIdx];
-
-      const dyC = endCard.y - startCard.y;
-      let sStart = 0;
-      let sEnd = 0;
-
-      if (dyC > 0) {
-        // endCard nằm THẤP hơn startCard (line đi xuống)
-        sStart = -1;
-        sEnd = 1;
-      } else if (dyC < 0) {
-        // endCard nằm CAO hơn startCard (line đi lên)
-        sStart = 1;
-        sEnd = -1;
+      if (!this.matches[i]) {
+        const line = this.matchedLines[i];
+        if (line) line.setVisible(false);
+        continue;
       }
 
+      const startCard = this.numbers[i];
+      const objIdx = this.matchedObjectIdx[i];
+      if (objIdx == null) continue;
+      const endCard = this.objects[objIdx];
 
-      const start = this.getHolePos(startCard, "right", sStart);
-      const end = this.getHolePos(endCard, "left", sEnd);
+      const start = this.getHolePos(startCard, "right", 0);
+      const end = this.getHolePos(endCard, "left", 0);
 
       const rStart = this.getHoleRadius(startCard);
       const rEnd = this.getHoleRadius(endCard);
 
-      const seg = this.computeSegment(start, end, rStart, rEnd);
+      const thickness = Math.min(rStart, rEnd) * 2 * LINE_THICKNESS_FACTOR;
+      const trimStart = rStart * LINE_INNER_FACTOR;
+      const trimEnd = rEnd * LINE_INNER_FACTOR;
 
-      const line = this.add
-        .image(seg.x0, seg.y0, "line_glow")
-        .setOrigin(0, 0.5)
-        .setDisplaySize(seg.bodyLen, seg.thickness)
-        .setRotation(seg.angle);
+      let line = this.matchedLines[i];
+      if (!line) {
+        line = this.add.image(0, 0, "line_glow").setOrigin(0.5).setAlpha(1);
+        this.matchedLines[i] = line;
+      }
 
-      this.permanentLines.push(line);
+      this.updateLineSprite(line, start.x, start.y, end.x, end.y, thickness, trimStart, trimEnd);
+      line.setVisible(true);
     }
   }
 
@@ -330,17 +412,15 @@ export default class GameScene extends Phaser.Scene {
 
     
 
-// ===== BGM =====
-// ===== INTRO (chỉ đọc 1 lần) =====
-this.input.once("pointerdown", () => {
-  ensureBgmStarted();
-  if (this.level === 0 && !hasIntroPlayed()) {
-    const id = AudioManager.play("voice_intro");
-    if (id !== undefined) {
-      markIntroPlayed();
+    // ===== INTRO: lần chạm đầu chỉ để unlock audio; sau đó intro tự phát mỗi level
+    this.introPlayedThisLevel = false;
+    this.introCanceledThisLevel = false;
+    this.input.off("pointerdown", this.handleAnyPointerDown, this);
+    this.input.on("pointerdown", this.handleAnyPointerDown, this);
+
+    if ((window as any)[AUDIO_UNLOCKED_KEY]) {
+      this.time.delayedCall(0, () => this.playIntroOnce());
     }
-  }
-});
 
 
     const level = this.levels[this.level];
@@ -386,7 +466,7 @@ this.input.once("pointerdown", () => {
     const charY = height - 10;
 
     const baseCharScale = height / 720;
-    scaleChar = baseCharScale * 0.3;
+    scaleChar = baseCharScale * 0.28;
     charX = width * 0.17;
 
         if (this.textures.exists(level.character)) {
@@ -581,13 +661,17 @@ this.input.once("pointerdown", () => {
       card.setInteractive({ useHandCursor: true, cursor: "pointer" });
 
       card.on("pointerover", () => {
-        if (!card.texture || card.texture.key !== "card_yellow2") {
+        if (!this.objectsMatched[i]) {
           card.setTint(dropHoverTint);
         }
       });
 
       card.on("pointerout", () => {
-        card.clearTint();
+        if (this.objectsMatched[i]) {
+          card.setTint(MATCH_TINT);
+        } else {
+          card.clearTint();
+        }
       });
 
       if (this.textures.exists(item.asset)) {
@@ -682,41 +766,30 @@ this.input.once("pointerdown", () => {
       this.objects.push(card);
     });
 
-    // ===== HAND HINT – CHỈ LEVEL ĐẦU =====
-    if (this.level === 0) {
+    // ===== HAND HINT – CHỈ LẦN ĐẦU VÀO GAME =====
+    const win = window as any;
+    if (!win[HAND_TUTORIAL_KEY]) {
+      win[HAND_TUTORIAL_KEY] = true;
       this.createHandHintForFirstPair(items);
-
-      this.input.once("pointerdown", () => {
-        if (this.handHint) {
-          this.tweens.add({
-            targets: this.handHint,
-            alpha: 0,
-            duration: 200,
-            onComplete: () => {
-              this.handHint?.destroy();
-              this.handHint = null;
-            },
-          });
-        }
-      });
     }
 
     // ===== DRAG CONNECT =====
-    this.permanentLines = [];
+    this.matchedLines = Array(4).fill(null);
     this.dragLine = null;
     this.isDragging = false;
     this.dragStartIdx = null;
     this.matches = Array(4).fill(false);
+    this.matchedObjectIdx = Array(4).fill(null);
+    this.objectsMatched = Array(this.objects.length).fill(false);
 
     this.numbers.forEach((numCard, idx) => {
       numCard.on("pointerdown", () => {
         if (this.matches[idx]) return;
-        // Nếu voice_intro vẫn đang phát mà user bắt đầu nối,
-        // dừng toàn bộ audio rồi bật lại BGM để tránh chồng tiếng.
-        if (AudioManager.isPlaying("voice_intro")) {
-          AudioManager.stopAll();
-          ensureBgmStarted();
-        }
+        this.hideHandHint();
+        this.introCanceledThisLevel = true;
+        AudioManager.cancelRetry("voice_intro");
+        AudioManager.stop("voice_intro");
+        ensureBgmStarted();
 
         this.isDragging = true;
         this.dragStartIdx = idx;
@@ -731,7 +804,7 @@ this.input.once("pointerdown", () => {
 
         this.dragLine = this.add
           .image(start.x, start.y, "line_glow")
-          .setOrigin(0, 0.5)
+          .setOrigin(0.5)
           .setDisplaySize(1, thick)
           .setAlpha(0);
 
@@ -757,13 +830,9 @@ this.input.once("pointerdown", () => {
       const start = this.getHolePos(startCard, "right", s);
       const rStart = this.getHoleRadius(startCard);
 
-      const end = { x: p.x, y: p.y };
-      const seg = this.computeSegment(start, end, rStart, 0);
-
-      this.dragLine.x = seg.x0;
-      this.dragLine.y = seg.y0;
-      this.dragLine.setDisplaySize(seg.bodyLen, seg.thickness);
-      this.dragLine.rotation = seg.angle;
+      const thickness = rStart * 2 * LINE_THICKNESS_FACTOR;
+      const trimStart = rStart * LINE_INNER_FACTOR;
+      this.updateLineSprite(this.dragLine, start.x, start.y, p.x, p.y, thickness, trimStart, 0);
     });
 
 
@@ -776,13 +845,13 @@ this.input.once("pointerdown", () => {
 
       let matched = false;
 
-      this.objects.forEach((objCardRaw) => {
+      this.objects.forEach((objCardRaw, objIdx) => {
         const b = objCardRaw.getBounds();
         if (!Phaser.Geom.Rectangle.Contains(b, p.x, p.y)) return;
 
         const objCard = objCardRaw;
         const objN = objCard.customData!.number;
-        const objAlreadyMatched = objCard.texture.key === "card_yellow2";
+        const objAlreadyMatched = !!this.objectsMatched[objIdx];
 
         // Sai nếu số không khớp HOẶC thẻ vật đã được nối trước đó
         if ((n !== objN || objAlreadyMatched) && !this.matches[startIndex]) {
@@ -797,58 +866,29 @@ this.input.once("pointerdown", () => {
         if (n === objN && !objAlreadyMatched && !this.matches[startIndex]) {
           matched = true;
           this.matches[startIndex] = true;
+          this.objectsMatched[objIdx] = true;
+          this.matchedObjectIdx[startIndex] = objIdx;
 
           AudioManager.play("sfx_correct");
           // Phát random correct answer qua AudioManager
           AudioManager.playCorrectAnswer();
 
-          startCard.clearTint();
-          objCard.clearTint();
-
-          startCard
-            .setTexture("card_yellow")
-            .setDisplaySize(
-              startCard.customData!.cardW,
-              startCard.customData!.cardH
-            );
-
-          objCard
-            .setTexture("card_yellow2")
-            .setDisplaySize(
-              objCard.customData!.cardW,
-              objCard.customData!.cardH
-            );
+          startCard.clearTint().setTint(MATCH_TINT);
+          objCard.clearTint().setTint(MATCH_TINT);
 
           if (this.dragLine) {
-            const dyC2 = objCard.y - startCard.y;
-            let sStart = 0;
-            let sEnd = 0;
-
-            if (dyC2 > 0) {
-              // objCard nằm THẤP hơn startCard
-              sStart = -1;
-              sEnd = 1;
-            } else if (dyC2 < 0) {
-              // objCard nằm CAO hơn startCard
-              sStart = 1;
-              sEnd = -1;
-            }
-
-
-            const st = this.getHolePos(startCard, "right", sStart);
-            const ed = this.getHolePos(objCard, "left", sEnd);
+            const st = this.getHolePos(startCard, "right", 0);
+            const ed = this.getHolePos(objCard, "left", 0);
 
             const rStart = this.getHoleRadius(startCard);
             const rEnd = this.getHoleRadius(objCard);
 
-            const seg = this.computeSegment(st, ed, rStart, rEnd);
+            const thickness = Math.min(rStart, rEnd) * 2 * LINE_THICKNESS_FACTOR;
+            const trimStart = rStart * LINE_INNER_FACTOR;
+            const trimEnd = rEnd * LINE_INNER_FACTOR;
+            this.updateLineSprite(this.dragLine, st.x, st.y, ed.x, ed.y, thickness, trimStart, trimEnd);
 
-            this.dragLine.x = seg.x0;
-            this.dragLine.y = seg.y0;
-            this.dragLine.setDisplaySize(seg.bodyLen, seg.thickness);
-            this.dragLine.rotation = seg.angle;
-
-            this.permanentLines.push(this.dragLine);
+            this.matchedLines[startIndex] = this.dragLine;
             this.dragLine = null;
           }
         }
@@ -863,17 +903,26 @@ this.input.once("pointerdown", () => {
       this.dragStartIdx = null;
 
       if (this.matches.every((m) => m)) {
+        this.seenLevels[this.level] = true;
+        const remaining: number[] = [];
+        for (let li = 0; li < this.seenLevels.length; li++) {
+          if (!this.seenLevels[li]) remaining.push(li);
+        }
+        const nextLevel =
+          remaining.length > 0
+            ? remaining[Math.floor(Math.random() * remaining.length)]
+            : null;
+
         this.time.delayedCall(1500, () => {
           // Phát voice_complete qua AudioManager
           AudioManager.play("voice_complete");
 
           // Tự động chuyển màn sau khi phát âm hoàn thành
           this.time.delayedCall(100, () => {
-            const nextIndex = this.level + 1;
-            if (nextIndex >= this.levels.length) {
+            if (nextLevel == null) {
               this.scene.start("EndGameScene");
             } else {
-              this.scene.restart({ level: nextIndex });
+              this.scene.restart({ level: nextLevel, seenLevels: this.seenLevels });
             }
           });
         });

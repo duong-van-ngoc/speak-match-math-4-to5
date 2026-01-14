@@ -56,8 +56,6 @@ export default class EndGameScene extends Phaser.Scene {
             // Scene may not exist in this build.
         }
 
-        AudioManager.play("complete");
-
         this.containerEl = document.getElementById('game-container');
         if (this.containerEl) {
             this.containerEl.classList.add('dim-overlay');

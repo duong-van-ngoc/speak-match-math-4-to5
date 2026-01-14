@@ -184,8 +184,32 @@
         this.resetPromptReplayTimer();
     }
 
-    create() {
+    async create() {
         (window as any).lessonScene = this;
+
+        // --- SDK: Khởi tạo trạng thái và set tổng số câu hỏi ---
+        // Khai báo irukaGameState vào global Window
+        (window as any).irukaGameState = {
+            startTime: Date.now(),
+            currentScore: 0,
+        };
+        // Nếu có levels thì set tổng cho SDK
+        // Import sdk từ main
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        // import { sdk } from '../../main';
+        // Nếu có levels thì set tổng cho SDK
+        try {
+            // import động để tránh lỗi vòng lặp import
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const mainMod = await import('../../main');
+            if ((this as any).levels && mainMod.sdk && mainMod.sdk.progress) {
+                const totalLevels = (this as any).levels.length;
+                mainMod.sdk.progress({ levelIndex: 0, total: totalLevels });
+            }
+            // Set tổng số câu hỏi cho SDK
+            const irukaSdk = await import('@iruka-edu/mini-game-sdk');
+            irukaSdk.game.setTotal?.(5); // Sửa lại số 5 nếu cần
+        } catch {}
 
         domBackgroundManager.setBackground();
 

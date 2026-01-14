@@ -23,6 +23,7 @@ export default class GameScene extends Phaser.Scene {
   private stageOrder: number[] = [1, 2];
   private stagePos = 0;
   private connectSixStart = 0;
+  private finishing = false;
 
   private audioReady = false;
   private hasPlayedInstructionVoice = false;
@@ -78,9 +79,14 @@ export default class GameScene extends Phaser.Scene {
 
   init(data: { score?: number }) {
     this.score = data.score ?? 0;
+    this.finishing = false;
     this.hasPlayedInstructionVoice = false;
     this.playedStageGuides = new Set();
     this.stagePos = 0;
+    this.registry.set('stage2_detail_score_by_group', {});
+    this.registry.set('stage2_detail_result_by_group', {});
+    this.registry.set('stage2_detail_seen_hint_by_group', {});
+    this.registry.set('totalPoints', 0);
     const replayMode = getReplayMode();
     const sStart = (data as any)?.startStage;
     this.startStage =
@@ -104,6 +110,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   create() {
+    this.input.enabled = true;
     try {
       (window as unknown as WindowGameApi).setRandomGameViewportBg?.();
     } catch {
@@ -139,7 +146,7 @@ export default class GameScene extends Phaser.Scene {
     // Stage 1 plays its own per-object prompt; replay it once after audio is unlocked.
     const stageId = this.stageOrder[this.stagePos] ?? 0;
     if (stageId === 1) {
-      AudioManager.playVoiceInterrupt?.('voice_stage2_guide');
+      // Stage 2 guide + car prompt are handled inside CountGroupsScene.
       return;
     }
     // --- SDK tích hợp ---

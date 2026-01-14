@@ -2,6 +2,64 @@
     import { gameConfig } from './game/config';
     import { initRotateOrientation } from './rotateOrientation';
     import AudioManager from './audio/AudioManager'; // ✅ nếu path khác thì sửa lại
+    import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
+// --- SDK tích hợp GameHub ---
+function applyResize(width: number, height: number) {
+    const gameDiv = document.getElementById('game-container');
+    if (gameDiv) {
+        gameDiv.style.width = `${width}px`;
+        gameDiv.style.height = `${height}px`;
+    }
+    window.game?.scale?.resize(width, height);
+}
+
+function broadcastSetState(payload: any) {
+    const scene = window.game?.scene?.getScenes(true)[0] as any;
+    scene?.applyHubState?.(payload);
+}
+
+function getHubOrigin(): string {
+    const qs = new URLSearchParams(window.location.search);
+    const o = qs.get("hubOrigin");
+    if (o) return o;
+    try {
+        const ref = document.referrer;
+        if (ref) return new URL(ref).origin;
+    } catch {}
+    return "*";
+}
+
+export const sdk = irukaGame.createGameSdk({
+    hubOrigin: getHubOrigin(),
+    onInit() {
+        sdk.ready({
+            capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+        });
+    },
+    onStart() {
+        window.game?.scene?.resume("LessonScene");
+        window.game?.scene?.resume("EndGameScene");
+    },
+    onPause() {
+        window.game?.scene?.pause("LessonScene");
+    },
+    onResume() {
+        window.game?.scene?.resume("LessonScene");
+    },
+    onResize(size) {
+        applyResize(size.width, size.height);
+    },
+    onSetState(state) {
+        broadcastSetState(state);
+    },
+    onQuit() {
+        irukaGame.finalizeAttempt("quit");
+        sdk.complete({
+            timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+            extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+        });
+    },
+});
 
     declare global {
     interface Window {

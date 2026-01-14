@@ -1,5 +1,7 @@
 import Phaser from "phaser";
 import AudioManager from "./AudioManager";
+import { sdk } from "./main";
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
 
 function hideGameButtons() {
   (window as any).setGameButtonsVisible?.(false);
@@ -98,10 +100,13 @@ export default class EndGameScene extends Phaser.Scene {
             AudioManager.play("sfx_click");
             this.clearDimBackground();
             this.stopConfetti();
+            // --- SDK: ghi nhận retry ---
+            irukaGame.retryFromStart();
             this.scene.stop('EndGameScene');
             this.scene.start('GameScene', {
                 lessonId: this.lessonId,
                 difficulty: this.difficulty,
+                resetProgress: true,
             });
         });
 
@@ -120,24 +125,12 @@ export default class EndGameScene extends Phaser.Scene {
             AudioManager.play("sfx_click");
             this.clearDimBackground();
             this.stopConfetti();
+            // --- SDK: gửi complete khi thoát ---
+            sdk.complete({
+                timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+                extras: { reason: "user_exit", stats: irukaGame.prepareSubmitData() },
+            });
             this.scene.start('LessonSelectScene');
-            const host = (window as any).irukaHost;
-            const state = (window as any).irukaGameState || {};
-            if (host && typeof host.complete === 'function') {
-                const timeMs = state.startTime
-                    ? Date.now() - state.startTime
-                    : 0;
-                const score = state.currentScore || 0;
-                host.complete({
-                    score,
-                    timeMs,
-                    extras: {
-                        reason: 'user_exit',
-                    },
-                });
-            } else {
-                this.scene.start('LessonSelectScene');
-            }
         });
 
         [replayBtn, exitBtn].forEach((btn) => {
