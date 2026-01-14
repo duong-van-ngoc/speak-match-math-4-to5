@@ -49,10 +49,8 @@ export function preloadGameAssets(scene: Phaser.Scene): void {
   scene.load.image("next_svg", BUTTON_ASSET_URLS.next_svg);
   scene.load.image("exit_endgame", "assets/button/exit.png");
   // --- CARDS ---
-  scene.load.image("card", "assets/card/card.png");
-  scene.load.image("card2", "assets/card/card2.png");
-  scene.load.image("card_yellow", "assets/card/card_yellow.png");
-  scene.load.image("card_yellow2", "assets/card/card_yellow2.png");
+  scene.load.image("card", "assets/card/Group 13.png");
+  scene.load.image("card2", "assets/card/Group 17.png");
   scene.load.image("line_glow", "assets/card/line_glow.png");
   scene.load.image("board", "assets/card/board.png");
   scene.load.image('text', 'assets/card/text.png');
