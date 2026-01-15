@@ -23,7 +23,7 @@ export default class GameScene extends Phaser.Scene {
   private stageOrder: number[] = [0, 1];
   private stagePos = 0;
   private connectSixStart = 0;
-  private finishing = false;
+  // private finishing = false;
 
   private audioReady = false;
   private hasPlayedInstructionVoice = false;
@@ -56,7 +56,7 @@ export default class GameScene extends Phaser.Scene {
 
   init(data: { score?: number }) {
     this.score = data.score ?? 0;
-    this.finishing = false;
+    // this.finishing = false;
     this.hasPlayedInstructionVoice = false;
     this.playedStageGuides = new Set();
     this.stagePos = 0;
