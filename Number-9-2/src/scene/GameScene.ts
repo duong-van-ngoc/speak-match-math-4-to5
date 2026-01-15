@@ -132,7 +132,7 @@ export default class GameScene extends Phaser.Scene {
 
   private startStageSequence(pos: number) {
     this.stagePos = Math.max(0, Math.min(pos, this.stageOrder.length - 1));
-    const stageId = this.stageOrder[this.stagePos] ?? 0;
+    // const stageId = this.stageOrder[this.stagePos] ?? 0;
 
     // Make sure nothing from the previous stage blocks rendering/input.
     try {
