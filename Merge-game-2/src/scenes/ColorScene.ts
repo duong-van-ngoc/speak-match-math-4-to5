@@ -10,10 +10,10 @@ type ColorLevel = {
   label: string;
   total: number;
   targetColor: number;
-  // asset Png của các object bóng, bi...
   objectTextureKeys: (string | undefined)[];
-  // số lượng object mỗi bên trái/phải
   counts: [number, number];
+  bannerTextKey: string;
+  voiceGuideKey: string;
 };
 
 export class ColorScene extends Phaser.Scene {
@@ -31,9 +31,9 @@ export class ColorScene extends Phaser.Scene {
   private paletteCenter?: { x: number; y: number };
   private paletteSelectedIndex = 0;
   private paletteDefs: Array<{ c: number; label: string; spriteKey?: string }> = [
-    { c: COLORS.red, label: 'ĐỎ', spriteKey: COLOR_SCENE_IMAGE_ASSETS[0]?.key },
-    { c: COLORS.yellow, label: 'VÀNG', spriteKey: COLOR_SCENE_IMAGE_ASSETS[1]?.key },
-    { c: 0x00bfff, label: 'XANH', spriteKey: undefined }, // Thêm màu xanh biển
+    { c: COLORS.red, label: 'ĐỎ' },
+    { c: COLORS.yellow, label: 'VÀNG' },
+    { c: 0x00bfff, label: 'XANH' }, // Thêm màu xanh biển
   ];
 
   // Các object hiển thị (bóng, bi)
@@ -54,10 +54,7 @@ export class ColorScene extends Phaser.Scene {
 
   // Add per-level banner text keys for ColorScene only (not using add-text.png)
   // Level 1: 'question1' (Question (2).png), Level 2: 'question2' (Question (1).png)
-  private readonly bannerTextKeys: string[] = [
-    'question1', // Level 1: Question (2).png
-    'question2', // Level 2: Question (1).png
-  ];
+  // Removed bannerTextKeys, now per-level in colorLevels
 
   // private guideHand?: Phaser.GameObjects.Image;
   // private guideHandTween?: Phaser.Tweens.Tween;
@@ -80,14 +77,18 @@ export class ColorScene extends Phaser.Scene {
         total: 4,
         targetColor: COLORS.red,
         objectTextureKeys: ['icon_duck'],
-          counts: [3, 0],
+        counts: [3, 0],
+        bannerTextKey: 'banner_title_1',
+        voiceGuideKey: 'voice_guide_21',
       },
       {
         label: 'Chim',
         total: 4,
         targetColor: COLORS.red,
         objectTextureKeys: ['icon_bird'],
-          counts: [3, 0],
+        counts: [3, 0],
+        bannerTextKey: 'banner_title_2',
+        voiceGuideKey: 'voice_guide_22',
       },
     ];
   }
@@ -155,22 +156,16 @@ export class ColorScene extends Phaser.Scene {
   // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager (howler)
   // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager
   private playGuideVoiceForCurrentLevel() {
-    // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
-    const voiceKeys = [
-      'voice_guide_color_1',
-      'voice_guide_color_2',
-    ];
-    voiceKeys.forEach((k) => AudioManager.stop(k));
-    const key = voiceKeys[this.currentColorLevelIndex] || voiceKeys[0];
-    AudioManager.playWhenReady(key);
+    AudioManager.stopGuideVoices();
+    const level = this.getCurrentColorLevel();
+    if (level.voiceGuideKey) AudioManager.playWhenReady(level.voiceGuideKey);
   }
 
   // Phát âm thanh đúng
 
   // Phát âm thanh đúng tiếng Việt, random 1 trong 4 file
   private playCorrectAnswerSound() {
-    // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh đúng
-    ['voice_guide_color_1', 'voice_guide_color_2'].forEach((k) => AudioManager.stop(k));
+    AudioManager.stopGuideVoices();
     const idx = Math.floor(Math.random() * 4) + 1; // 1-4
     const key = `correct_answer_${idx}`;
     AudioManager.playWhenReady?.(key);
@@ -183,17 +178,16 @@ export class ColorScene extends Phaser.Scene {
 
   // Phát âm thanh sai
   private playWrongSound() {
-    // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh sai
-    ['voice_guide_color_1', 'voice_guide_color_2'].forEach((k) => AudioManager.stop(k));
+    AudioManager.stopGuideVoices();
     AudioManager.play('sfx_wrong');
   }
 
   private createNumberAssets() {
     this.boxes = [];
     const midX = this.boardRect.centerX;
-    const numberY = this.numberRowY ?? 140;
+      const numberY = this.numberRowY ?? 100;
     const maxNumber = this.dataGame.maxNumber;
-    const scale = 0.45;
+      const scale = 0.38;
     const gap = 0;
     let totalW = 0;
     const widths: number[] = [];
@@ -258,7 +252,7 @@ export class ColorScene extends Phaser.Scene {
     // Hiển thị asset vịt/chim
     this.objects = [];
     // Creates a single placeholder object that will be textured by the current level.
-    const sprite = this.add.image(0, 0, 'icon_duck').setInteractive().setScale(0.38);
+      const sprite = this.add.image(0, 0, 'icon_duck').setInteractive().setScale(0.48);
     this.objects.push(sprite);
   }
 
@@ -268,7 +262,7 @@ export class ColorScene extends Phaser.Scene {
     this.objects.forEach((obj, i) => {
       const textureKey = level.objectTextureKeys[i] ?? level.objectTextureKeys[0]!;
       if (this.textures.exists(textureKey)) {
-        obj.setTexture(textureKey).setVisible(true).setScale(0.38);
+          obj.setTexture(textureKey).setVisible(true).setScale(0.48);
       } else {
         obj.setVisible(false);
       }
@@ -460,22 +454,23 @@ export class ColorScene extends Phaser.Scene {
 
     this.boardInnerRect.setTo(innerX, innerY, innerW, innerH);
     // Thang số lên cao, thang màu xuống thấp hơn để tăng khoảng cách
-    this.numberRowY = innerY + innerH * 0.04;
+    // Dịch thang số lên trên một chút
+    this.numberRowY = innerY - 18 + innerH * 0.01;
 
     // Tăng khoảng cách giữa 2 bóng/bi
     const objSpacing = Math.min(innerW * 0.5, 300);
-    // Đặt bóng/bi xuống gần đáy board hơn, dịch xuống thêm 40px
-    const objY = innerY + innerH * 0.72 + 40;
+    // Đặt asset lên cao hơn (giảm 40px so với cũ)
+    const objY = innerY + innerH * 0.72;
     this.objectPositions = {
       leftX: this.boardInnerRect.centerX - objSpacing / 2,
       rightX: this.boardInnerRect.centerX + objSpacing / 2,
       y: objY,
     };
 
-    // Đẩy thang màu xuống thấp hơn để tăng khoảng cách với thang số
+    // Đẩy thang màu lên trên (gần thang số hơn)
     this.paletteCenter = {
       x: innerX + innerW / 2,
-      y: this.numberRowY! + 100, // tăng từ 80 lên 140
+      y: this.numberRowY! + 80,
     };
 
     this.createBoardImageIfNeeded();
@@ -623,9 +618,10 @@ export class ColorScene extends Phaser.Scene {
       this.bannerTextImage.destroy();
       this.bannerTextImage = undefined;
     }
-    // Pick the correct banner text key for the current level
-    const key = this.bannerTextKeys[this.currentColorLevelIndex] || this.bannerTextKeys[0];
-    if (this.textures.exists(key)) {
+    // Use per-level bannerTextKey
+    const level = this.getCurrentColorLevel();
+    const key = level.bannerTextKey;
+    if (key && this.textures.exists(key)) {
       this.bannerTextImage = this.add
         .image(0, 0, key)
         .setOrigin(0.5, 0.5)

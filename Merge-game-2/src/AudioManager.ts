@@ -20,7 +20,7 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   correct_answer_3: { src: `${BASE_PATH}correct_answer_3.mp3`, volume: 1.0 },
   correct_answer_4: { src: `${BASE_PATH}correct_answer_4.mp3`, volume: 1.0 },
 
-  bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.3, html5: false },
+  bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.2, html5: false },
 
   complete: { src: `${BASE_PATH}vic_sound.mp3` },
   voice_need_finish: { src: `${BASE_PATH}voice_need_finish.mp3` },
@@ -28,15 +28,32 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   voice_complete: { src: `${BASE_PATH}complete.mp3`, volume: 0.35 },
   fireworks: { src: `${BASE_PATH}fireworks.mp3`, volume: 1.0 },
   applause: { src: `${BASE_PATH}applause.mp3`, volume: 1.0 },
-  // Instruction voices for scenes
+
+
+  // Audio hướng dẫn cho từng màn (21-26): 21-22 Color, 23-24 Circle, 25-26 Count
+  voice_guide_21: { src: `${BASE_PATH}game22.mp3`, volume: 0.8 }, // Color 1
+  voice_guide_22: { src: `${BASE_PATH}game21.mp3`, volume: 0.8 }, // Color 2
+  voice_guide_23: { src: `${BASE_PATH}game25.mp3`, volume: 0.8 }, // Circle 1
+  voice_guide_24: { src: `${BASE_PATH}game24.mp3`, volume: 0.8 }, // Circle 2
+  voice_guide_25: { src: `${BASE_PATH}game26.mp3`, volume: 0.8 }, // Count 1
+  voice_guide_26: { src: `${BASE_PATH}game23.mp3`, volume: 0.8 }, // Count 2
+
   voice_guide_connect: { src: `${BASE_PATH}count.mp3`, volume: 0.8 },
-  voice_guide_color_1: { src: `${BASE_PATH}ball.mp3`, volume: 0.8 },
-  voice_guide_color_2: { src: `${BASE_PATH}marble.mp3`, volume: 0.8 },
+
   // Counting voices
   voice_count_1: { src: `${BASE_PATH}1.mp3`, volume: 1.0 },
   voice_count_2: { src: `${BASE_PATH}2.mp3`, volume: 1.0 },
-
 };
+
+const GUIDE_VOICE_KEYS = [
+  'voice_guide_21',
+  'voice_guide_22',
+  'voice_guide_23',
+  'voice_guide_24',
+  'voice_guide_25',
+  'voice_guide_26',
+  'voice_guide_connect',
+];
 
 const isIOS = () => {
   const ua = navigator.userAgent;
@@ -301,6 +318,10 @@ class AudioManager {
 
   stopAll(): void {
     Howler.stop();
+  }
+
+  stopGuideVoices(): void {
+    GUIDE_VOICE_KEYS.forEach((key) => this.stopSound(key));
   }
 
   private getCooldown(id: string): number {

@@ -110,15 +110,15 @@ export default class EndGameScene extends Phaser.Scene {
             AudioManager.play("sfx_click");
             this.clearDimBackground();
             this.stopConfetti();
-            // SDK: tính số lần chơi lại
             irukaGame.retryFromStart();
-            // Dừng các scene liên quan trước khi restart GameScene
-            this.scene.stop('EndGameScene');
-            this.scene.stop('CountConnectScene');
-            this.scene.stop('ColorScene');
-            // Restart lại GameScene để reset toàn bộ trạng thái
+            // Dừng tất cả scene trừ GameScene, sau đó restart GameScene sạch sẽ
+            this.scene.get('GameScene')?.scene.stop();
+            this.scene.get('CountConnectScene')?.scene.stop();
+            this.scene.get('ColorScene')?.scene.stop();
+            this.scene.get('CircleMarkScene')?.scene.stop();
+            this.scene.get('EndGameScene')?.scene.stop();
+            // Start lại GameScene hoàn toàn mới
             this.scene.start('GameScene');
-            // Bật lại BGM sau khi chơi lại
             ensureBgmStarted();
         });
 

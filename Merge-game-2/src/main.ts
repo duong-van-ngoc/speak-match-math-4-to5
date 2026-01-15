@@ -254,6 +254,11 @@ function setupHtmlButtons() {
       // Dừng toàn bộ âm thanh trước khi chơi lại để tránh lồng nhau
       AudioManager.stopAll();
 
+      // Dừng các scene phụ để đảm bảo chúng reset hoàn toàn
+      game.scene.stop("CountConnectScene");
+      game.scene.stop("CircleMarkScene");
+      game.scene.stop("ColorScene");
+
       // Restart lại GameScene
       const scene = game.scene.getScene("GameScene") as GameScene | null;
       if (!scene) return;
@@ -320,11 +325,23 @@ async function initGame() {
   // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
   // setupGlobalBgm();
 
+
   if (!game) {
     // setRandomIntroViewportBg();
     game = new Phaser.Game(config);
     initRotateOrientation(game); 
     setupHtmlButtons();
+
+    // Lắng nghe sự kiện kết thúc game để chuyển scene
+    game.events.on('FLOW_GO_END', (data: any) => {
+      setGameButtonsVisible(false);
+      if (game) {
+        game.scene.stop('CountConnectScene');
+        game.scene.stop('GameScene');
+        game.scene.stop('ColorScene');
+        game.scene.start('EndGameScene', data);
+      }
+    });
   }
 
   setTimeout(() => {

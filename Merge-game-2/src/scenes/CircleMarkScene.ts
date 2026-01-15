@@ -19,18 +19,15 @@
         objectTextureKeys?: (string | undefined)[];
         objectFill: number;
         objectStroke: number;
+        bannerTextKey: string;
+        voiceGuideKey: string;
     };
-    import type { MarkedCluster } from './CountConnectScene';
     export default class CircleMarkScene extends Phaser.Scene {
-        // Lưu kết quả khoanh để truyền sang màn nối
-        private clusters: MarkedCluster[] = [];
     // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
     private playGuideVoiceForCurrentLevel() {
-        // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
-        const voiceKeys = ['voice_guide_connect'];
-        voiceKeys.forEach((k) => AudioManager.stop(k));
-        const key = voiceKeys[this.currentCountLevelIndex] || voiceKeys[0];
-        AudioManager.playWhenReady(key);
+        AudioManager.stopGuideVoices();
+        const level = this.getCurrentCountLevel();
+        if (level.voiceGuideKey) AudioManager.playWhenReady(level.voiceGuideKey);
     }
 
     // private dataGame!: GameData; // Đã bỏ thang số
@@ -67,7 +64,6 @@
 
     private readonly boardAssetKey = BOARD_ASSET_KEYS.frame;
     private readonly bannerBgKey = BOARD_ASSET_KEYS.bannerBg;
-    private readonly bannerTextKey = BOARD_ASSET_KEYS.bannerText;
 
     private guideHand?: Phaser.GameObjects.Image;
     private guideHandTween?: Phaser.Tweens.Tween;
@@ -84,7 +80,7 @@
         super('CircleMarkScene');
     }
 
-    init(data: { gameData: GameData }) {
+    init(_data: { gameData: GameData }) {
         // Đã bỏ thang số
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
 
@@ -96,6 +92,8 @@
                 objectTextureKeys: [DUCK_ASSET.icon],
                 objectFill: 0xdff6ff,
                 objectStroke: 0x7cc8ff,
+                bannerTextKey: 'banner_title_3',
+                voiceGuideKey: 'voice_guide_23',
             },
             {
                 label: BIRD_ASSET.label,
@@ -103,6 +101,8 @@
                 objectTextureKeys: [BIRD_ASSET.icon],
                 objectFill: 0xffffff,
                 objectStroke: 0x6a87ff,
+                bannerTextKey: 'banner_title_4',
+                voiceGuideKey: 'voice_guide_24',
             },
         ];
     }
@@ -229,10 +229,12 @@
         const img = this.add.image(0, 0, textureKey).setOrigin(0.5).setScale(0.58);
         const frameW = img.width;
         const frameH = img.height;
+        // Để tránh lộ đường cắt ở giữa, cho overlap 2px
+        const overlap = 2;
         if (side === 'left') {
-            img.setCrop(0, 0, frameW / 2, frameH);
+            img.setCrop(0, 0, frameW / 2 + overlap, frameH);
         } else {
-            img.setCrop(frameW / 2, 0, frameW / 2, frameH);
+            img.setCrop(frameW / 2 - overlap, 0, frameW / 2 + overlap, frameH);
         }
         container.add(img);
         this.setClusterInteractive(container, true);
@@ -311,21 +313,17 @@
         }
         const cx = (minX + maxX) / 2;
         const cy = (minY + maxY) / 2;
-        const w = Math.max(30, maxX - minX);
-        const h = Math.max(30, maxY - minY);
-
-        // Lưu cluster khi khoanh xong
-        const clusterColor = bagIndex === 0 ? 'red' : 'blue';
-        // Số lượng con vật trong cụm: tạm thời lấy 1 (hoặc bạn có thể đếm theo logic riêng)
-        const n = 1;
-        this.clusters.push({
-            color: clusterColor,
-            n,
-            x: cx,
-            y: cy,
-            rx: w / 2,
-            ry: h / 2
-        });
+        // Không cho phép khoanh quá nhỏ (min 120x120): nếu nhỏ hơn thì không nhận, không vẽ elip
+        const wRaw = maxX - minX;
+        const hRaw = maxY - minY;
+        if (wRaw < 120 || hRaw < 120) {
+            this.cameras.main.shake(120, 0.01);
+            this.playWrongSound();
+            this.circling = undefined;
+            return;
+        }
+        const w = Math.max(120, wRaw);
+        const h = Math.max(120, hRaw);
 
         // Không cho phép khoanh ngoài board, cho phép vượt ranh giới 30%
         const board = this.boardRect;
@@ -340,7 +338,7 @@
             const p = pts[i];
             if (p.x < minXBoard || p.x > maxXBoard || p.y < minYBoard || p.y > maxYBoard) {
                 this.cameras.main.shake(120, 0.01);
-                ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
+                AudioManager.stopGuideVoices();
                 AudioManager.play('sfx_wrong');
                 this.circling = undefined;
                 return;
@@ -374,9 +372,9 @@
             if (inHalf) inside++;
         });
         // Chỉ cần 30% số điểm nằm trong vùng hợp lệ là được
-        if (inside < pts.length * 0.3) {
+            if (inside < pts.length * 0.3) {
             this.cameras.main.shake(120, 0.01);
-            ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
+            AudioManager.stopGuideVoices();
             AudioManager.play('sfx_wrong');
             this.circling = undefined;
             return;
@@ -410,7 +408,7 @@
     // =========================
 
     private playCorrectAnswerSound() {
-        ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
+        AudioManager.stopGuideVoices();
         const idx = Math.floor(Math.random() * 4) + 1; // 1-4
         const key = `correct_answer_${idx}`;
         AudioManager.playWhenReady?.(key);
@@ -441,8 +439,10 @@
                 const img = this.add.image(0, 0, tex).setOrigin(0.5).setScale(0.58);
                 const frameW = img.width;
                 const frameH = img.height;
-                if (index === 0) img.setCrop(0, 0, frameW / 2, frameH);
-                else img.setCrop(frameW / 2, 0, frameW / 2, frameH);
+                // Để tránh lộ đường cắt ở giữa, cho overlap 2px
+                const overlap = 2;
+                if (index === 0) img.setCrop(0, 0, frameW / 2 + overlap, frameH);
+                else img.setCrop(frameW / 2 - overlap, 0, frameW / 2 + overlap, frameH);
                 bag.add(img);
             }
             // Không vẽ hình tròn fallback nữa
@@ -450,6 +450,7 @@
             else this.setClusterInteractive(bag, false);
         });
         this.updateLevelLabel();
+        this.ensureBannerAssets();
     }
 
 
@@ -494,13 +495,13 @@
 
     private advanceCountLevel() {
         if (this.currentCountLevelIndex + 1 < this.countLevels.length) {
-            this.currentCountLevelIndex++;
-            this.resetForNextCountLevel();
-            return;
+        this.currentCountLevelIndex++;
+        this.resetForNextCountLevel();
+        return;
         }
 
-        // xong 2 level -> qua flow tiếp, truyền cả clusters sang màn nối
-        this.game.events.emit(FLOW_GO_COUNT, { clusters: this.clusters });
+        // xong 2 level -> qua flow tiếp
+        this.game.events.emit(FLOW_GO_COUNT, { levels: this.countLevels });
     }
 
 
@@ -643,14 +644,21 @@
     }
 
     private ensureBannerAssets() {
-        if (!this.textures.exists(this.bannerBgKey) && !this.textures.exists(this.bannerTextKey)) return;
+        if (!this.textures.exists(this.bannerBgKey)) return;
 
         if (!this.bannerBg && this.textures.exists(this.bannerBgKey)) {
-        this.bannerBg = this.add.image(0, 0, this.bannerBgKey).setOrigin(0.5, 0.5).setDepth(35);
+            this.bannerBg = this.add.image(0, 0, this.bannerBgKey).setOrigin(0.5, 0.5).setDepth(35);
         }
 
-        if (!this.bannerTextImage && this.textures.exists(this.bannerTextKey)) {
-        this.bannerTextImage = this.add.image(0, 0, this.bannerTextKey).setOrigin(0.5, 0.5).setDepth(36);
+        // Luôn cập nhật lại bannerTextImage khi chuyển màn
+        const level = this.getCurrentCountLevel();
+        const key = level.bannerTextKey;
+        if (this.bannerTextImage) {
+            this.bannerTextImage.destroy();
+            this.bannerTextImage = undefined;
+        }
+        if (key && this.textures.exists(key)) {
+            this.bannerTextImage = this.add.image(0, 0, key).setOrigin(0.5, 0.5).setDepth(36);
         }
 
         this.positionBannerAssets();
@@ -671,12 +679,15 @@
         this.bannerBg.setDisplaySize(targetWidth, targetHeight);
         this.bannerBg.setPosition(x, y);
 
-        if (this.bannerTextImage) {
-        const textRatio = this.getTextureRatio(this.bannerTextKey) ?? 1;
-        const textWidth = targetWidth * 0.8;
-        const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
-        this.bannerTextImage.setDisplaySize(textWidth, textHeight);
-        this.bannerTextImage.setPosition(x, y);
+        // Use per-level bannerTextKey
+        const level = this.getCurrentCountLevel();
+        const key = level.bannerTextKey;
+        if (this.bannerTextImage && key) {
+            const textRatio = this.getTextureRatio(key) ?? 1;
+            const textWidth = targetWidth * 0.8;
+            const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
+            this.bannerTextImage.setDisplaySize(textWidth, textHeight);
+            this.bannerTextImage.setPosition(x, y);
         }
     }
 
@@ -744,4 +755,10 @@
         this.guideHandTimeout = undefined;
         }
     }
+
+    // Phát âm thanh sai
+    private playWrongSound() {
+        AudioManager.stopGuideVoices();
+        AudioManager.play('sfx_wrong');
     }
+}

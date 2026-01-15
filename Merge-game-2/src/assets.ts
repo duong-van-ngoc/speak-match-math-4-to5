@@ -18,12 +18,12 @@ export const BOARD_ASSET_KEYS = {
 // Asset cho các màn: vịt và chim
 export const DUCK_ASSET = {
   icon: 'icon_duck',
-  image: assetPath('icon/Group 2.png'),
+  image: 'duck_elip',
   label: 'Vịt',
 };
 export const BIRD_ASSET = {
   icon: 'icon_bird',
-  image: assetPath('icon/Frame 100.png'),
+  image: 'bird_elip',
   label: 'Chim',
 };
 
@@ -48,32 +48,34 @@ export const COUNTING_NUMBER_IMAGE_ASSETS: PreloadImageAsset[] = [
   { key: COUNTING_NUMBER_ASSETS.keys[1], path: assetPath('number/2.png') },
 ];
 export const UI_ASSET_KEYS = {
-  answerCorrect: 'answer_correct',
-  answerWrong: 'answer_wrong',
   btnNext: 'btn_next',
   answerDefault: 'answer_default',
   btnPrimaryPressed: 'btn_primary_pressed',
   btnReplay: 'btn_replay',
   nextEnd: 'next_end',
-  pickX: 'pick_x',
-  resultCorrect: 'result_correct',
-  resultWrong: 'result_wrong',
-  cornerCharacter: 'corner_character',
-  char: 'char',
 };
 
 export const SHARED_IMAGE_ASSETS: PreloadImageAsset[] = [
   { key: BOARD_ASSET_KEYS.frame, path: assetPath('button/Rectangle 1.png') },
   { key: BOARD_ASSET_KEYS.bannerBg, path: assetPath('button/HTU.png') },
   { key: BOARD_ASSET_KEYS.bannerText, path: assetPath('text/add-text.png') },
-  { key: 'question1', path: assetPath('text/Question (2).png') }, // Level 2
-  { key: 'question2', path: assetPath('text/Question (1).png') }, // Level 3
   { key: 'bg1', path: assetPath('bg/bg1.jpg') },
   { key: 'icon_duck', path: assetPath('icon/Group 2.png') },
   { key: 'icon_bird', path: assetPath('icon/Frame 100.png') },
 ];
-export const COUNT_CONNECT_IMAGE_ASSETS: PreloadImageAsset[] = [];
-export const COLOR_SCENE_IMAGE_ASSETS: PreloadImageAsset[] = [];
+export const COUNT_CONNECT_IMAGE_ASSETS: PreloadImageAsset[] = [
+  { key: 'duck_elip', path: assetPath('icon/Frame 102.png') },
+  { key: 'bird_elip', path: assetPath('icon/Group 12.png') },
+];
+// Tiêu đề cho từng màn (1-6): 1-2 Color, 3-4 Circle, 5-6 Count
+export const COLOR_SCENE_IMAGE_ASSETS: PreloadImageAsset[] = [
+  { key: 'banner_title_1', path: assetPath('text/Question (1).png') }, // Color 1
+  { key: 'banner_title_2', path: assetPath('text/Question.png') }, // Color 2
+  { key: 'banner_title_3', path: assetPath('text/Question (4).png') }, // Circle 1 - Vịt
+  { key: 'banner_title_4', path: assetPath('text/Question (3).png') }, // Circle 2 - Chim
+  { key: 'banner_title_5', path: assetPath('text/Question (5).png') }, // Count 1
+  { key: 'banner_title_6', path: assetPath('text/Question (2).png') }, // Count 2
+];
 
 export const NUMBER_IMAGE_ASSETS: PreloadImageAsset[] = [
   { key: NUMBER_ASSETS.keys[0], path: assetPath('number/Frame 119.png') },
@@ -98,18 +100,11 @@ export const END_SCENE_IMAGE_ASSETS: PreloadImageAsset[] = [
 ];
 
 export const GAME_UI_IMAGE_ASSETS: PreloadImageAsset[] = [
-  { key: UI_ASSET_KEYS.answerCorrect, path: assetPath('button/V.png') },
-  { key: UI_ASSET_KEYS.answerWrong, path: assetPath('button/X.png') },
+
   { key: UI_ASSET_KEYS.btnNext, path: assetPath('button/next.png') },
-  { key: UI_ASSET_KEYS.answerDefault, path: assetPath('button/Ellipse 17.png') },
   { key: UI_ASSET_KEYS.btnPrimaryPressed, path: assetPath('button/HTU.png') },
   { key: UI_ASSET_KEYS.btnReplay, path: assetPath('button/replay.png') },
   { key: UI_ASSET_KEYS.nextEnd, path: assetPath('button/next_end.png') },
-  { key: UI_ASSET_KEYS.pickX, path: assetPath('button/X.png') },
-  { key: UI_ASSET_KEYS.resultCorrect, path: assetPath('button/image 86.png') },
-  { key: UI_ASSET_KEYS.resultWrong, path: assetPath('button/image 77.png') },
-  { key: UI_ASSET_KEYS.cornerCharacter, path: assetPath('char/char.png') },
-  { key: UI_ASSET_KEYS.char, path: assetPath('char/char.png') },
   { key: 'guide_hand', path: assetPath('icon/hand.png') },
 ];
 // Voice guide audio asset keys for each scene

@@ -1,69 +1,63 @@
 import Phaser from 'phaser';
-    import type { GameData } from '../data/gameData';
-    import type { NumBox } from '../ui/helpers';
-    import {
-        BOARD_ASSET_KEYS,
-        // COUNT_CONNECT_IMAGE_ASSETS,
-        // NUMBER_ASSETS,
-        loadAssetGroups,
-    } from '../assets';
-    import AudioManager from '../AudioManager';
+import type { GameData } from '../data/gameData';
+import type { NumBox } from '../ui/helpers';
+import { FLOW_GO_END } from '../flow/events';
+// import { COLORS } from '../data/gameData';
+import {
+    BOARD_ASSET_KEYS,
+    // NUMBER_ASSETS,
+    loadAssetGroups,
 
-
-// Dữ liệu cụm khoanh truyền từ màn trước
-export type MarkedCluster = {
-    color: 'red' | 'blue';
-    n: number; // số lượng con vật trong cụm
-    x: number; // tâm elip
-    y: number;
-    rx: number; // bán trục elip
-    ry: number;
-    imageData?: string; // base64 hoặc textureKey tạm (nếu có)
-};
-
+} from '../assets';
+import AudioManager from '../AudioManager';
+// Các type cần thiết cho class
 type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
-
-    type DragState = {
-    bag: SpriteOrArc; // giữ tên bag để không phải sửa nhiều logic, nhưng thực tế là "object trái/phải"
+type DragState = {
+    bag: SpriteOrArc;
     startX: number;
     startY: number;
-    };
-
-    type CountLevel = {
+};
+type CountLevel = {
     label: string;
-    counts: [number, number];
-
-    // object trái/phải
+    targetNumbers: number[]; // Số đúng cho từng lần nối
     objectTextureKeys?: (string | undefined)[];
-
-    // fallback nếu không có texture
     objectFill: number;
     objectStroke: number;
-    };
+    bannerTextKey: string;
+    voiceGuideKey: string;
+};
+export class CountConnectScene extends Phaser.Scene {
+    // Lưu offset cho từng lần nối (không phải property động)
+    private connectionOffsets: { x: number; y: number }[] = [];
+    // Vị trí xuất phát cho từng lần nối: [lần 1, lần 2]
+    // Các điểm bắt đầu trên asset cho từng lần nối (tương đối so với tâm asset)
+    private static connectOffsets = [
+        { x: -90, y: -20 }, // trái trên
+        { x: 120, y: -10 }     // giữa phải, dịch sang phải 60px
+    ];
 
-    export class CountConnectScene extends Phaser.Scene {
+    // Asset key cho bóng và bi
+    static duckKeys = ['duck_elip'];
+    static birdKeys = ['bird_elip'];
+
         // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
-        private playGuideVoiceForCurrentLevel() {
-            // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
-            const voiceKeys = [
-                'voice_guide_connect',
-            ];
-            voiceKeys.forEach((k) => AudioManager.stop(k));
-            const key = voiceKeys[this.currentCountLevelIndex] || voiceKeys[0];
-            AudioManager.playWhenReady(key);
+    private playGuideVoiceForCurrentLevel() {
+            AudioManager.stopGuideVoices();
+            const level = this.getCurrentCountLevel();
+            if (level.voiceGuideKey) AudioManager.playWhenReady(level.voiceGuideKey);
         }
     private dataGame!: GameData;
 
     private boxes: NumBox[] = [];
-    private bags: SpriteOrArc[] = []; // giờ là 2 object trái/phải
-    private locked = new Set<SpriteOrArc>();
+    private bag?: SpriteOrArc; // chỉ còn 1 object
+    private locked = false;
 
     private boardFallbackGfx?: Phaser.GameObjects.Graphics;
     private boardImage?: Phaser.GameObjects.Image;
     private boardRect = new Phaser.Geom.Rectangle();
     private boardInnerRect = new Phaser.Geom.Rectangle();
 
-    private objectPositions?: { leftX: number; rightX: number; y: number };
+    private objectPosition?: { x: number; y: number };
 
     private readonly connectionLineStyle = { width: 6, color: 0x374151, alpha: 0.9 };
     private lines!: Phaser.GameObjects.Graphics;
@@ -74,9 +68,28 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
 
     private numberRowY?: number;
 
-    // Đã bỏ logic countingLabels, isCountingSequence
+    // Đã bỏ logic đếm số
 
-    private countLevels: CountLevel[] = [];
+    private countLevels: CountLevel[] = [
+        {
+            label: 'Vịt',
+            targetNumbers: [1, 3],
+            objectTextureKeys: [CountConnectScene.duckKeys[0]],
+            objectFill: 0xdff6ff,
+            objectStroke: 0x7cc8ff,
+            bannerTextKey: 'banner_title_5',
+            voiceGuideKey: 'voice_guide_25',
+        },
+        {
+            label: 'Chim',
+            targetNumbers: [2, 2],
+            objectTextureKeys: [CountConnectScene.birdKeys[0]],
+            objectFill: 0xffffff,
+            objectStroke: 0x6a87ff,
+            bannerTextKey: 'banner_title_6',
+            voiceGuideKey: 'voice_guide_26',
+        },
+    ];
     private currentCountLevelIndex = 0;
 
     private levelLabel?: Phaser.GameObjects.Text;
@@ -86,7 +99,6 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
 
     private readonly boardAssetKey = BOARD_ASSET_KEYS.frame;
     private readonly bannerBgKey = BOARD_ASSET_KEYS.bannerBg;
-    private readonly bannerTextKey = BOARD_ASSET_KEYS.bannerText;
 
     private guideHand?: Phaser.GameObjects.Image;
     private guideHandTween?: Phaser.Tweens.Tween;
@@ -97,13 +109,8 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
         super('CountConnectScene');
     }
 
-    // Nhận thêm clusters từ màn khoanh
-    private clusters: MarkedCluster[] = [];
-    init(data: { gameData: GameData; clusters?: MarkedCluster[] }) {
+    init(data: { gameData: GameData }) {
         this.dataGame = data.gameData;
-        if (data.clusters) {
-            this.clusters = data.clusters;
-        }
     }
 
     preload() {
@@ -111,29 +118,36 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
     }
 
     create() {
-
         // Reset về level đầu tiên khi chơi lại
         this.currentCountLevelIndex = 0;
-        // Reset toàn bộ trạng thái kết nối khi vào lại scene (chơi lại)
-        this.locked = new Set();
+        this.locked = false;
         this.fixedConnections = [];
-        if (this.fixedLines) this.fixedLines.clear();
-        if (this.lines) this.lines.clear();
+        this.connectionOffsets = [];
         this.dragging = undefined;
-        // Đã bỏ clearCountingLabels
+        this.guideHandShown = false;
+        this.hideGuideHand();
+
+        this.boardImage?.destroy();
+        this.boardImage = undefined;
+        this.bannerBg?.destroy();
+        this.bannerBg = undefined;
+        this.bannerTextImage?.destroy();
+        this.bannerTextImage = undefined;
+        this.boardFallbackGfx?.destroy();
+
         this.boxes = [];
         this.boardFallbackGfx = this.add.graphics().setDepth(0);
         this.layoutBoard();
         this.scale.on('resize', this.layoutBoard, this);
 
         this.levelLabel = this.add
-            .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
-                fontFamily: 'Baloo, Arial',
-                fontSize: '26px',
-                color: '#0b1b2a',
-            })
-            .setOrigin(0.5, 0)
-            .setDepth(6);
+        .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
+            fontFamily: 'Baloo, Arial',
+            fontSize: '26px',
+            color: '#0b1b2a',
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(6);
 
         this.updateLevelLabel();
         this.levelLabel.setVisible(false);
@@ -189,67 +203,32 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
             cx += widths[i] / 2 + gap;
         }
 
-        this.lines = this.add.graphics().setDepth(4);
-        this.fixedLines = this.add.graphics().setDepth(3);
+        this.lines = this.add.graphics().setDepth(20);
+        this.fixedLines = this.add.graphics().setDepth(19);
 
-
-        // Nếu có dữ liệu clusters từ màn khoanh thì vẽ các elip đúng vị trí/màu, gom ellipse, asset, hit, text vào container để không bị lệch khi layout lại
-        this.bags = [];
-        if (this.clusters.length) {
-            this.clusters.forEach((cluster, idx) => {
-                // Tạo container tại đúng vị trí cluster
-                const group = this.add.container(cluster.x, cluster.y).setDepth(10);
-                // Vẽ elip màu đúng vị trí (tọa độ local trong container)
-                const ellipseGfx = this.add.graphics();
-                const stroke = cluster.color === 'red' ? 0xff3b30 : 0x2f6cff;
-                ellipseGfx.lineStyle(6, stroke, 1);
-                ellipseGfx.strokeEllipse(0, 0, cluster.rx * 2, cluster.ry * 2);
-
-                // Hiển thị asset (ảnh bitmap base64) nếu có imageData
-                let assetImg: Phaser.GameObjects.Image | undefined = undefined;
-                let tempTextureKey: string | undefined = undefined;
-                if (cluster.imageData) {
-                    tempTextureKey = `cluster_img_${idx}_${Date.now()}`;
-                    if (!this.textures.exists(tempTextureKey)) {
-                        this.textures.addBase64(tempTextureKey, cluster.imageData);
-                    }
-                    assetImg = this.add.image(0, 0, tempTextureKey).setOrigin(0.5);
-                    // Scale asset cho vừa elip
-                    assetImg.once('texturekeychange', () => {
-                        const scaleX = (cluster.rx * 1.5) / (assetImg!.width || 1);
-                        const scaleY = (cluster.ry * 1.5) / (assetImg!.height || 1);
-                        assetImg!.setScale(Math.min(scaleX, scaleY));
-                    });
-                }
-
-                // Tạo object ảo để kéo thả (dùng hình tròn trong elip, local 0,0)
-                const hit = this.add.circle(0, 0, Math.min(cluster.rx, cluster.ry) * 0.7, 0xffffff, 0.01)
-                    .setInteractive({ useHandCursor: true }) as Phaser.GameObjects.Arc;
-                // Gắn số lên elip (local 0,0)
-                const label = this.add.text(0, 0, String(cluster.n), {
-                    fontFamily: 'Baloo, Arial',
-                    fontSize: '38px',
-                    color: '#0b1b2a',
-                }).setOrigin(0.5);
-                hit.setData('count', cluster.n);
-                // Gom vào container: ellipse, asset, hit, label
-                const children = assetImg ? [ellipseGfx, assetImg, hit, label] : [ellipseGfx, hit, label];
-                group.add(children);
-                // Để kéo thả đúng, push hit vào bags
-                this.bags.push(hit);
-            });
-        }
+        // Asset luôn đứng yên ở giữa dưới board
+        const level = this.getCurrentCountLevel();
+        const key = level.objectTextureKeys?.[0];
+        // Đặt asset ở giữa dưới board
+        const pos = { x: this.boardRect.centerX, y: this.boardRect.bottom - 80 };
+        this.bag = this.createObject(pos.x, pos.y, 56, key, level.objectFill);
+        // Gán số đúng lần đầu tiên
+        this.bag.setData('count', level.targetNumbers[0]);
 
         // layout lại lần nữa để reposition chuẩn (nhất là khi resize / board ratio)
-
         this.layoutBoard();
 
-        // Phát voice hướng dẫn cho màn hiện tại
+        this.updateLevelLabel();
 
+        // Phát voice hướng dẫn cho màn hiện tại
         this.playGuideVoiceForCurrentLevel();
 
         // Hiển thị bàn tay hướng dẫn nối khi vào màn chơi
         this.showGuideHand(true);
+        // Đăng ký sự kiện pointerdown, pointermove, pointerup cho drag
+        this.input.on('pointerdown', this.onDown, this);
+        this.input.on('pointermove', this.onMove, this);
+        this.input.on('pointerup', this.onUp, this);
         this.input.once('pointerdown', () => {
             this.hideGuideHand();
             // Nếu bé chưa kéo sau 3s thì hiện lại bàn tay
@@ -259,27 +238,38 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
                 }
             });
         });
-        this.input.on('pointerdown', this.onDown, this);
-        this.input.on('pointermove', this.onMove, this);
-        this.input.on('pointerup', this.onUp, this);
 
-        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-        this.scale.off('resize', this.layoutBoard, this);
-            // Reset các asset để khi chơi lại sẽ tạo mới
-            this.boardImage = undefined;
-            this.bannerBg = undefined;
-            this.bannerTextImage = undefined;
-        });
+        // Đã xóa hoàn toàn logic tạo asset và vẽ sẵn các đường nối đặc biệt cho màn Chim/Vịt, bé sẽ tự nối
     }
 
-    // Đã bỏ createObject (không dùng)
+    private createObject(
+        x: number,
+        y: number,
+        radius: number,
+        textureKey?: string,
+        fillColor?: number
+    ): SpriteOrArc {
+        if (textureKey && this.textures.exists(textureKey)) {
+            // Hiển thị asset bóng/bi cùng tỉ lệ với asset số (scale 0.45)
+            const obj = this.add
+                .image(x, y, textureKey)
+                .setOrigin(0.5)
+                .setScale(0.4, 0.4)
+                .setInteractive({ useHandCursor: true });
+            // Không vẽ stroke cho asset
+            return obj;
+        }
+        // Chỉ tạo hình tròn fill, không stroke
+        return this.add
+            .circle(x, y, radius, fillColor)
+            .setInteractive({ useHandCursor: true }) as Phaser.GameObjects.Arc;
+    }
 
     private onDown(pointer: Phaser.Input.Pointer) {
-        const bag = this.bags.find((b) => b.getBounds().contains(pointer.x, pointer.y));
-        if (!bag) return;
-        if (this.locked.has(bag)) return;
-        this.dragging = { bag, startX: bag.x, startY: bag.y };
-        // Ẩn bàn tay hướng dẫn khi người chơi bắt đầu kéo
+        if (!this.bag) return;
+        if (!this.bag.getBounds().contains(pointer.x, pointer.y)) return;
+        if (this.locked) return;
+        this.dragging = { bag: this.bag, startX: this.bag.x, startY: this.bag.y };
         this.hideGuideHand();
     }
 
@@ -288,12 +278,22 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
 
         this.lines.clear();
         this.lines.lineStyle(
-        this.connectionLineStyle.width,
-        this.connectionLineStyle.color,
-        this.connectionLineStyle.alpha
+            this.connectionLineStyle.width,
+            this.connectionLineStyle.color,
+            this.connectionLineStyle.alpha
         );
+        // Xác định điểm bắt đầu theo lần nối
+        const bag = this.dragging.bag;
+        // const level = this.getCurrentCountLevel(); // Không dùng
+        const currentIndex = this.fixedConnections.length;
+        let startX = bag.x;
+        let startY = bag.y;
+        if (CountConnectScene.connectOffsets[currentIndex]) {
+            startX += CountConnectScene.connectOffsets[currentIndex].x;
+            startY += CountConnectScene.connectOffsets[currentIndex].y;
+        }
         this.lines.beginPath();
-        this.lines.moveTo(this.dragging.startX, this.dragging.startY);
+        this.lines.moveTo(startX, startY);
         this.lines.lineTo(pointer.x, pointer.y);
         this.lines.strokePath();
     }
@@ -302,54 +302,55 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
         if (!this.dragging) return;
 
         const bag = this.dragging.bag;
-        const count = bag.getData('count') as number;
-
+        const level = this.getCurrentCountLevel();
+        const currentIndex = this.fixedConnections.length;
+        const expectedNumber = level.targetNumbers[currentIndex];
+        // Tính lại điểm bắt đầu để kiểm tra va chạm nếu cần (nếu muốn kiểm tra vùng click trên asset, có thể mở rộng logic này)
         const hit = this.findBox(pointer.x, pointer.y);
         this.lines.clear();
 
-        if (!hit || hit.n !== count) {
+        if (!hit || hit.n !== expectedNumber) {
             this.cameras.main.shake(120, 0.01);
-            // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh sai
-            ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
+            AudioManager.stopGuideVoices();
             AudioManager.play('sfx_wrong');
             this.dragging = undefined;
-            // Không hiện lại bàn tay khi sai
+            this.redrawFixedLines();
             return;
         }
 
-        // đúng: “khóa” object + highlight ô
-        this.locked.add(bag);
+        // Đánh dấu đã nối đúng, disable tạm thời asset
         bag.disableInteractive();
-
-        // Nếu dùng asset số thì không vẽ khung highlight
         if (!hit.image) {
             hit.text.setColor('#0b1b2a');
             hit.setNumberTint?.(0x0b1b2a);
         }
-
-        if (!this.fixedConnections.some((conn) => conn.bag === bag)) {
-            this.fixedConnections.push({ bag, box: hit });
-            this.redrawFixedLines();
-        }
-
-        // Phát âm thanh đúng mỗi lần ghép đúng
+        // Lưu lại offset cho lần nối này vào mảng riêng
+        const offset = CountConnectScene.connectOffsets[currentIndex] || { x: 0, y: 0 };
+        this.connectionOffsets[this.fixedConnections.length] = offset;
+        this.fixedConnections.push({ bag, box: hit });
+        this.redrawFixedLines();
         AudioManager.play('sfx_correct');
-            // Phát âm thanh đúng theo thứ tự (correct_answer_1, 2, 3, 4)
-            this.playCorrectAnswerSound();
-
-
+        this.playCorrectAnswerSound();
         this.dragging = undefined;
-        if (this.locked.size === this.bags.length) {
+
+        // Kiểm tra đã đủ số lần nối đúng chưa
+        if (this.fixedConnections.length >= level.targetNumbers.length) {
+            this.locked = true;
             this.time.delayedCall(450, () => {
                 this.advanceCountLevel();
             });
-        } // Không hiện lại bàn tay khi chưa xong
+        } else {
+            // Nếu chưa đủ, chỉ cập nhật số đúng tiếp theo và enable lại asset
+            const idx = this.fixedConnections.length;
+            if (this.bag) this.bag.setData('count', level.targetNumbers[idx]);
+            if (this.bag) this.bag.setInteractive({ useHandCursor: true });
+            this.updateLevelLabel();
+        }
     }
 
     // Phát âm thanh đúng tiếng Việt, random 1 trong 4 file
     private playCorrectAnswerSound() {
-        // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh đúng
-        ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
+        AudioManager.stopGuideVoices();
         const idx = Math.floor(Math.random() * 4) + 1; // 1-4
         const key = `correct_answer_${idx}`;
         AudioManager.playWhenReady?.(key);
@@ -366,19 +367,23 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
 
     private updateLevelLabel() {
         if (!this.levelLabel || this.levelLabel.scene == null) return;
-        // Nếu dùng clusters thì không có label
-        if (!this.countLevels.length) {
-            this.levelLabel.setText('');
-            this.levelLabel.setVisible(false);
-            return;
-        }
         const level = this.getCurrentCountLevel();
         this.levelLabel.setText(`Màn ${this.currentCountLevelIndex + 1} • ${level.label}`);
         this.levelLabel.setPosition(this.boardRect.centerX, this.boardRect.y + 18);
-        this.levelLabel.setVisible(true);
     }
 
-    // Không cần applyCurrentLevelToObjects nữa vì đã dùng dữ liệu khoanh
+    private applyCurrentLevelToObject() {
+        const level = this.getCurrentCountLevel();
+        if (!this.bag) return;
+        // Luôn gán số đúng cho lần đầu tiên của level
+        this.bag.setData('count', level.targetNumbers[0]);
+        const tex = level.objectTextureKeys?.[0];
+        if (tex && 'setTexture' in this.bag && this.textures.exists(tex)) {
+            (this.bag as Phaser.GameObjects.Image).setTexture(tex);
+        }
+        this.updateLevelLabel();
+        this.ensureBannerAssets();
+    }
 
     private resetNumberBoxes() {
         this.boxes.forEach((box) => {
@@ -395,29 +400,21 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
     }
 
     private resetForNextCountLevel() {
-        this.locked.clear();
+        this.locked = false;
         this.fixedConnections = [];
         this.fixedLines?.clear();
         this.lines.clear();
         this.dragging = undefined;
 
-        // Đã bỏ clearCountingLabels
+        // Đã bỏ logic clearCountingLabels
         this.resetNumberBoxes();
 
-        // mở lại kéo thả
-        this.bags.forEach((bag) => bag.setInteractive({ useHandCursor: true }));
+        if (this.bag) this.bag.setInteractive({ useHandCursor: true });
 
-        // đổi texture + count theo level
-        this.applyCurrentLevelToObjects();
-
-        // Phát lại voice hướng dẫn khi chuyển màn
+        this.applyCurrentLevelToObject();
         this.playGuideVoiceForCurrentLevel();
-
-        // dùng asset cho thang số
         this.replaceNumberBoxesWithAssets();
-
         this.redrawFixedLines();
-        // Hiển thị lại bàn tay hướng dẫn nối lần đầu tiên khi qua màn mới
         this.guideHandShown = false;
         this.showGuideHand(true);
         this.hideGuideHand();
@@ -430,13 +427,8 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
         return;
         }
 
-        // xong 2 level -> qua flow tiếp (kết thúc)
-        this.game.events.emit('FLOW_GO_END', {
-            scene: this.scene.key,
-            isVictory: true,
-            marblesTotal: 0,
-            ballsTotal: 0
-        }); // Bỏ ép kiểu FlowEndPayload vì không cần thiết
+        // xong 2 level -> qua flow tiếp
+        this.game.events.emit(FLOW_GO_END);
     }
 
     // Thay thế thang số bằng asset hình ảnh
@@ -471,19 +463,19 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
 
         const w = this.scale.width;
         const h = this.scale.height;
-        const maxW = Math.min(1100, w * 0.92); // board nhỏ lại
-        const maxH = Math.min(540, h * 0.8); // board nhỏ lại
+        const maxW = Math.min(1100, w * 0.92);
+        const maxH = Math.min(540, h * 0.8);
 
         const ratio = this.getBoardAssetRatio();
         let boardW = maxW;
         let boardH = maxH;
 
         if (ratio) {
-        boardH = boardW / ratio;
-        if (boardH > maxH) {
-            boardH = maxH;
-            boardW = boardH * ratio;
-        }
+            boardH = boardW / ratio;
+            if (boardH > maxH) {
+                boardH = maxH;
+                boardW = boardH * ratio;
+            }
         }
 
         const boardX = (w - boardW) / 2;
@@ -501,31 +493,30 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
         const innerH = boardH - padTop - padBottom;
 
         this.boardInnerRect.setTo(innerX, innerY, innerW, innerH);
-        this.numberRowY = innerY + innerH * 0.15;
+        // Đẩy hàng số lên trên (giảm hệ số từ 0.15 xuống 0.05)
+        this.numberRowY = innerY + innerH * 0.05;
 
-        // const objSpacing = Math.min(innerW * 0.5, 300); // Đã bỏ vì không dùng
-        // Đặt object ở giữa, không còn 2 bên
+        // Đặt object xuống gần đáy board hơn
         const objY = innerY + innerH * 0.72;
-        this.objectPositions = {
-            leftX: this.boardInnerRect.centerX,
-            rightX: this.boardInnerRect.centerX,
+        this.objectPosition = {
+            x: this.boardInnerRect.centerX,
             y: objY,
         };
 
         this.createBoardImageIfNeeded();
         if (this.boardImage) {
-        this.boardImage.setPosition(boardX + boardW / 2, boardY + boardH / 2);
-        this.boardImage.setDisplaySize(boardW, boardH);
-        this.boardFallbackGfx.clear();
+            this.boardImage.setPosition(boardX + boardW / 2, boardY + boardH / 2);
+            this.boardImage.setDisplaySize(boardW, boardH);
+            this.boardFallbackGfx.clear();
         } else {
-        this.drawBoardFrame();
+            this.drawBoardFrame();
         }
 
         this.repositionNumberBoxes();
-        this.positionObjects();
-        this.redrawFixedLines();
+        this.positionObject();
         this.ensureBannerAssets();
         this.updateLevelLabel();
+        this.redrawFixedLines();
     }
 
     private drawBoardFrame() {
@@ -577,47 +568,42 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
         });
     }
 
-    private positionObjects() {
-        if (!this.bags.length) return;
-
-        // Nếu có clusters (tọa độ đã là world), giữ nguyên vị trí, không reposition
-        if (this.clusters && this.clusters.length) return;
-
-        if (!this.objectPositions) return;
-        const centerX = this.objectPositions.leftX;
-        const y = this.objectPositions.y;
-        this.bags.forEach((bag) => {
-            bag.setPosition(centerX, y);
-        });
+    private positionObject() {
+        if (!this.bag || !this.objectPosition) return;
+        this.bag.setPosition(this.objectPosition.x, this.objectPosition.y);
     }
 
     private redrawFixedLines() {
         const gfx = this.fixedLines;
         if (!gfx) return;
-
         gfx.clear();
         if (!this.fixedConnections.length) return;
-
-        this.fixedConnections.forEach(({ bag, box }) => {
-            // box.rect có thể undefined, dùng box.image nếu là asset số
+        gfx.lineStyle(
+            this.connectionLineStyle.width,
+            this.connectionLineStyle.color,
+            this.connectionLineStyle.alpha
+        );
+        this.fixedConnections.forEach(({ bag, box }, idx) => {
             let bounds;
             if (box.rect) {
                 bounds = box.rect.getBounds();
             } else if (box.image) {
                 bounds = box.image.getBounds();
             } else {
-                return; // không có gì để nối
+                return;
             }
-            const startX = bag.x;
-            const startY = bag.y;
+            // Lấy offset từ mảng connectionOffsets nếu có
+            let startX = bag.x;
+            let startY = bag.y;
+            if (this.connectionOffsets[idx]) {
+                startX += this.connectionOffsets[idx].x;
+                startY += this.connectionOffsets[idx].y;
+            } else if (CountConnectScene.connectOffsets[idx]) {
+                startX += CountConnectScene.connectOffsets[idx].x;
+                startY += CountConnectScene.connectOffsets[idx].y;
+            }
             const endX = bounds.centerX;
             const endY = bounds.centerY;
-
-            gfx.lineStyle(
-                this.connectionLineStyle.width,
-                this.connectionLineStyle.color,
-                this.connectionLineStyle.alpha
-            );
             gfx.beginPath();
             gfx.moveTo(startX, startY);
             gfx.lineTo(endX, endY);
@@ -646,20 +632,27 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
     }
 
     private ensureBannerAssets() {
-        if (!this.textures.exists(this.bannerBgKey) && !this.textures.exists(this.bannerTextKey)) return;
+        if (!this.textures.exists(this.bannerBgKey)) return;
 
         if (!this.bannerBg && this.textures.exists(this.bannerBgKey)) {
-        this.bannerBg = this.add
-            .image(0, 0, this.bannerBgKey)
-            .setOrigin(0.5, 0.5)
-            .setDepth(35);
+            this.bannerBg = this.add
+                .image(0, 0, this.bannerBgKey)
+                .setOrigin(0.5, 0.5)
+                .setDepth(35);
         }
 
-        if (!this.bannerTextImage && this.textures.exists(this.bannerTextKey)) {
-        this.bannerTextImage = this.add
-            .image(0, 0, this.bannerTextKey)
-            .setOrigin(0.5, 0.5)
-            .setDepth(36);
+        // Luôn cập nhật lại bannerTextImage khi chuyển màn
+        const level = this.getCurrentCountLevel();
+        const key = level.bannerTextKey;
+        if (this.bannerTextImage) {
+            this.bannerTextImage.destroy();
+            this.bannerTextImage = undefined;
+        }
+        if (key && this.textures.exists(key)) {
+            this.bannerTextImage = this.add
+                .image(0, 0, key)
+                .setOrigin(0.5, 0.5)
+                .setDepth(36);
         }
 
         this.positionBannerAssets();
@@ -680,13 +673,15 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
         this.bannerBg.setDisplaySize(targetWidth, targetHeight);
         this.bannerBg.setPosition(x, y);
 
-        if (this.bannerTextImage) {
-        // Tăng kích thước asset banner text lên 1.1 lần so với mặc định
-        const textRatio = this.getTextureRatio(this.bannerTextKey) ?? 1;
-        const textWidth = targetWidth * 0.8; // tăng từ 0.7 lên 0.77
-        const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
-        this.bannerTextImage.setDisplaySize(textWidth, textHeight);
-        this.bannerTextImage.setPosition(x, y);
+        // Use per-level bannerTextKey
+        const level = this.getCurrentCountLevel();
+        const key = level.bannerTextKey;
+        if (this.bannerTextImage && key) {
+            const textRatio = this.getTextureRatio(key) ?? 1;
+            const textWidth = targetWidth * 0.8;
+            const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
+            this.bannerTextImage.setDisplaySize(textWidth, textHeight);
+            this.bannerTextImage.setPosition(x, y);
         }
     }
 
@@ -700,32 +695,24 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
         return width / height;
     }
 
-    // Đã bỏ logic đếm (counting sequence)
+    // Đã bỏ logic đếm số (showCountingSequence, clearCountingLabels)
 
     // Hiển thị bàn tay hướng dẫn nối từ object đến số đúng
     private showGuideHand(first: boolean) {
-        // Xóa bàn tay cũ nếu có
         this.hideGuideHand();
-        // Chỉ hiện lần đầu hoặc khi timeout
         if (first && this.guideHandShown) return;
-        // Chỉ hiện khi chưa ghép đúng hết
-        if (this.locked.size === this.bags.length) return;
-        if (!this.bags.length || !this.boxes.length) return;
-        // Chọn object chưa nối
-        const bag = this.bags.find(b => !this.locked.has(b));
-        if (!bag) return;
+        if (this.locked) return;
+        if (!this.bag || !this.boxes.length) return;
+        const bag = this.bag;
         const count = bag.getData('count') as number;
-        // Tìm box đúng
         const box = this.boxes.find(b => b.n === count);
         if (!box || !box.image) return;
-        // Tạo sprite bàn tay (asset là 'guide_hand')
         if (!this.textures.exists('guide_hand')) return;
         this.guideHand = this.add.image(bag.x, bag.y, 'guide_hand')
             .setOrigin(0.2, 0.1)
             .setScale(0.5)
             .setDepth(100)
             .setAlpha(0.92);
-        // Tween di chuyển bàn tay từ object đến số đúng
         this.guideHandTween = this.tweens.add({
             targets: this.guideHand,
             x: box.image.x,
@@ -735,4 +722,20 @@ type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
             yoyo: true,
             repeat: -1,
         });
-        if (first) this.guideHandShown 
+        if (first) this.guideHandShown = true;
+    }
+    private hideGuideHand() {
+        if (this.guideHand) {
+            this.guideHand.destroy();
+            this.guideHand = undefined;
+        }
+        if (this.guideHandTween) {
+            this.guideHandTween.stop();
+            this.guideHandTween = undefined;
+        }
+        if (this.guideHandTimeout) {
+            this.guideHandTimeout.remove(false);
+            this.guideHandTimeout = undefined;
+        }
+    }
+    }
