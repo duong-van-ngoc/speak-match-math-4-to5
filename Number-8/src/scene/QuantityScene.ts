@@ -87,13 +87,13 @@
             ignorePerItemScaleMul: true,
         },
         [COUNT_AND_PAINT_ASSET_KEYS.redEnvelope]: {
-            scaleMul: 2.2,
+            scaleMul: 1.7,
             maxScaleMul: 6.0,
-            offsetX: 40,
-            offsetY: 20,
-            spreadYMul: 1.5,
+            offsetX: 0,
+            offsetY: 0,
+            spreadYMul: 1.6, // tăng dãn dọc
             gapYMul: 1.4,
-            labelOffsetY: -16,
+            labelOffsetY: 14, // dịch asset số xuống
             labelScaleMul: 0.9,
             indexScaleStepMul: 0,
             ignorePerItemOffsets: true,
