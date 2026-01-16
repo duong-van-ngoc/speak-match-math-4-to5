@@ -1,5 +1,7 @@
 import { Howl, Howler } from 'howler';
 
+const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
+
 interface SoundConfig {
   src: string;
   loop?: boolean;
@@ -77,6 +79,21 @@ class AudioManager {
     Howler.autoUnlock = true;
     Howler.volume(1.0);
     (Howler as any).html5PoolSize = 100;
+  }
+
+  private isUserGestureUnlocked(): boolean {
+    try {
+      return typeof window !== 'undefined' && !!(window as any)?.[AUDIO_UNLOCKED_KEY];
+    } catch {
+      return false;
+    }
+  }
+
+  private shouldDeferUntilUnlocked(): boolean {
+    // If the app hasn't received a user gesture yet, any scene-create "auto play"
+    // will be blocked on mobile/autoplay-restricted browsers and won't retry by itself.
+    if (this.unlocked || this.unlocking) return false;
+    return !this.isUserGestureUnlocked();
   }
 
   loadAll(): Promise<void> {
@@ -192,6 +209,10 @@ class AudioManager {
       this.queuedUnlockPlays[id] = true;
       return;
     }
+    if (this.shouldDeferUntilUnlocked()) {
+      this.queuedUnlockPlays[id] = true;
+      return;
+    }
 
     const now = Date.now();
     const cooldown = this.getCooldown(id);
@@ -216,6 +237,10 @@ class AudioManager {
 
   playWhenReady(id: string): void {
     if (this.unlocking) {
+      this.queuedUnlockPlays[id] = true;
+      return;
+    }
+    if (this.shouldDeferUntilUnlocked()) {
       this.queuedUnlockPlays[id] = true;
       return;
     }
@@ -266,6 +291,10 @@ class AudioManager {
 
   playFromUrl(id: string, src: string, opts?: { loop?: boolean; volume?: number; html5?: boolean }): number | undefined {
     if (this.unlocking) {
+      this.queuedUnlockPlays[id] = true;
+      return;
+    }
+    if (this.shouldDeferUntilUnlocked()) {
       this.queuedUnlockPlays[id] = true;
       return;
     }
