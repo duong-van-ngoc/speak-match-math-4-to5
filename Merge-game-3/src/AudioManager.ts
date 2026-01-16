@@ -187,6 +187,14 @@ class AudioManager {
   }
 
   play(id: string): number | undefined {
+    // Autoplay is blocked on most browsers until the first user gesture.
+    // If a scene requests audio before unlock (e.g. voice guide in `create()`),
+    // queue it and let `unlockAndWarmup()` flush on the first gesture.
+    if (!this.unlocked) {
+      this.queuedUnlockPlays[id] = true;
+      return;
+    }
+
     if (this.unlocking) {
       this.queuedUnlockPlays[id] = true;
       return;
@@ -220,6 +228,16 @@ class AudioManager {
   }
 
   playWhenReady(id: string): void {
+    if (!this.unlocked) {
+      this.queuedUnlockPlays[id] = true;
+
+      // Still kick off loading so playback can start immediately after unlock.
+      const sound = this.sounds[id];
+      const state = (sound as any)?.state?.() as 'unloaded' | 'loading' | 'loaded' | undefined;
+      if (sound && state === 'unloaded') sound.load();
+      return;
+    }
+
     if (this.unlocking) {
       this.queuedUnlockPlays[id] = true;
       return;
@@ -270,6 +288,11 @@ class AudioManager {
   }
 
   playFromUrl(id: string, src: string, opts?: { loop?: boolean; volume?: number; html5?: boolean }): number | undefined {
+    if (!this.unlocked) {
+      this.queuedUnlockPlays[id] = true;
+      return;
+    }
+
     if (this.unlocking) {
       this.queuedUnlockPlays[id] = true;
       return;
