@@ -111,12 +111,13 @@ export default class EndGameScene extends Phaser.Scene {
             this.clearDimBackground();
             this.stopConfetti();
             irukaGame.retryFromStart();
-            // Dừng tất cả scene trừ GameScene, sau đó restart GameScene sạch sẽ
-            this.scene.get('GameScene')?.scene.stop();
-            this.scene.get('CountConnectScene')?.scene.stop();
-            this.scene.get('ColorScene')?.scene.stop();
-            this.scene.get('CircleMarkScene')?.scene.stop();
-            this.scene.get('EndGameScene')?.scene.stop();
+            // Stop các scene theo key để đảm bảo shutdown + reset hoàn toàn
+            this.scene.stop('CountConnectScene');
+            this.scene.stop('ColorScene');
+            this.scene.stop('CircleMarkScene');
+            this.scene.stop('GameScene');
+            this.scene.stop('EndGameScene');
+
             // Start lại GameScene hoàn toàn mới
             this.scene.start('GameScene');
             ensureBgmStarted();

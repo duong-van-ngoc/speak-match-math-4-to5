@@ -240,6 +240,19 @@ export class CountConnectScene extends Phaser.Scene {
         });
 
         // Đã xóa hoàn toàn logic tạo asset và vẽ sẵn các đường nối đặc biệt cho màn Chim/Vịt, bé sẽ tự nối
+
+        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+            this.scale.off('resize', this.layoutBoard, this);
+            this.hideGuideHand();
+            this.input.off('pointerdown', this.onDown, this);
+            this.input.off('pointermove', this.onMove, this);
+            this.input.off('pointerup', this.onUp, this);
+
+            // Reset các asset để khi chơi lại sẽ tạo mới
+            this.boardImage = undefined;
+            this.bannerBg = undefined;
+            this.bannerTextImage = undefined;
+        });
     }
 
     private createObject(

@@ -333,13 +333,27 @@
         const minYBoard = board.y - board.height * allowMargin;
         const maxYBoard = board.bottom + board.height * allowMargin;
 
+        // Không cho phép khoanh gần các góc của board (khoanh vào góc là sai).
+        // Nới rộng vùng "cấm góc" để bé khoanh sát góc sẽ bị tính sai rõ ràng hơn.
+        const cornerPadX = board.width * 0.25;
+        const cornerPadY = board.height * 0.25;
+        const inTopLeftCorner = cx < board.x + cornerPadX && cy < board.y + cornerPadY;
+        const inTopRightCorner = cx > board.right - cornerPadX && cy < board.y + cornerPadY;
+        const inBottomLeftCorner = cx < board.x + cornerPadX && cy > board.bottom - cornerPadY;
+        const inBottomRightCorner = cx > board.right - cornerPadX && cy > board.bottom - cornerPadY;
+        if (inTopLeftCorner || inTopRightCorner || inBottomLeftCorner || inBottomRightCorner) {
+            this.cameras.main.shake(120, 0.01);
+            this.playWrongSound();
+            this.circling = undefined;
+            return;
+        }
+
         // Nếu có điểm nào vượt quá vùng cho phép thì báo sai luôn
         for (let i = 0; i < pts.length; i++) {
             const p = pts[i];
             if (p.x < minXBoard || p.x > maxXBoard || p.y < minYBoard || p.y > maxYBoard) {
                 this.cameras.main.shake(120, 0.01);
-                AudioManager.stopGuideVoices();
-                AudioManager.play('sfx_wrong');
+                this.playWrongSound();
                 this.circling = undefined;
                 return;
             }

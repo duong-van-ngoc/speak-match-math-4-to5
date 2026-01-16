@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import type { GameData } from '../data/gameData';
 import { COLORS } from '../data/gameData';
 import { FLOW_GO_CIRCLE_MARK } from '../flow/events';
-import { BOARD_ASSET_KEYS, COLOR_SCENE_IMAGE_ASSETS, loadAssetGroups } from '../assets';
+import { BOARD_ASSET_KEYS, loadAssetGroups } from '../assets';
 import AudioManager from '../AudioManager';
 import type { NumBox } from '../ui/helpers';
 
