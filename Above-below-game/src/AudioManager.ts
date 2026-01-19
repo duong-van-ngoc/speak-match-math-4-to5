@@ -46,6 +46,8 @@ const isIOS = () => {
   return iDevice || iPadOS;
 };
 
+const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
+
 class AudioManager {
   private sounds: Record<string, Howl> = {};
   private lastPlayTimes: Record<string, number> = {};
@@ -61,6 +63,24 @@ class AudioManager {
     Howler.autoUnlock = true;
     Howler.volume(1.0);
     (Howler as any).html5PoolSize = 100;
+  }
+
+  private isUserGestureUnlocked(): boolean {
+    try {
+      return !!(window as any)?.[AUDIO_UNLOCKED_KEY];
+    } catch {
+      return false;
+    }
+  }
+
+  private shouldDeferUntilUnlock(): boolean {
+    // If we've already completed our own warmup/unlock, proceed normally.
+    if (this.unlocked) return false;
+    // If a user gesture already happened (main.ts marks this), allow immediate playback.
+    if (this.isUserGestureUnlocked()) return false;
+    // Otherwise, most browsers will block playback and (sometimes) throw on the first attempt.
+    // Defer so the first gesture can unlock audio, then we replay automatically.
+    return true;
   }
 
   loadAll(): Promise<void> {
@@ -177,6 +197,11 @@ class AudioManager {
       return;
     }
 
+    if (this.shouldDeferUntilUnlock()) {
+      this.queuedUnlockPlays[id] = true;
+      return;
+    }
+
     const now = Date.now();
     const cooldown = this.getCooldown(id);
     const lastTime = this.lastPlayTimes[id] ?? 0;
@@ -200,6 +225,11 @@ class AudioManager {
 
   playWhenReady(id: string): void {
     if (this.unlocking) {
+      this.queuedUnlockPlays[id] = true;
+      return;
+    }
+
+    if (this.shouldDeferUntilUnlock()) {
       this.queuedUnlockPlays[id] = true;
       return;
     }
@@ -250,6 +280,11 @@ class AudioManager {
 
   playFromUrl(id: string, src: string, opts?: { loop?: boolean; volume?: number; html5?: boolean }): number | undefined {
     if (this.unlocking) {
+      this.queuedUnlockPlays[id] = true;
+      return;
+    }
+
+    if (this.shouldDeferUntilUnlock()) {
       this.queuedUnlockPlays[id] = true;
       return;
     }
