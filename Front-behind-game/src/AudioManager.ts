@@ -171,8 +171,14 @@ class AudioManager {
     });
   }
 
+  private clearQueuedPlay(id: string) {
+    delete this.queuedUnlockPlays[id];
+    delete this.queuedMissingPlays[id];
+    delete this.pendingReadyPlays[id];
+  }
+
   play(id: string): number | undefined {
-    if (this.unlocking) {
+    if (!this.unlocked || this.unlocking) {
       this.queuedUnlockPlays[id] = true;
       return;
     }
@@ -199,7 +205,7 @@ class AudioManager {
   }
 
   playWhenReady(id: string): void {
-    if (this.unlocking) {
+    if (!this.unlocked || this.unlocking) {
       this.queuedUnlockPlays[id] = true;
       return;
     }
@@ -249,7 +255,7 @@ class AudioManager {
   }
 
   playFromUrl(id: string, src: string, opts?: { loop?: boolean; volume?: number; html5?: boolean }): number | undefined {
-    if (this.unlocking) {
+    if (!this.unlocked || this.unlocking) {
       this.queuedUnlockPlays[id] = true;
       return;
     }
@@ -290,17 +296,22 @@ class AudioManager {
   }
 
   stop(id: string): void {
+    this.clearQueuedPlay(id);
     const s = this.sounds[id];
     if (!s) return;
     s.stop();
   }
 
   stopSound(id: string): void {
+    this.clearQueuedPlay(id);
     const s = this.sounds[id];
     if (s) s.stop();
   }
 
   stopAll(): void {
+    this.queuedUnlockPlays = {};
+    this.queuedMissingPlays = {};
+    this.pendingReadyPlays = {};
     Howler.stop();
   }
 

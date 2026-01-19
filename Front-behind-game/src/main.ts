@@ -253,10 +253,19 @@ function setupHtmlButtons() {
       // Dừng toàn bộ âm thanh trước khi chơi lại để tránh lồng nhau
       AudioManager.stopAll();
 
-      // Restart lại GameScene
-      const scene = game.scene.getScene("GameScene") as GameScene | null;
-      if (!scene) return;
-      scene.scene.restart();
+      // Restart lại toàn bộ flow (stop các scene con trước),
+      // tránh trường hợp ColorScene vẫn chạy nên mất banner/không phát lại voice hướng dẫn.
+      try {
+        game.scene.stop("EndGameScene");
+        game.scene.stop("CountConnectScene");
+        game.scene.stop("ColorScene");
+      } catch {}
+
+      try {
+        game.scene.stop("GameScene");
+      } catch {}
+
+      game.scene.start("GameScene");
       ensureBgmStarted();
     });
   }
