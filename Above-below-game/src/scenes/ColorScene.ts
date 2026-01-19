@@ -50,8 +50,9 @@ export class ColorScene extends Phaser.Scene {
   private paintGrid = { cols: 50, rows: 50 };
   // Completion thresholds:
   // - Duck (index 0): allow a bit easier (~97%)
-  // - Fish: require full (100%)
+  // - Fish: allow a bit easier (~99%)
   private readonly duckCompletionRatio = 0.97;
+  private readonly fishCompletionRatio = 0.99;
   private paintStates = new Map<number, PaintState>();
   private activePaintObjectIndex?: number;
   // Targets that are already correct and locked.
@@ -110,6 +111,8 @@ export class ColorScene extends Phaser.Scene {
   private paletteGuideHand?: Phaser.GameObjects.Image;
   private paletteGuideHandTween?: Phaser.Tweens.Tween;
   private paletteGuideHandTimeout?: Phaser.Time.TimerEvent;
+  // Avoid a race where the scene shows the hand after the child's very first tap.
+  private initialPaletteGuideHandTimeout?: Phaser.Time.TimerEvent;
   private paletteGuideHandShown = false;
 
   private actionGuideHand?: Phaser.GameObjects.Image;
@@ -199,7 +202,8 @@ export class ColorScene extends Phaser.Scene {
 
     this.applyCurrentColorLevel();
     // Đảm bảo bàn tay hiện ngay khi vào màn đầu tiên
-    this.time.delayedCall(0, () => {
+    this.initialPaletteGuideHandTimeout?.remove(false);
+    this.initialPaletteGuideHandTimeout = this.time.delayedCall(0, () => {
       this.showPaletteGuideHand(true);
     });
     // Phát voice hướng dẫn cho màn đầu tiên (không ảnh hưởng bàn tay)
@@ -210,6 +214,8 @@ export class ColorScene extends Phaser.Scene {
       this.input.off('pointerdown', this.onPointerDown, this);
       this.input.off('pointermove', this.onPointerMove, this);
       this.input.off('pointerup', this.onPointerUp, this);
+      this.initialPaletteGuideHandTimeout?.remove(false);
+      this.initialPaletteGuideHandTimeout = undefined;
       this.inactivityTimeout?.remove(false);
       this.inactivityTimeout = undefined;
     });
@@ -1526,6 +1532,9 @@ export class ColorScene extends Phaser.Scene {
 
     if (level.mode === 'color') {
       // First interaction hides the palette guide hand.
+      // Also cancel the initial "show hand" timer to prevent it from re-appearing right after the first tap.
+      this.initialPaletteGuideHandTimeout?.remove(false);
+      this.initialPaletteGuideHandTimeout = undefined;
       this.hidePaletteGuideHand();
       this.paletteGuideHandTimeout?.remove(false);
       this.paletteGuideHandTimeout = this.time.delayedCall(3000, () => {
@@ -1800,7 +1809,7 @@ export class ColorScene extends Phaser.Scene {
     const totalCells = state.maskCells.size || (this.paintGrid.cols * this.paintGrid.rows);
     if (totalCells <= 0) return;
 
-    const requiredRatio = targetIndex === 0 ? this.duckCompletionRatio : 1;
+    const requiredRatio = targetIndex === 0 ? this.duckCompletionRatio : this.fishCompletionRatio;
     const requiredCells = Math.min(totalCells, Math.ceil(totalCells * requiredRatio));
     if (state.cellHits.size < requiredCells) return;
 
