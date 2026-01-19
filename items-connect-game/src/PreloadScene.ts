@@ -19,7 +19,7 @@ export default class PreloadScene extends Phaser.Scene {
     this.load.image('btn_replay', 'assets/button/replay.png');
     this.load.image('next_end', 'assets/button/next_end.png');
     // Line asset for connect game
-    this.load.image('connect_line_v4', 'assets/button/Line 3.png');
+    this.load.image('connect_line_v6', 'assets/button/Line 3.png');
 
     // --- BG END ---
     this.load.image('banner_congrat', 'assets/bg_end/banner_congrat.png');

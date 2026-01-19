@@ -54,7 +54,7 @@ const ITEM_TEXTURE: Record<ItemId, string> = {
   SHAPE_TRIANGLE: 'shape_triangle',
 };
 
-const CONNECT_LINE_KEY = 'connect_line_v4';
+const CONNECT_LINE_KEY = 'connect_line_v6';
 const ITEMS_BOARD_KEY = 'banner_question';
 const GUIDE_HAND_KEY = 'guide_hand';
 const HINT_IMG_KEY = 'connect_hint';
@@ -146,8 +146,9 @@ const GUIDE_HAND_DRAG_MS = 850;
 const GUIDE_HAND_PAUSE_MS = 120;
 // Make the hand "push into" the right hole a bit more (visual guidance).
 const GUIDE_HAND_START_DEEPEN_DIST = 64;
-const GUIDE_HAND_END_DEEPEN_DIST = 2;
+const GUIDE_HAND_END_DEEPEN_DIST = 38;
 const GUIDE_HAND_RETURN_MS = 700;
+const GUIDE_HAND_INACTIVITY_MS = 5000;
 
 /* ===================== SCENE ===================== */
 
@@ -186,9 +187,8 @@ export default class GameScene extends Phaser.Scene {
   private guideHandTween?: Phaser.Tweens.Tween;
   private guideHandSeqId = 0;
   private guideHandObjectId?: ObjectItemId;
-  private guideHandShownOnce = false;
   private guideHandTimer?: Phaser.Time.TimerEvent;
-  private roundInteracted = false;
+  private lastInteractionAtMs = 0;
   private consumePendingInstructionVoice() {
     try {
       const win = window as any;
@@ -249,8 +249,7 @@ export default class GameScene extends Phaser.Scene {
     sdk.score(this.score, 0);
     sdk.progress({ levelIndex: 0, total: OBJECT_IDS.length });
 
-    this.guideHandShownOnce = false;
-    this.roundInteracted = false;
+    this.lastInteractionAtMs = 0;
 
     const win = window as unknown as Record<string, unknown>;
     this.audioReady = !!win[AUDIO_UNLOCKED_KEY];
@@ -488,12 +487,13 @@ export default class GameScene extends Phaser.Scene {
     this.input.removeAllListeners('dragstart');
     this.input.removeAllListeners('drag');
     this.input.removeAllListeners('dragend');
+    this.input.removeAllListeners('pointerdown');
+
+    this.input.on('pointerdown', () => this.noteInteraction());
 
     this.input.on('dragstart', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
       AudioManager.stop('voice_join');
-      this.roundInteracted = true;
-      this.cancelGuideHandSchedule();
-      this.destroyGuideHand();
+      this.noteInteraction();
       const img = gameObject as Phaser.GameObjects.Image;
       if (img.getData('role') !== 'OBJECT') return;
 
@@ -821,21 +821,27 @@ export default class GameScene extends Phaser.Scene {
     this.resetUiForNewTry();
     this.playInstructionVoice();
     this.gameState = 'INTRO';
-    this.roundInteracted = false;
+    this.lastInteractionAtMs = this.time.now;
     this.cancelGuideHandSchedule();
-    this.scheduleGuideHand();
+    // Show once shortly after entering the game, then repeat on inactivity.
+    this.scheduleGuideHand(450);
   }
 
-  private scheduleGuideHand() {
-    if (this.guideHandShownOnce) return;
+  private noteInteraction() {
+    this.lastInteractionAtMs = this.time.now;
+    this.cancelGuideHandSchedule();
+    this.destroyGuideHand();
+    this.scheduleGuideHand(GUIDE_HAND_INACTIVITY_MS);
+  }
+
+  private scheduleGuideHand(delayMs = GUIDE_HAND_INACTIVITY_MS) {
     if (!this.textures.exists(GUIDE_HAND_KEY)) return;
 
     this.cancelGuideHandSchedule();
-    this.guideHandTimer = this.time.delayedCall(450, () => {
+    this.guideHandTimer = this.time.delayedCall(delayMs, () => {
       if (!this.scene.isActive()) return;
-      if (this.guideHandShownOnce) return;
-      if (this.roundInteracted) return;
-      if (this.matchedObjects.size > 0) return;
+      // When using the inactivity delay, ensure the full window has elapsed since last interaction.
+      if (delayMs >= GUIDE_HAND_INACTIVITY_MS && this.time.now - this.lastInteractionAtMs < GUIDE_HAND_INACTIVITY_MS) return;
       if (this.gameState !== 'INTRO') return;
       if (this.draggingKey) return;
       this.startGuideHand();
@@ -843,9 +849,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private startGuideHand() {
-    if (this.guideHandShownOnce) return;
     if (!this.textures.exists(GUIDE_HAND_KEY)) return;
-    if (this.roundInteracted) return;
 
     const objectImg = [...this.leftObjects, ...this.rightObjects].find((i) => {
       const id = i.getData('itemId') as ObjectItemId | undefined;
@@ -860,7 +864,6 @@ export default class GameScene extends Phaser.Scene {
     const shapeImg = this.shapeItems.find((i) => i.getData('matchKey') === matchKey);
     if (!shapeImg) return;
 
-    this.guideHandShownOnce = true;
     this.addHint();
     this.guideHandObjectId = objectId;
 
