@@ -51,6 +51,7 @@ export class ColorScene extends Phaser.Scene {
 
   private paletteDots: Phaser.GameObjects.Image[] = [];
   private paletteSelectedIndex = 2; // default blue like sample
+  private eraserSelected = false;
   private eraserBtn?: Phaser.GameObjects.Container;
   private readonly brushCursor = 'pointer';
   private readonly characterLiftY = -150; // âm = dịch lên trên
@@ -73,6 +74,7 @@ export class ColorScene extends Phaser.Scene {
     this.activePointerId = undefined;
     this.currentPaintTarget = undefined;
     this.paletteSelectedIndex = 2;
+    this.eraserSelected = false;
 
     this.boardImage?.destroy();
     this.boardImage = undefined;
@@ -226,6 +228,7 @@ export class ColorScene extends Phaser.Scene {
         this.setCursor(this.brushCursor);
       });
       dot.on('pointerdown', () => {
+        this.eraserSelected = false;
         this.paletteSelectedIndex = idx;
         this.updatePaletteRings();
         AudioManager.play('sfx_click');
@@ -250,7 +253,8 @@ export class ColorScene extends Phaser.Scene {
     });
     eraser.on('pointerdown', () => {
       AudioManager.play('sfx_click');
-      this.resetPaintAtPointer(this.input.activePointer);
+      this.eraserSelected = true;
+      this.updatePaletteRings();
     });
     this.eraserBtn = eraser;
 
@@ -285,6 +289,17 @@ export class ColorScene extends Phaser.Scene {
     const hit = this.shapes.find((s) => !s.painted && this.containsPointByBounds(s, pointer.x, pointer.y));
     if (!hit) return;
 
+    if (this.eraserSelected) {
+      // Erase gradually (brush erase), not instant reset.
+      this.painting = true;
+      this.activePointerId = pointer.id;
+      this.currentPaintTarget = hit;
+      this.setCursor('pointer');
+      hit.lastPaint = undefined;
+      this.eraseAtPointer(hit, pointer.x, pointer.y);
+      return;
+    }
+
     this.painting = true;
     this.activePointerId = pointer.id;
     this.currentPaintTarget = hit;
@@ -298,6 +313,10 @@ export class ColorScene extends Phaser.Scene {
     const hit = this.currentPaintTarget;
     if (!hit || hit.painted) return;
     if (!this.containsPointByBounds(hit, pointer.x, pointer.y)) return;
+    if (this.eraserSelected) {
+      this.eraseAtPointer(hit, pointer.x, pointer.y);
+      return;
+    }
     this.paintAtPointer(hit, pointer.x, pointer.y);
   }
 
@@ -308,13 +327,27 @@ export class ColorScene extends Phaser.Scene {
     this.setCursor(this.brushCursor);
     const shape = this.currentPaintTarget;
     this.currentPaintTarget = undefined;
-    if (shape) this.maybeFinalizeShape(shape);
+    if (shape && !this.eraserSelected) this.maybeFinalizeShape(shape);
   }
 
   private getCoverageRatio(shape: PaintShape): number {
     const total = shape.coverageSamples.length;
     if (total <= 0) return 0;
     return shape.coverageMarkedCount / total;
+  }
+
+  private eraseAtPointer(shape: PaintShape, x: number, y: number) {
+    if (shape.painted) return;
+    if (!this.containsPointByBounds(shape, x, y)) return;
+
+    const p = new Phaser.Math.Vector2(x, y);
+    if (shape.lastPaint && Phaser.Math.Distance.BetweenPoints(shape.lastPaint, p) < this.brushRadius * 0.55) return;
+    shape.lastPaint = p;
+
+    // ERASE blend removes pixels from the paint layer (still clipped by stencil mask).
+    shape.fillGfx.setBlendMode(Phaser.BlendModes.ERASE);
+    shape.fillGfx.fillStyle(0xffffff, 1);
+    shape.fillGfx.fillCircle(x, y, this.brushRadius);
   }
 
   private markCoverageAt(shape: PaintShape, x: number, y: number) {
@@ -407,6 +440,7 @@ export class ColorScene extends Phaser.Scene {
     if (shape.lastPaint && Phaser.Math.Distance.BetweenPoints(shape.lastPaint, p) < this.brushRadius * 0.6) return;
     shape.lastPaint = p;
 
+    shape.fillGfx.setBlendMode(Phaser.BlendModes.NORMAL);
     shape.fillGfx.fillStyle(selectedColor, 1);
     shape.fillGfx.fillCircle(x, y, this.brushRadius);
 
@@ -455,25 +489,6 @@ export class ColorScene extends Phaser.Scene {
       });
       return;
     }
-  }
-
-  private resetPaintForShape(shape: PaintShape) {
-    shape.fillGfx.clear();
-    shape.strokes = 0;
-    shape.painted = false;
-    shape.lastPaint = undefined;
-    shape.usedColor = undefined;
-    shape.coverageMarked.fill(0);
-    shape.coverageMarkedCount = 0;
-  }
-
-  private resetPaintAtPointer(pointer: Phaser.Input.Pointer) {
-    const hit = this.shapes.find((s) => this.containsPointByBounds(s, pointer.x, pointer.y));
-    if (hit) {
-      this.resetPaintForShape(hit);
-      return;
-    }
-    this.shapes.forEach((s) => this.resetPaintForShape(s));
   }
 
   private containsPointByBounds(shape: PaintShape, px: number, py: number): boolean {
@@ -690,9 +705,13 @@ export class ColorScene extends Phaser.Scene {
     const selectedAlpha = 1;
     const otherAlpha = 0.4;
     this.paletteDots.forEach((d, idx) => {
+      if (this.eraserSelected) {
+        d.setAlpha(otherAlpha);
+        return;
+      }
       d.setAlpha(idx === this.paletteSelectedIndex ? selectedAlpha : otherAlpha);
     });
-    this.eraserBtn?.setAlpha(1);
+    this.eraserBtn?.setAlpha(this.eraserSelected ? selectedAlpha : otherAlpha);
   }
 
   private createBoardImageIfNeeded() {
