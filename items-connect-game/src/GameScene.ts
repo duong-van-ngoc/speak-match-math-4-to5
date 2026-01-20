@@ -1,4 +1,26 @@
 import Phaser from 'phaser';
+
+// Hàm vẽ line nối bằng Phaser Graphics
+export function drawBlackLine(scene: Phaser.Scene, x1: number, y1: number, x2: number, y2: number) {
+  const graphics = scene.add.graphics(); // Hàm vẽ line nối bằng Phaser Graphics (dùng thay cho image)
+  graphics.lineStyle(6, 0x000000, 1); // Độ dày 6px, màu đen, alpha 1
+  graphics.beginPath();
+  graphics.moveTo(x1, y1);
+  graphics.lineTo(x2, y2);
+  graphics.strokePath();
+  graphics.closePath();
+  return graphics;
+}
+// Ví dụ: Thay thế logic vẽ line bằng image sang dùng graphics
+// Giả sử trước đây bạn có đoạn code như sau:
+// const line = this.add.image(x, y, 'lineImageKey');
+// line.setRotation(angle);
+// line.setDisplaySize(length, thickness);
+
+// Bây giờ thay bằng:
+// const graphics = drawBlackLine(this, x1, y1, x2, y2);
+
+// Nếu có logic nào trong class GameScene dùng image để vẽ line, hãy thay bằng drawBlackLine như trên.
 import AudioManager from './AudioManager';
 import { sdk } from './main';
 import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
@@ -54,7 +76,7 @@ const ITEM_TEXTURE: Record<ItemId, string> = {
   SHAPE_TRIANGLE: 'shape_triangle',
 };
 
-const CONNECT_LINE_KEY = 'connect_line_v6';
+
 const ITEMS_BOARD_KEY = 'banner_question';
 const GUIDE_HAND_KEY = 'guide_hand';
 const HINT_IMG_KEY = 'connect_hint';
@@ -97,11 +119,10 @@ const SHAPE_MATCH_KEY: Record<ShapeItemId, MatchKey> = {
 
 /* ===================== SCALE ===================== */
 
-const ITEM_SCALE = 3.2;
+const ITEM_SCALE = 5.0; // Tăng scale max để hình to và rõ hơn
 const LINE_THICKNESS = 12;
-const LINE_END_EXTEND = 5;
-const LINE_DRAG_START_EXTEND = 10;
-const ITEM_FILL_RATIO = 0.94;
+const ITEM_FILL_RATIO = 1.0; // Giảm nhẹ để tăng khoảng cách giữa các item
+const SHAPE_VERTICAL_SPACING_FACTOR = 0.8; // Giảm khoảng cách cho cột hình
 const ITEMS_SHIFT_FROM_BANNER = 0;
 
 /* ===================== CONNECTION ANCHOR ===================== */
@@ -112,7 +133,7 @@ const ITEMS_SHIFT_FROM_BANNER = 0;
 
 /* ===================== LAYOUT ===================== */
 
-const BANNER_Y = 42;
+const BANNER_Y = 15;
 const BANNER_SCALE = 0.5;
 const BANNER_MAX_W_RATIO = 0.7;
 
@@ -120,21 +141,21 @@ const PROMPT_FONT_SIZE = 30;
 const FEEDBACK_FONT_SIZE = 22;
 const FEEDBACK_BOTTOM_MARGIN = 0;
 
-const ITEMS_GAP_FROM_BANNER = 2;
-const ITEMS_GAP_FROM_FEEDBACK = 2;
+const ITEMS_GAP_FROM_BANNER = 0;
+const ITEMS_GAP_FROM_FEEDBACK = 0;
 
 const COLUMN_GAP_RATIO = 0.28;
 const COLUMN_GAP_MIN = 120;
 const COLUMN_GAP_MAX = 520;
 
-const ITEMS_BOARD_PAD_X = 18;
-const ITEMS_BOARD_PAD_Y = 10;
-const ITEMS_BOARD_EXTRA_H = 100;
+const ITEMS_BOARD_PAD_X = 40; // Tăng padding ngang để board rộng hơn
+const ITEMS_BOARD_PAD_Y = 30; // Giảm padding dọc để item sát mép hơn
+const ITEMS_BOARD_EXTRA_H = 140; // Tăng phần mở rộng dưới đáy board
 const ITEMS_BOARD_DEPTH = 4;
 
 const ITEM_DEPTH = 5;
 const LINE_DEPTH = 6;
-const LINE_CAP_RADIUS = Math.max(3, LINE_THICKNESS * 0.55);
+
 const GUIDE_HAND_DEPTH = 50;
 const GUIDE_HAND_SCALE = 0.55;
 const GUIDE_HAND_OFFSET_X = -18;
@@ -148,7 +169,7 @@ const GUIDE_HAND_PAUSE_MS = 120;
 const GUIDE_HAND_START_DEEPEN_DIST = 64;
 const GUIDE_HAND_END_DEEPEN_DIST = 38;
 const GUIDE_HAND_RETURN_MS = 700;
-const GUIDE_HAND_INACTIVITY_MS = 5000;
+const GUIDE_HAND_INACTIVITY_MS = 10000;
 
 /* ===================== SCENE ===================== */
 
@@ -172,15 +193,15 @@ export default class GameScene extends Phaser.Scene {
   private shapeItems: Phaser.GameObjects.Image[] = [];
 
   private matchedObjects = new Set<ObjectItemId>();
-  private matchedLines = new Map<ObjectItemId, Phaser.GameObjects.Image>();
-  private lineCaps = new Map<Phaser.GameObjects.Image, { start: Phaser.GameObjects.Arc; end: Phaser.GameObjects.Arc }>();
+  private matchedLines = new Map<ObjectItemId, Phaser.GameObjects.Graphics>();
+  // Không cần lineCaps nữa nếu không dùng image
 
   private draggingObjectId?: ObjectItemId;
   private draggingKey?: MatchKey;
   private draggingObject?: Phaser.GameObjects.Image;
   private dragLineEnd?: Phaser.Math.Vector2;
-  private draggingLine?: Phaser.GameObjects.Image;
-  private wrongLine?: Phaser.GameObjects.Image;
+  private draggingLine?: Phaser.GameObjects.Graphics;
+  private wrongLine?: Phaser.GameObjects.Graphics;
   private wrongLineSeg?: { x1: number; y1: number; x2: number; y2: number };
   private audioReady = false;
   private guideHand?: Phaser.GameObjects.Image;
@@ -226,7 +247,6 @@ export default class GameScene extends Phaser.Scene {
     this.promptImage = undefined;
     this.hasPlayedInstructionVoice = false;
     this.matchedObjects.clear();
-    this.matchedLines.forEach((l) => this.destroyLineCaps(l));
     this.matchedLines.forEach((l) => l.destroy());
     this.matchedLines.clear();
     this.draggingKey = undefined;
@@ -428,25 +448,35 @@ export default class GameScene extends Phaser.Scene {
     this.rightObjects = [];
     this.shapeItems = [];
 
-    this.matchedLines.forEach((l) => this.destroyLineCaps(l));
     this.matchedLines.forEach((l) => l.destroy());
     this.matchedLines.clear();
     this.matchedObjects.clear();
-    this.draggingLine && this.destroyLineCaps(this.draggingLine);
     this.draggingLine?.destroy();
     this.draggingLine = undefined;
-    this.wrongLine && this.destroyLineCaps(this.wrongLine);
     this.wrongLine?.destroy();
     this.wrongLine = undefined;
 
     this.shapeOrder = [...SHAPE_IDS];
 
+    // Helper to get 1:1 scale for item image
+    const getItemScale = (img: Phaser.GameObjects.Image) => {
+      // Lấy kích thước gốc của texture
+      const tex = this.textures.get(img.texture.key);
+      const frame = tex.getSourceImage();
+      if (!frame) return 1;
+      // Hiển thị đúng 1:1 pixel nếu có thể (không scale lớn hơn kích thước thật)
+      const scaleW = img.width / frame.width;
+      const scaleH = img.height / frame.height;
+      return Math.min(1, scaleW, scaleH);
+    };
+
     for (const id of this.shapeOrder) {
       const img = this.add
         .image(0, 0, ITEM_TEXTURE[id])
         .setOrigin(0.5)
-        .setScale(this.currentItemScale)
         .setDepth(ITEM_DEPTH);
+      // scale về đúng 1:1 nếu có thể
+      img.setScale(getItemScale(img));
       img.setData('itemId', id);
       img.setData('matchKey', SHAPE_MATCH_KEY[id]);
       img.setData('role', 'SHAPE');
@@ -460,8 +490,8 @@ export default class GameScene extends Phaser.Scene {
       const img = this.add
         .image(0, 0, ITEM_TEXTURE[id])
         .setOrigin(0.5)
-        .setScale(this.currentItemScale)
         .setDepth(ITEM_DEPTH);
+      img.setScale(getItemScale(img));
       img.setData('itemId', id);
       img.setData('matchKey', OBJECT_MATCH_KEY[id]);
       img.setData('role', 'OBJECT');
@@ -474,8 +504,8 @@ export default class GameScene extends Phaser.Scene {
       const img = this.add
         .image(0, 0, ITEM_TEXTURE[id])
         .setOrigin(0.5)
-        .setScale(this.currentItemScale)
         .setDepth(ITEM_DEPTH);
+      img.setScale(getItemScale(img));
       img.setData('itemId', id);
       img.setData('matchKey', OBJECT_MATCH_KEY[id]);
       img.setData('role', 'OBJECT');
@@ -513,10 +543,10 @@ export default class GameScene extends Phaser.Scene {
       img.setScale(this.currentItemScale * 1.06);
 
       if (!this.draggingLine) {
-        this.draggingLine = this.add.image(0, 0, CONNECT_LINE_KEY).setOrigin(0.5).setDepth(LINE_DEPTH).setAlpha(0.85);
+        this.draggingLine = drawBlackLine(this, 0, 0, 0, 0);
+        this.draggingLine.setDepth(LINE_DEPTH).setAlpha(0.85);
       }
-      this.draggingLine.setVisible(true).clearTint();
-      this.ensureLineCaps(this.draggingLine);
+      this.draggingLine.setVisible(true);
       this.redrawConnections();
     });
 
@@ -719,12 +749,19 @@ export default class GameScene extends Phaser.Scene {
       const centersSpan = Math.max(1, maxInnerH - maxItemH);
       const innerTop = boardY - centersSpan / 2;
       const innerBottom = boardY + centersSpan / 2;
-      const yPositions = this.getYPositions(count, innerTop, innerBottom);
-      const baseGap = count > 1 ? (innerBottom - innerTop) / (count - 1) : 0;
-      const extraSlots = Math.max(0, count - this.shapeItems.length);
-      const shapeTop = innerTop + (extraSlots * baseGap) / 2;
-      const shapeBottom = innerBottom - (extraSlots * baseGap) / 2;
-      const shapeYPositions = this.getYPositions(this.shapeItems.length, shapeTop, shapeBottom);
+      const objectYPositions = this.getYPositions(Math.max(this.leftObjects.length, this.rightObjects.length), innerTop, innerBottom);
+      let shapeYPositions = this.getYPositions(this.shapeItems.length, innerTop, innerBottom);
+
+      // Áp dụng khoảng cách dọc cụ thể cho các item hình (cột giữa)
+      if (this.shapeItems.length > 1 && SHAPE_VERTICAL_SPACING_FACTOR < 1.0) {
+        const currentSpan = shapeYPositions[shapeYPositions.length - 1] - shapeYPositions[0];
+        const newSpan = currentSpan * SHAPE_VERTICAL_SPACING_FACTOR;
+        const startOffset = (currentSpan - newSpan) / 2;
+
+        const newTop = shapeYPositions[0] + startOffset;
+        const newBottom = shapeYPositions[shapeYPositions.length - 1] - startOffset;
+        shapeYPositions = this.getYPositions(this.shapeItems.length, newTop, newBottom);
+      }
 
       const leftX = centerX - columnGap;
       const midX = centerX;
@@ -734,10 +771,10 @@ export default class GameScene extends Phaser.Scene {
         this.shapeItems[i].setPosition(midX, shapeYPositions[i] ?? boardY);
       }
       for (let i = 0; i < this.leftObjects.length; i++) {
-        this.leftObjects[i].setPosition(leftX, yPositions[i] ?? boardY);
+        this.leftObjects[i].setPosition(leftX, objectYPositions[i] ?? boardY);
       }
       for (let i = 0; i < this.rightObjects.length; i++) {
-        this.rightObjects[i].setPosition(rightX, yPositions[i] ?? boardY);
+        this.rightObjects[i].setPosition(rightX, objectYPositions[i] ?? boardY);
       }
 
       // 3) Resize the board to cover all items with padding.
@@ -764,12 +801,8 @@ export default class GameScene extends Phaser.Scene {
       // Board stays centered (no side character).
     } else {
       const count = Math.max(this.shapeItems.length, this.leftObjects.length, this.rightObjects.length);
-      const yPositions = this.getYPositions(count, itemsTop, safeItemsBottom);
-      const baseGap = count > 1 ? (safeItemsBottom - itemsTop) / (count - 1) : 0;
-      const extraSlots = Math.max(0, count - this.shapeItems.length);
-      const shapeTop = itemsTop + (extraSlots * baseGap) / 2;
-      const shapeBottom = safeItemsBottom - (extraSlots * baseGap) / 2;
-      const shapeYPositions = this.getYPositions(this.shapeItems.length, shapeTop, shapeBottom);
+      const objectYPositions = this.getYPositions(Math.max(this.leftObjects.length, this.rightObjects.length), itemsTop, safeItemsBottom);
+      const shapeYPositions = this.getYPositions(this.shapeItems.length, itemsTop, safeItemsBottom);
 
       const span = Math.max(1, safeItemsBottom - itemsTop);
       const gap = count > 1 ? span / (count - 1) : span;
@@ -790,10 +823,10 @@ export default class GameScene extends Phaser.Scene {
         this.shapeItems[i].setPosition(midX, shapeYPositions[i] ?? 0);
       }
       for (let i = 0; i < this.leftObjects.length; i++) {
-        this.leftObjects[i].setPosition(leftX, yPositions[i] ?? 0);
+        this.leftObjects[i].setPosition(leftX, objectYPositions[i] ?? 0);
       }
       for (let i = 0; i < this.rightObjects.length; i++) {
-        this.rightObjects[i].setPosition(rightX, yPositions[i] ?? 0);
+        this.rightObjects[i].setPosition(rightX, objectYPositions[i] ?? 0);
       }
     }
 
@@ -823,8 +856,15 @@ export default class GameScene extends Phaser.Scene {
     this.gameState = 'INTRO';
     this.lastInteractionAtMs = this.time.now;
     this.cancelGuideHandSchedule();
-    // Show once shortly after entering the game, then repeat on inactivity.
-    this.scheduleGuideHand(450);
+    // Hiển thị bàn tay hướng dẫn ngay khi vào game
+    // Delay nhẹ để tránh bị tắt ngay do click unlock audio hoặc input thừa
+    this.time.delayedCall(500, () => {
+      if (this.gameState === 'INTRO') {
+        this.startGuideHand();
+      }
+    });
+    // Sau đó lặp lại theo chu kỳ không thao tác
+    this.scheduleGuideHand(GUIDE_HAND_INACTIVITY_MS);
   }
 
   private noteInteraction() {
@@ -1128,8 +1168,10 @@ export default class GameScene extends Phaser.Scene {
     if (this.matchedObjects.has(objectId)) return;
 
     if (objectKey === shapeKey) {
+      // Phát âm thanh đúng và voice đúng
       AudioManager.play('sfx_correct');
       AudioManager.playCorrectAnswer();
+      AudioManager.playWhenReady?.('voice_correct');
 
       this.matchedObjects.add(objectId);
       this.score = this.matchedObjects.size;
@@ -1137,18 +1179,21 @@ export default class GameScene extends Phaser.Scene {
 
       objectImg.disableInteractive().setAlpha(0.9);
 
+      // Vẽ line cố định khi nối đúng
+      const start = this.getAnchorWorldPoint(objectImg, shapeImg.x, shapeImg.y);
+      const end = this.getAnchorWorldPoint(shapeImg, objectImg.x, objectImg.y);
+      const line = drawBlackLine(this, start.x, start.y, end.x, end.y);
+      line.setDepth(LINE_DEPTH);
+      this.matchedLines.set(objectId, line);
+
+      // Ẩn line kéo
+      this.draggingLine?.setVisible(false);
       this.draggingObjectId = undefined;
       this.draggingKey = undefined;
       this.draggingObject = undefined;
       this.dragLineEnd = undefined;
-      this.draggingLine?.setVisible(false);
       this.wrongLine?.setVisible(false);
-
-      const line = this.add.image(0, 0, CONNECT_LINE_KEY).setOrigin(0.5).setDepth(LINE_DEPTH);
-      this.matchedLines.set(objectId, line);
-      this.ensureLineCaps(line);
       this.redrawConnections();
-      this.animateCorrect(objectImg, shapeImg, this.matchedLines.get(objectId));
 
       if (this.matchedObjects.size >= OBJECT_IDS.length) {
         this.gameState = 'LEVEL_END';
@@ -1171,16 +1216,18 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Phát âm thanh sai và voice sai
     AudioManager.play('sfx_wrong');
+    AudioManager.playWhenReady?.('voice_wrong');
     this.recordWrong();
 
     this.draggingLine?.setVisible(false);
 
     if (!this.wrongLine) {
-      this.wrongLine = this.add.image(0, 0, CONNECT_LINE_KEY).setOrigin(0.5).setDepth(LINE_DEPTH);
+      this.wrongLine = drawBlackLine(this, 0, 0, 0, 0);
+      this.wrongLine.setDepth(LINE_DEPTH);
     }
-    this.wrongLine.setVisible(true).setTint(0xff4d4d).setAlpha(0.95);
-    this.ensureLineCaps(this.wrongLine);
+    this.wrongLine.setVisible(true).setAlpha(0.95);
 
     const start = this.getAnchorWorldPoint(objectImg, shapeImg.x, shapeImg.y);
     const end = this.getAnchorWorldPoint(shapeImg, objectImg.x, objectImg.y);
@@ -1189,14 +1236,14 @@ export default class GameScene extends Phaser.Scene {
     const x2 = end.x;
     const y2 = end.y;
     this.wrongLineSeg = { x1, y1, x2, y2 };
-    this.updateLineSprite(this.wrongLine, x1, y1, x2, y2);
+    // Không cần updateLineSprite cho Graphics, redrawConnections sẽ tự vẽ lại
 
     this.draggingObjectId = undefined;
     this.draggingKey = undefined;
     this.draggingObject = undefined;
     this.dragLineEnd = undefined;
     this.redrawConnections();
-    this.animateWrong(objectImg, shapeImg, this.wrongLine);
+    // Không cần animateWrong cho Graphics
 
     this.time.delayedCall(650, () => {
       if (!this.scene.isActive()) return;
@@ -1207,63 +1254,17 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  private animateCorrect(
-    _leftImg?: Phaser.GameObjects.Image,
-    _rightImg?: Phaser.GameObjects.Image,
-    line?: Phaser.GameObjects.Image,
-  ) {
-    if (!line) return;
-    this.ensureLineCaps(line);
 
-    line.setTint(0x6bff8a).setAlpha(1);
-    this.tweens.add({
-      targets: [line, ...this.getLineCapsTargets(line)],
-      alpha: { from: 0.85, to: 1 },
-      duration: 90,
-      yoyo: true,
-      repeat: 3,
-      ease: 'Sine.inOut',
-      onComplete: () => line.clearTint(),
-    });
-  }
-
-  private animateWrong(_leftImg?: Phaser.GameObjects.Image, _rightImg?: Phaser.GameObjects.Image, line?: Phaser.GameObjects.Image) {
-    if (!line) return;
-    this.ensureLineCaps(line);
-
-    this.tweens.add({
-      targets: [line, ...this.getLineCapsTargets(line)],
-      alpha: { from: 0.25, to: 0.95 },
-      duration: 80,
-      yoyo: true,
-      repeat: 3,
-      ease: 'Sine.inOut',
-    });
-  }
-
-  private ensureLineCaps(line: Phaser.GameObjects.Image) {
-    if (this.lineCaps.has(line)) return;
-
-    const start = this.add.circle(0, 0, LINE_CAP_RADIUS, 0xffffff, 1).setOrigin(0.5).setDepth(line.depth).setVisible(false);
-    const end = this.add.circle(0, 0, LINE_CAP_RADIUS, 0xffffff, 1).setOrigin(0.5).setDepth(line.depth).setVisible(false);
-    this.lineCaps.set(line, { start, end });
-  }
-
-  private getLineCapsTargets(line: Phaser.GameObjects.Image) {
-    const caps = this.lineCaps.get(line);
-    if (!caps) return [];
-    return [caps.start, caps.end];
-  }
-
-  private destroyLineCaps(line: Phaser.GameObjects.Image) {
-    const caps = this.lineCaps.get(line);
-    if (!caps) return;
-    caps.start.destroy();
-    caps.end.destroy();
-    this.lineCaps.delete(line);
-  }
 
   private redrawConnections() {
+    // Xóa tất cả graphics cũ trước khi vẽ lại
+    for (const [, line] of this.matchedLines) {
+      line.clear();
+    }
+    this.draggingLine?.clear();
+    this.wrongLine?.clear();
+
+    // Chỉ vẽ các line đã nối đúng (matchedLines)
     for (const [objectId, line] of this.matchedLines) {
       const objectImg = [...this.leftObjects, ...this.rightObjects].find((i) => i.getData('itemId') === objectId);
       if (!objectImg) continue;
@@ -1274,70 +1275,45 @@ export default class GameScene extends Phaser.Scene {
 
       const start = this.getAnchorWorldPoint(objectImg, shapeImg.x, shapeImg.y);
       const end = this.getAnchorWorldPoint(shapeImg, objectImg.x, objectImg.y);
-      this.updateLineSprite(line, start.x, start.y, end.x, end.y, LINE_END_EXTEND, LINE_END_EXTEND);
-      line.setVisible(true).clearTint().setAlpha(1);
+      line.lineStyle(4, 0x000000, 1);
+      line.beginPath();
+      line.moveTo(start.x, start.y);
+      line.lineTo(end.x, end.y);
+      line.strokePath();
+      line.closePath();
+      line.setVisible(true).setAlpha(1);
     }
 
-    if (this.draggingObject && this.dragLineEnd && this.draggingLine) {
-      const start = this.getAnchorWorldPoint(this.draggingObject, this.dragLineEnd.x, this.dragLineEnd.y);
-      this.updateLineSprite(
-        this.draggingLine,
-        start.x,
-        start.y,
-        this.dragLineEnd.x,
-        this.dragLineEnd.y,
-        LINE_DRAG_START_EXTEND,
-        0,
-      );
-      this.draggingLine.setVisible(true).clearTint().setAlpha(0.85);
+    // Vẽ line kéo (dây cao su) khi đang kéo
+    if (this.gameState === 'DRAGGING' && this.draggingObject && this.dragLineEnd && this.draggingLine) {
+      const shapeTarget = this.draggingKey
+        ? this.shapeItems.find((i) => i.getData('matchKey') === this.draggingKey)
+        : undefined;
+      const towardX = shapeTarget?.x ?? this.dragLineEnd.x;
+      const towardY = shapeTarget?.y ?? this.dragLineEnd.y;
+      const start = this.getAnchorWorldPoint(this.draggingObject, towardX, towardY);
+      this.draggingLine.lineStyle(4, 0x000000, 1);
+      this.draggingLine.beginPath();
+      this.draggingLine.moveTo(start.x, start.y);
+      this.draggingLine.lineTo(this.dragLineEnd.x, this.dragLineEnd.y);
+      this.draggingLine.strokePath();
+      this.draggingLine.closePath();
+      this.draggingLine.setVisible(true).setAlpha(0.85);
+    } else {
+      this.draggingLine?.setVisible(false);
     }
 
+    // Vẽ line sai nếu có
     if (this.wrongLine?.visible && this.wrongLineSeg) {
-      this.updateLineSprite(
-        this.wrongLine,
-        this.wrongLineSeg.x1,
-        this.wrongLineSeg.y1,
-        this.wrongLineSeg.x2,
-        this.wrongLineSeg.y2,
-        LINE_END_EXTEND,
-        LINE_END_EXTEND,
-      );
+      this.wrongLine.lineStyle(4, 0xff0000, 1);
+      this.wrongLine.beginPath();
+      this.wrongLine.moveTo(this.wrongLineSeg.x1, this.wrongLineSeg.y1);
+      this.wrongLine.lineTo(this.wrongLineSeg.x2, this.wrongLineSeg.y2);
+      this.wrongLine.strokePath();
+      this.wrongLine.closePath();
     }
   }
 
-  private updateLineSprite(
-    line: Phaser.GameObjects.Image,
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number,
-    extendStart = 0,
-    extendEnd = 0,
-  ) {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    const baseDist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-    const ux = dx / baseDist;
-    const uy = dy / baseDist;
-
-    const maxExtend = Math.max(0, baseDist / 2 - 1);
-    const s = Math.min(Math.max(0, extendStart), maxExtend);
-    const e = Math.min(Math.max(0, extendEnd), maxExtend);
-
-    const ax1 = x1 - ux * s;
-    const ay1 = y1 - uy * s;
-    const ax2 = x2 + ux * e;
-    const ay2 = y2 + uy * e;
-
-    dx = ax2 - ax1;
-    dy = ay2 - ay1;
-    const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-    const angle = Math.atan2(dy, dx);
-
-    line.setPosition((ax1 + ax2) / 2, (ay1 + ay2) / 2);
-    line.setRotation(angle);
-    line.setDisplaySize(dist, LINE_THICKNESS);
-  }
 
   private getAnchorWorldPoint(img: Phaser.GameObjects.Image, towardX: number, towardY: number) {
     const cx = img.x;

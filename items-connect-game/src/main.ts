@@ -212,7 +212,7 @@ export function ensureBgmStarted() {
 // ================== CẤU HÌNH PHASER ==================
 // Increase internal canvas resolution to reduce blur (especially when Scale.FIT stretches the canvas).
 // Cap to avoid heavy GPU cost on very high-DPR devices.
-const RENDER_RESOLUTION = Math.min(3, window.devicePixelRatio || 1);
+const RENDER_RESOLUTION = Math.min(4, window.devicePixelRatio || 1);
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -223,11 +223,14 @@ const config: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    // Round the canvas display size to whole pixels to reduce shimmer/blur on resize.
+    autoRound: false,
   },
   render: {
     pixelArt: false,
     antialias: true,
-    roundPixels: true,
+    // Keep sprites crisp when the canvas is scaled (we disable rounding only for the connect-line objects).
+    roundPixels: false,
   },
   // Chạy PreloadScene trước để load toàn bộ asset, rồi mới vào GameScene
   scene: [PreloadScene, GameScene, EndGameScene],
