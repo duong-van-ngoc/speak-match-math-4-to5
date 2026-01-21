@@ -133,7 +133,7 @@ const ITEMS_SHIFT_FROM_BANNER = 0;
 
 /* ===================== LAYOUT ===================== */
 
-const BANNER_Y = 15;
+const BANNER_Y = 42;
 const BANNER_SCALE = 0.5;
 const BANNER_MAX_W_RATIO = 0.7;
 
@@ -753,7 +753,7 @@ export default class GameScene extends Phaser.Scene {
       let shapeYPositions = this.getYPositions(this.shapeItems.length, innerTop, innerBottom);
 
       // Áp dụng khoảng cách dọc cụ thể cho các item hình (cột giữa)
-      if (this.shapeItems.length > 1 && SHAPE_VERTICAL_SPACING_FACTOR < 1.0) {
+      if (this.shapeItems.length > 1) {
         const currentSpan = shapeYPositions[shapeYPositions.length - 1] - shapeYPositions[0];
         const newSpan = currentSpan * SHAPE_VERTICAL_SPACING_FACTOR;
         const startOffset = (currentSpan - newSpan) / 2;
@@ -1151,6 +1151,7 @@ export default class GameScene extends Phaser.Scene {
       const objectId = img.getData('itemId') as ObjectItemId | undefined;
       img.setAlpha(objectId && this.matchedObjects.has(objectId) ? 0.9 : 1);
     }
+
     this.redrawConnections();
   }
 
@@ -1229,9 +1230,8 @@ export default class GameScene extends Phaser.Scene {
     }
     this.wrongLine.setVisible(true).setAlpha(0.95);
 
-    // Sử dụng vị trí kéo cuối cùng (dragLineEnd) thay vì center của shape
-    const start = this.getAnchorWorldPoint(objectImg, this.dragLineEnd!.x, this.dragLineEnd!.y);
-    const end = this.getAnchorWorldPoint(shapeImg, this.dragLineEnd!.x, this.dragLineEnd!.y);
+    const start = this.getAnchorWorldPoint(objectImg, shapeImg.x, shapeImg.y);
+    const end = this.getAnchorWorldPoint(shapeImg, objectImg.x, objectImg.y);
     const x1 = start.x;
     const y1 = start.y;
     const x2 = end.x;
