@@ -112,6 +112,8 @@ export default class EndGameScene extends Phaser.Scene {
             this.stopConfetti();
             // SDK: tính số lần chơi lại
             irukaGame.retryFromStart();
+            // Đặt trạng thái chơi lại để hiện bàn tay hướng dẫn ngay lập tức
+            this.game.registry.set('isReplay', true);
             // Dừng các scene liên quan trước khi restart GameScene
             this.scene.stop('EndGameScene');
             this.scene.stop('CountConnectScene');

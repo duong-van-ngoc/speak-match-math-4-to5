@@ -83,6 +83,16 @@ export class ColorScene extends Phaser.Scene {
   init(data: { gameData: GameData }) {
     this.dataGame = data.gameData;
 
+    // Khởi tạo trạng thái lần đầu vào game nếu chưa có
+    if (this.game.registry.get('firstTimeInGame') === undefined) {
+        this.game.registry.set('firstTimeInGame', true);
+    }
+
+    // Khởi tạo trạng thái chơi lại nếu chưa có
+    if (this.game.registry.get('isReplay') === undefined) {
+        this.game.registry.set('isReplay', false);
+    }
+
     const ballKeys = COLOR_SCENE_ASSETS.ballTextures;
     const marbleKeys = COLOR_SCENE_ASSETS.marbleTextures;
 
@@ -138,13 +148,9 @@ export class ColorScene extends Phaser.Scene {
     this.createObjectElements();
     this.layoutBoard();
 
-    this.applyCurrentColorLevel();
-    // Đảm bảo bàn tay hiện ngay khi vào màn đầu tiên
-    this.time.delayedCall(0, () => {
-      this.showPaletteGuideHand(true);
-    });
-    // Phát voice hướng dẫn cho màn đầu tiên (không ảnh hưởng bàn tay)
+    // Phát voice hướng dẫn cho màn đầu tiên
     this.playGuideVoiceForCurrentLevel();
+    this.applyCurrentColorLevel();
 
     this.boxes.forEach((b) => {
       if (b.image) b.image.on('pointerdown', () => this.onBoxClick(b));
@@ -155,19 +161,6 @@ export class ColorScene extends Phaser.Scene {
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off('resize', this.layoutBoard, this);
-    });
-
-    this.input.once('pointerdown', () => {
-      this.hidePaletteGuideHand();
-      // Nếu bé chưa chọn màu sau 3s thì hiện lại bàn tay
-      this.paletteGuideHandTimeout = this.time.delayedCall(3000, () => {
-        if (this.isPainting) return;
-        if (!this.selected) {
-          this.showPaletteGuideHand(false);
-        } else {
-          this.showBoxGuideHand();
-        }
-      });
     });
   }
   // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager (howler)
@@ -362,9 +355,23 @@ export class ColorScene extends Phaser.Scene {
     this.updateBannerTextImage();
     // Phát voice hướng dẫn khi chuyển màn
     this.playGuideVoiceForCurrentLevel();
-    // Reset trạng thái đã hiện bàn tay, không gọi showPaletteGuideHand ở đây để tránh xóa bàn tay vừa hiện ở create
+    // Reset trạng thái đã hiện bàn tay
     this.paletteGuideHandShown = false;
     this.hidePaletteGuideHand();
+
+    // Hiện bàn tay ngay cho level bóng khi không phải nhấn nút chơi lại
+    if (this.currentColorLevelIndex === 0 && !this.game.registry.get('isReplay')) {
+      this.showPaletteGuideHand(false);
+    }
+    // Set timeout cho level bi hoặc khi nhấn nút chơi lại
+    else if (!this.selected && !this.paletteGuideHand && (this.currentColorLevelIndex > 0 || this.game.registry.get('isReplay'))) {
+      this.paletteGuideHandTimeout = this.time.delayedCall(10000, () => {
+        this.showPaletteGuideHand(false);
+      });
+    }
+
+    // Reset trạng thái chơi lại sau khi xử lý
+    this.game.registry.set('isReplay', false);
   }
 
   private resetForNextColorLevel() {
@@ -382,9 +389,9 @@ export class ColorScene extends Phaser.Scene {
     });
 
     this.applyCurrentColorLevel();
-    // Hiển thị lại bàn tay hướng dẫn ở ô màu lần đầu tiên
+    // Reset trạng thái bàn tay cho màn mới
     this.paletteGuideHandShown = false;
-    this.showPaletteGuideHand(true);
+    this.hidePaletteGuideHand();
   }
 
   private advanceColorLevel() {
@@ -421,6 +428,12 @@ export class ColorScene extends Phaser.Scene {
     if (box.painted) {
       if (box.image) this.shakeObject(box.image);
       this.playWrongSound();
+      // Re-show appropriate guide hand after mistake on an already painted box
+      if (this.selected) {
+        this.showBoxGuideHand();
+      } else {
+        this.showPaletteGuideHand(false);
+      }
       return;
     }
 
@@ -436,6 +449,11 @@ export class ColorScene extends Phaser.Scene {
     this.isPainting = true;
     this.currentPaintingBox = box;
     this.hideBoxGuideHand(); // Ẩn bàn tay hướng dẫn ở ô số
+    // Clear timeout bàn tay bảng màu khi bắt đầu tô
+    if (this.paletteGuideHandTimeout) {
+      this.paletteGuideHandTimeout.remove(false);
+      this.paletteGuideHandTimeout = undefined;
+    }
   }
 
 
@@ -487,7 +505,15 @@ export class ColorScene extends Phaser.Scene {
     this.selected = def.c;
     this.paletteDots.forEach((_, i) => this.updatePaletteStroke(i));
     this.hidePaletteGuideHand(); // Ẩn chỉ tay ở ô màu
-    this.showBoxGuideHand(); // Hiện chỉ tay ở ô số
+    if (this.paletteGuideHandTimeout) {
+      this.paletteGuideHandTimeout.remove(false);
+      this.paletteGuideHandTimeout = undefined;
+    }
+    // Khi mới vào game hoặc reload: set timeout 10 giây trước khi hiện bàn tay tô
+    // Khi nhấn nút chơi lại: cũng set timeout 10 giây
+    this.time.delayedCall(10000, () => {
+      this.showBoxGuideHand();
+    });
   }
 
   private updatePaletteStroke(index: number) {
@@ -841,6 +867,7 @@ export class ColorScene extends Phaser.Scene {
         repeat: -1,
       });
       if (first) this.paletteGuideHandShown = true;
+      this.paletteGuideHandTimeout = this.time.delayedCall(10000, () => this.showPaletteGuideHand(false));
     }
   }
   private hidePaletteGuideHand() {

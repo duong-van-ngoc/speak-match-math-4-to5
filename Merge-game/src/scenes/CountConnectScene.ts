@@ -32,8 +32,8 @@ import Phaser from 'phaser';
     };
 
     export class CountConnectScene extends Phaser.Scene {
-        // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
-        private playGuideVoiceForCurrentLevel() {
+    // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
+    private playGuideVoiceForCurrentLevel() {
             // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
             const voiceKeys = [
                 'voice_guide_connect',
@@ -91,6 +91,11 @@ import Phaser from 'phaser';
 
     init(data: { gameData: GameData }) {
         this.dataGame = data.gameData;
+
+        // Khởi tạo trạng thái lần đầu vào game nếu chưa có
+        if (this.game.registry.get('firstTimeInGame') === undefined) {
+            this.game.registry.set('firstTimeInGame', true);
+        }
 
         // Level 1 = BÓNG: trái/phải đều là 1
         // Level 2 = BI: trái 1, phải 2
@@ -228,8 +233,16 @@ import Phaser from 'phaser';
         // Phát voice hướng dẫn cho màn hiện tại
         this.playGuideVoiceForCurrentLevel();
 
-        // Hiển thị bàn tay hướng dẫn nối khi vào màn chơi
-        this.showGuideHand(true);
+        // Hiển thị bàn tay hướng dẫn nối lần đầu vào game
+        if (this.game.registry.get('firstTimeInGame')) {
+            this.showGuideHand(true);
+            this.game.registry.set('firstTimeInGame', false);
+        } else {
+            // Set timeout 10 giây nếu không thao tác
+            this.guideHandTimeout = this.time.delayedCall(10000, () => {
+                this.showGuideHand(false);
+            });
+        }
         this.input.on('pointerdown', this.onDown, this);
         this.input.on('pointermove', this.onMove, this);
         this.input.on('pointerup', this.onUp, this);
@@ -343,18 +356,20 @@ import Phaser from 'phaser';
         
         this.time.delayedCall(delay, () => {
             // Play counting sequence for the single connected bag
-            this.showCountingSequence(() => {
-                if (this.locked.size === this.bags.length) {
-                    // All items connected, advance level after a delay
-                    this.time.delayedCall(800, () => {
-                        this.advanceCountLevel();
-                    });
-                } else {
-                    // Not all items connected, show guide hand for the next one
-                    this.showGuideHand(false);
-                }
-            }, bag);
-        });
+                    this.showCountingSequence(() => {
+                        if (this.locked.size === this.bags.length) {
+                            // All items connected, advance level after a delay
+                            this.time.delayedCall(800, () => {
+                                this.advanceCountLevel();
+                            });
+                        } else {
+                            // Not all items connected. Set a timer to show the guide hand after 10s of inactivity.
+                            if (this.guideHandTimeout) this.guideHandTimeout.remove(false);
+                            this.guideHandTimeout = this.time.delayedCall(10000, () => {
+                                this.showGuideHand(false);
+                            });
+                        }
+                    }, bag);        });
     }
 
     // Phát âm thanh đúng tiếng Việt, random 1 trong 4 file
@@ -436,10 +451,13 @@ import Phaser from 'phaser';
         this.replaceNumberBoxesWithAssets();
 
         this.redrawFixedLines();
-        // Hiển thị lại bàn tay hướng dẫn nối lần đầu tiên khi qua màn mới
+        // Reset trạng thái bàn tay cho màn mới
         this.guideHandShown = false;
-        this.showGuideHand(true);
         this.hideGuideHand();
+        // Set timeout 10 giây cho màn mới
+        this.guideHandTimeout = this.time.delayedCall(10000, () => {
+            this.showGuideHand(false);
+        });
     }
 
     private advanceCountLevel() {
@@ -881,7 +899,7 @@ import Phaser from 'phaser';
         if (first) this.guideHandShown = true;
 
         // Set a timer to re-show the hand if the user is idle.
-        this.guideHandTimeout = this.time.delayedCall(4000, () => this.showGuideHand(false));
+        this.guideHandTimeout = this.time.delayedCall(10000, () => this.showGuideHand(false));
     }
     private hideGuideHand() {
         if (this.guideHand) {
