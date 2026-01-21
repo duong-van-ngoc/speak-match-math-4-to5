@@ -59,7 +59,7 @@ import Phaser from 'phaser';
     private lines!: Phaser.GameObjects.Graphics;
     private fixedLines?: Phaser.GameObjects.Graphics;
 
-    private fixedConnections: Array<{ bag: SpriteOrArc; box: NumBox }> = [];
+    private fixedConnections: Array<{ bag: SpriteOrArc; box: NumBox; dropX: number }> = [];
     private dragging?: DragState;
 
     private numberRowY?: number;
@@ -69,6 +69,7 @@ import Phaser from 'phaser';
 
     private countLevels: CountLevel[] = [];
     private currentCountLevelIndex = 0;
+    private lastAudioDuration = 0;
 
     private levelLabel?: Phaser.GameObjects.Text;
 
@@ -157,7 +158,7 @@ import Phaser from 'phaser';
         this.boxes = [];
         const maxNumber = this.dataGame.maxNumber;
         const scale = 0.45; // scale nhỏ lại như hình mẫu
-        const gap = 0; // khoảng cách giữa các số như hình mẫu
+        const gap = 0; // khoảng cách giữa các số - tăng lên để test
         // Tính tổng width thực tế của tất cả asset số (sau khi scale)
         let totalW = 0;
         const widths: number[] = [];
@@ -179,6 +180,7 @@ import Phaser from 'phaser';
             cx += widths[i] / 2;
             const n = i + 1;
             const numberKey = `number_${n}`;
+            console.log(`[CountConnectScene] Creating number ${n} at cx=${cx}, totalW=${totalW}, midX=${midX}`);
             let image: Phaser.GameObjects.Image | undefined = undefined;
             if (this.textures.exists(numberKey)) {
                 image = this.add.image(cx, numberY, numberKey).setOrigin(0.5);
@@ -293,8 +295,15 @@ import Phaser from 'phaser';
         this.connectionLineStyle.alpha
         );
         this.lines.beginPath();
-        this.lines.moveTo(this.dragging.startX, this.dragging.startY);
-        this.lines.lineTo(pointer.x, pointer.y);
+        const start = this.getBagLineStart(this.dragging.bag, pointer.x, pointer.y);
+
+        // const hitBox = this.findBox(pointer.x, pointer.y);
+
+        let endX = pointer.x;
+        let endY = pointer.y;
+
+        this.lines.moveTo(start.x, start.y);
+        this.lines.lineTo(endX, endY);
         this.lines.strokePath();
     }
 
@@ -308,12 +317,12 @@ import Phaser from 'phaser';
         this.lines.clear();
 
         if (!hit || hit.n !== count) {
-            this.cameras.main.shake(120, 0.01);
+            this.shakeObject(bag);
             // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh sai
             ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
             AudioManager.play('sfx_wrong');
             this.dragging = undefined;
-            // Không hiện lại bàn tay khi sai
+            this.time.delayedCall(500, () => this.showGuideHand(false));
             return;
         }
 
@@ -328,7 +337,7 @@ import Phaser from 'phaser';
         }
 
         if (!this.fixedConnections.some((conn) => conn.bag === bag)) {
-            this.fixedConnections.push({ bag, box: hit });
+            this.fixedConnections.push({ bag, box: hit, dropX: pointer.x });
             this.redrawFixedLines();
         }
 
@@ -340,11 +349,15 @@ import Phaser from 'phaser';
 
         this.dragging = undefined;
         if (this.locked.size === this.bags.length) {
-            this.time.delayedCall(450, () => {
+            // Cho bé kịp nhìn kết quả trước khi qua màn
+            this.time.delayedCall(1400, () => {
                 this.showCountingSequence(() => {
                     this.advanceCountLevel();
                 });
             });
+        } else {
+            // Hiển thị lại bàn tay hướng dẫn cho object còn lại
+            this.time.delayedCall(400, () => this.showGuideHand(false));
         } // Không hiện lại bàn tay khi chưa xong
     }
 
@@ -505,9 +518,9 @@ import Phaser from 'phaser';
         const innerH = boardH - padTop - padBottom;
 
         this.boardInnerRect.setTo(innerX, innerY, innerW, innerH);
-        this.numberRowY = innerY + innerH * 0.15;
+        this.numberRowY = innerY + innerH * 0.12;
 
-        const objSpacing = Math.min(innerW * 0.5, 300);
+        const objSpacing = Math.min(innerW * 0.7, 450);
         // Đặt bóng/bi xuống gần đáy board hơn
         const objY = innerY + innerH * 0.72;
 
@@ -526,7 +539,7 @@ import Phaser from 'phaser';
         this.drawBoardFrame();
         }
 
-        this.repositionNumberBoxes();
+        // this.repositionNumberBoxes(); // Tạm thời disable để test
         this.positionObjects();
         this.redrawFixedLines();
         this.ensureBannerAssets();
@@ -554,7 +567,7 @@ import Phaser from 'phaser';
         const boxW = 64;
         const padding = Math.min(36, this.boardInnerRect.width * 0.05);
         const availableWidth = this.boardInnerRect.width - padding * 2;
-        const minGap = 8;
+        const minGap = 20;
 
         const gap =
         this.boxes.length > 1
@@ -601,31 +614,63 @@ import Phaser from 'phaser';
         gfx.clear();
         if (!this.fixedConnections.length) return;
 
-        this.fixedConnections.forEach(({ bag, box }) => {
-            // box.rect có thể undefined, dùng box.image nếu là asset số
-            let bounds;
-            if (box.rect) {
-                bounds = box.rect.getBounds();
-            } else if (box.image) {
-                bounds = box.image.getBounds();
-            } else {
-                return; // không có gì để nối
+        // Group connections by target box
+        const connectionsByBox = new Map<NumBox, { bag: SpriteOrArc; box: NumBox }[]>();
+        this.fixedConnections.forEach((conn) => {
+            if (!connectionsByBox.has(conn.box)) {
+                connectionsByBox.set(conn.box, []);
             }
-            const startX = bag.x;
-            const startY = bag.y;
-            const endX = bounds.centerX;
-            const endY = bounds.centerY;
-
-            gfx.lineStyle(
-                this.connectionLineStyle.width,
-                this.connectionLineStyle.color,
-                this.connectionLineStyle.alpha
-            );
-            gfx.beginPath();
-            gfx.moveTo(startX, startY);
-            gfx.lineTo(endX, endY);
-            gfx.strokePath();
+            connectionsByBox.get(conn.box)?.push(conn);
         });
+
+            connectionsByBox.forEach((conns: Array<{ bag: SpriteOrArc; box: NumBox; dropX: number }>) => {
+                const numConnectionsInBox = conns.length;
+                const box = conns[0].box; // Tất cả các kết nối trong nhóm này đều đến cùng một box
+                let bounds;
+                if (box.rect) {
+                    bounds = box.rect.getBounds();
+                } else if (box.image) {
+                    bounds = box.image.getBounds();
+                } else {
+                    return;
+                }
+
+                if (numConnectionsInBox <= 1) {
+                    // If only one connection, draw as usual
+                    const { bag, dropX } = conns[0];
+                    // Clamp dropX to the box's horizontal bounds and set Y to bottom edge
+                    const endX = Phaser.Math.Clamp(dropX, bounds.left, bounds.right);
+                    const endY = bounds.bottom;
+                    const start = this.getBagLineStart(bag, endX, endY);
+                    gfx.lineStyle(
+                        this.connectionLineStyle.width,
+                        this.connectionLineStyle.color,
+                        this.connectionLineStyle.alpha
+                    );
+                    gfx.beginPath();
+                    gfx.moveTo(start.x, start.y);
+                    gfx.lineTo(endX, endY);
+                    gfx.strokePath();
+                } else {
+                    // If multiple connections, use their individual dropX values
+                    conns.forEach(({ bag, dropX }) => {
+                        // Clamp dropX to the box's horizontal bounds and set Y to bottom edge
+                        const endX = Phaser.Math.Clamp(dropX, bounds.left, bounds.right);
+                        const endY = bounds.bottom;
+                        const start = this.getBagLineStart(bag, endX, endY);
+
+                        gfx.lineStyle(
+                            this.connectionLineStyle.width,
+                            this.connectionLineStyle.color,
+                            this.connectionLineStyle.alpha
+                        );
+                        gfx.beginPath();
+                        gfx.moveTo(start.x, start.y);
+                        gfx.lineTo(endX, endY);
+                        gfx.strokePath();
+                    });
+                }
+            });
     }
 
     private createBoardImageIfNeeded() {
@@ -703,17 +748,24 @@ import Phaser from 'phaser';
         return width / height;
     }
 
+
+    private readonly audioDurations: { [key: string]: number } = {
+        '1': 500, // Placeholder duration in milliseconds
+        '11': 600, // Placeholder duration in milliseconds
+        '12': 550, // Placeholder duration in milliseconds
+        '21': 650, // Placeholder duration in milliseconds
+    };
+
     private showCountingSequence(onDone?: () => void) {
         if (this.isCountingSequence) return;
         this.isCountingSequence = true;
         this.clearCountingLabels();
 
         const sortedBags = [...this.bags].sort((a, b) => a.x - b.x);
-        const stepDelay = 380;
 
         const runStep = (index: number) => {
             if (index >= sortedBags.length) {
-                this.time.delayedCall(360, () => {
+                this.time.delayedCall(this.lastAudioDuration + 120, () => {
                     this.isCountingSequence = false;
                     onDone?.();
                 });
@@ -745,11 +797,23 @@ import Phaser from 'phaser';
             }
             this.countingLabels.push(label as Phaser.GameObjects.Text | Phaser.GameObjects.Image);
 
+            let soundKey: string;
+            if (this.currentCountLevelIndex === 0) { // Bóng (Ball) screen
+                soundKey = index === 0 ? '1' : '11';
+            } else { // Bi (Marble) screen
+                soundKey = bagCount === 1 ? '12' : '21';
+            }
+            AudioManager.playWhenReady?.(soundKey);
+            const currentStepDelay = this.audioDurations[soundKey] || 480; // Default to 480ms if duration not found
+            this.lastAudioDuration = currentStepDelay; // Store the duration
+
             const originalY = bag.y;
+            const animationDuration = Math.max(160, currentStepDelay - 50); // Ensure animation lasts close to audio duration, with a minimum
+
             this.tweens.add({
                 targets: bag,
                 y: originalY - 10,
-                duration: 140,
+                duration: animationDuration,
                 yoyo: true,
                 ease: 'Quad.Out',
                 onComplete: () => bag.setY(originalY),
@@ -759,14 +823,12 @@ import Phaser from 'phaser';
                 targets: label,
                 scaleX: 1.1,
                 scaleY: 1.1,
-                duration: 160,
+                duration: animationDuration,
                 yoyo: true,
                 ease: 'Back.Out',
             });
 
-            AudioManager.playWhenReady?.(`voice_count_${bagCount}`);
-
-            this.time.delayedCall(stepDelay, () => runStep(index + 1));
+            this.time.delayedCall(currentStepDelay + 120, () => runStep(index + 1));
         };
 
         runStep(0);
@@ -775,6 +837,44 @@ import Phaser from 'phaser';
     private clearCountingLabels() {
         this.countingLabels.forEach((label) => label.destroy());
         this.countingLabels = [];
+    }
+
+    // Lấy điểm xuất phát của line nằm sâu hơn về phía quả/bi
+    private getBagLineStart(target: SpriteOrArc, towardsX: number, towardsY: number) {
+        const dx = towardsX - target.x;
+        const dy = towardsY - target.y;
+        const len = Math.max(1e-6, Math.hypot(dx, dy));
+        // Lùi lại vào trong quả một đoạn nhỏ để line “ăn” vào quả
+        const offset =
+            target instanceof Phaser.GameObjects.Image
+                ? Math.min(20, Math.max(8, Math.min(target.displayWidth, target.displayHeight) * 0.12))
+                : Math.min(18, Math.max(6, target.radius * 0.18));
+
+        let adjustedOffset = offset;
+
+        // Check if the connection is diagonal (both dx and dy are significant)
+        const angleThreshold = 0.5; // Adjust this value to control what's considered "diagonal"
+        if (Math.abs(dx) > len * angleThreshold && Math.abs(dy) > len * angleThreshold) {
+            adjustedOffset += 15; // Increased offset for diagonal connections
+        }
+
+        return { x: target.x - (dx / len) * adjustedOffset, y: target.y - (dy / len) * adjustedOffset };
+    }
+
+    private shakeObject(target: SpriteOrArc, intensity = 12, duration = 220) {
+        const originalX = target.x;
+        this.tweens.killTweensOf(target);
+        this.tweens.add({
+            targets: target,
+            x: originalX + intensity,
+            duration: Math.max(40, Math.floor(duration / 6)),
+            yoyo: true,
+            repeat: 5,
+            ease: 'Sine.inOut',
+            onComplete: () => {
+                target.x = originalX;
+            },
+        });
     }
 
     // Hiển thị bàn tay hướng dẫn nối từ object đến số đúng
@@ -804,7 +904,7 @@ import Phaser from 'phaser';
         this.guideHandTween = this.tweens.add({
             targets: this.guideHand,
             x: box.image.x,
-            y: box.image.y,
+            y: box.image.getBounds().bottom,
             duration: 900,
             ease: 'Cubic.InOut',
             yoyo: true,

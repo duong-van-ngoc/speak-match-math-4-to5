@@ -35,6 +35,10 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   // Counting voices
   voice_count_1: { src: `${BASE_PATH}1.mp3`, volume: 1.0 },
   voice_count_2: { src: `${BASE_PATH}2.mp3`, volume: 1.0 },
+  "1": { src: `${BASE_PATH}1.mp3`, volume: 1.0 },
+  "11": { src: `${BASE_PATH}11.mp3`, volume: 1.0 },
+  "12": { src: `${BASE_PATH}12.mp3`, volume: 1.0 },
+  "21": { src: `${BASE_PATH}21.mp3`, volume: 1.0 },
 
 };
 

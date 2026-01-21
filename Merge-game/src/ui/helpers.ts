@@ -13,6 +13,9 @@ export type NumBox = {
   numberImage?: Phaser.GameObjects.Image;
   image?: Phaser.GameObjects.Image;
   setNumberTint?: (color?: number) => void;
+  renderTexture?: Phaser.GameObjects.RenderTexture; // Thêm RenderTexture
+  paintProgress?: number; // Tiến trình tô màu (0-1)
+  paintedPixels?: Set<string>; // Theo dõi các pixel đã tô để tô từ từ
 };
 
 export function makeTopBanner(scene: Phaser.Scene, text: string) {
