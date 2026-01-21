@@ -519,11 +519,9 @@ export default class GameScene extends Phaser.Scene {
     this.input.removeAllListeners('dragend');
     this.input.removeAllListeners('pointerdown');
 
-    this.input.on('pointerdown', () => this.noteInteraction());
-
     this.input.on('dragstart', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-      AudioManager.stop('voice_join');
       this.noteInteraction();
+      AudioManager.stop('voice_join');
       const img = gameObject as Phaser.GameObjects.Image;
       if (img.getData('role') !== 'OBJECT') return;
 
@@ -588,82 +586,16 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private buildBalancedObjectColumns(): { leftIds: ObjectItemId[]; rightIds: ObjectItemId[] } {
-    const byKey = new Map<MatchKey, ObjectItemId[]>();
-    for (const id of OBJECT_IDS) {
-      const key = OBJECT_MATCH_KEY[id];
-      const list = byKey.get(key);
-      if (list) list.push(id);
-      else byKey.set(key, [id]);
-    }
-
-    // Shuffle inside each bucket to keep variety.
-    for (const [key, list] of byKey) {
-      const shuffled = [...list];
-      Phaser.Utils.Array.Shuffle(shuffled);
-      byKey.set(key, shuffled);
-    }
-
-    const keys = Array.from(byKey.keys());
-    Phaser.Utils.Array.Shuffle(keys);
-
-    const leftIds: ObjectItemId[] = [];
-    const rightIds: ObjectItemId[] = [];
-
-    // Distribute per-shape as evenly as possible across the two columns.
-    for (const key of keys) {
-      const items = byKey.get(key) ?? [];
-      const startOnLeft = leftIds.length <= rightIds.length;
-      for (let i = 0; i < items.length; i++) {
-        const toLeft = (i % 2 === 0) === startOnLeft;
-        (toLeft ? leftIds : rightIds).push(items[i]);
-      }
-    }
+    const leftIds: ObjectItemId[] = ['OBJ_CLOCK', 'OBJ_FLAG', 'OBJ_RING', 'OBJ_WARNING', 'OBJ_POSTCARD'];
+    const rightIds: ObjectItemId[] = ['OBJ_TILE', 'OBJ_SETSQUARE', 'OBJ_PLATE', 'OBJ_GIFT', 'OBJ_LANDSCAPE'];
 
     return {
-      leftIds: this.orderAvoidAdjacentSameShape(leftIds),
-      rightIds: this.orderAvoidAdjacentSameShape(rightIds),
+      leftIds: leftIds,
+      rightIds: rightIds,
     };
   }
 
-  private orderAvoidAdjacentSameShape(ids: ObjectItemId[]) {
-    const remaining = [...ids];
-    const out: ObjectItemId[] = [];
-    let lastKey: MatchKey | undefined;
 
-    while (remaining.length > 0) {
-      const counts = new Map<MatchKey, number>();
-      for (const id of remaining) {
-        const key = OBJECT_MATCH_KEY[id];
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-      }
-
-      const candidates = remaining.filter((id) => OBJECT_MATCH_KEY[id] !== lastKey);
-      const pool = candidates.length > 0 ? candidates : remaining;
-
-      let best = pool[0];
-      let bestCount = counts.get(OBJECT_MATCH_KEY[best]) ?? 0;
-      for (let i = 1; i < pool.length; i++) {
-        const id = pool[i];
-        const c = counts.get(OBJECT_MATCH_KEY[id]) ?? 0;
-        if (c > bestCount) {
-          best = id;
-          bestCount = c;
-        }
-      }
-
-      // If multiple candidates share the same max count, pick randomly among them.
-      const bestKey = OBJECT_MATCH_KEY[best];
-      const bestPool = pool.filter((id) => (counts.get(OBJECT_MATCH_KEY[id]) ?? 0) === bestCount);
-      const chosen = bestPool.length > 1 ? bestPool[Phaser.Math.Between(0, bestPool.length - 1)] : best;
-
-      const idx = remaining.indexOf(chosen);
-      remaining.splice(idx, 1);
-      out.push(chosen);
-      lastKey = bestKey;
-    }
-
-    return out;
-  }
 
   /* ===================== LAYOUT ===================== */
 
@@ -1151,7 +1083,6 @@ export default class GameScene extends Phaser.Scene {
       const objectId = img.getData('itemId') as ObjectItemId | undefined;
       img.setAlpha(objectId && this.matchedObjects.has(objectId) ? 0.9 : 1);
     }
-
     this.redrawConnections();
   }
 
@@ -1327,96 +1258,98 @@ export default class GameScene extends Phaser.Scene {
     const ux = dx / len;
     const uy = dy / len;
 
-    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-
-    const intersectBox = (halfW: number, halfH: number) => {
-      const tx = dx === 0 ? Number.POSITIVE_INFINITY : halfW / Math.abs(dx);
-      const ty = dy === 0 ? Number.POSITIVE_INFINITY : halfH / Math.abs(dy);
-      const t = Math.min(tx, ty);
-      return { x: cx + dx * t, y: cy + dy * t };
-    };
-
-    const role = img.getData('role') as 'SHAPE' | 'OBJECT' | undefined;
-    const matchKey = img.getData('matchKey') as MatchKey | undefined;
 
     const cross = (x1: number, y1: number, x2: number, y2: number) => x1 * y2 - y1 * x2;
 
-    const intersectTriangle = (halfW: number, halfH: number) => {
-      // Triangle with vertices (0,-halfH), (-halfW,halfH), (halfW,halfH)
-      const ax = 0;
-      const ay = -halfH;
-      const bx = -halfW;
-      const by = halfH;
-      const cxp = halfW;
-      const cyp = halfH;
+    const role = img.getData('role') as 'SHAPE' | 'OBJECT' | undefined;
+    const matchKey = img.getData('matchKey') as MatchKey | undefined;
+    const itemId = img.getData('itemId') as ItemId | undefined;
 
-      const tryEdge = (
-        ex1: number,
-        ey1: number,
-        ex2: number,
-        ey2: number,
-      ): { t: number; u: number; ex1: number; ey1: number; ex2: number; ey2: number } | undefined => {
-        const rx = dx;
-        const ry = dy;
+    let shapeInset: number;
+
+    // Custom insets for specific items that appear to have less transparent padding.
+    // A smaller inset brings the anchor point closer to the bounding box edge.
+    switch (itemId) {
+        case 'OBJ_CLOCK':
+            shapeInset = 4; // Use a negative inset to push the anchor point outside the bounding box.
+            break;
+        case 'OBJ_WARNING':
+            shapeInset = -4; // Pushed out slightly
+            break;
+        case 'OBJ_SETSQUARE':
+            shapeInset = 5; // Pushed out more for ruler
+            break;
+        case 'SHAPE_CIRCLE':
+            shapeInset = 0; // Set to 0 for perfect edge calc
+            break;
+        case 'SHAPE_TRIANGLE':
+            shapeInset = 0; // Set to 0 for perfect edge calc
+            break;
+        case 'OBJ_GIFT':
+        case 'OBJ_LANDSCAPE':
+            shapeInset = 2; // Use a small, fixed inset value
+            break;
+        default:
+            // Default inset logic for other items
+            shapeInset = role === 'OBJECT' ? Math.max(1, LINE_THICKNESS * 0.35) : Math.max(1, LINE_THICKNESS * 0.15);
+            break;
+    }
+
+    const halfW = Math.max(1, img.displayWidth / 2 - shapeInset);
+    const halfH = Math.max(1, img.displayHeight / 2 - shapeInset);
+
+    const intersectTriangle = (w: number, h: number) => {
+      // Triangle with vertices (0,-h), (-w,h), (w,h) relative to image center
+      const ax = 0, ay = -h;
+      const bx = -w, by = h;
+      const cxp = w, cyp = h;
+
+      const tryEdge = (ex1: number, ey1: number, ex2: number, ey2: number) => {
         const sx = ex2 - ex1;
         const sy = ey2 - ey1;
-        const denom = cross(rx, ry, sx, sy);
+        const denom = cross(dx, dy, sx, sy);
         if (Math.abs(denom) < 1e-6) return undefined;
 
         const qpx = ex1;
         const qpy = ey1;
         const t = cross(qpx, qpy, sx, sy) / denom;
-        const u = cross(qpx, qpy, rx, ry) / denom;
+        const u = cross(qpx, qpy, dx, dy) / denom;
         if (t >= 0 && u >= 0 && u <= 1) return { t, u, ex1, ey1, ex2, ey2 };
         return undefined;
       };
 
       const hits = [tryEdge(ax, ay, bx, by), tryEdge(bx, by, cxp, cyp), tryEdge(cxp, cyp, ax, ay)].filter(
-        (h): h is { t: number; u: number; ex1: number; ey1: number; ex2: number; ey2: number } =>
-          !!h && Number.isFinite(h.t) && Number.isFinite(h.u),
+        (h): h is NonNullable<ReturnType<typeof tryEdge>> => !!h && Number.isFinite(h.t) && Number.isFinite(h.u),
       );
 
       if (hits.length > 0) {
         hits.sort((a, b) => a.t - b.t);
         const hit = hits[0];
 
-        // Avoid snapping to triangle vertices: clamp to interior of the edge.
-        const eps = 0.28;
-        const uClamped = clamp(hit.u, eps, 1 - eps);
+        // Always connect to the middle of the edge.
+        const uClamped = 0.5;
         const sx = hit.ex2 - hit.ex1;
         const sy = hit.ey2 - hit.ey1;
         return { x: cx + hit.ex1 + sx * uClamped, y: cy + hit.ey1 + sy * uClamped };
       }
 
-      return intersectBox(halfW, halfH);
+      // Fallback for triangle: center of facing edge of bounding box
+      const x = towardX >= cx ? cx + w : cx - w;
+      return { x, y: cy };
     };
 
-    const shapeInset = role === 'OBJECT' ? Math.max(1, LINE_THICKNESS * 0.35) : Math.max(1, LINE_THICKNESS * 0.15);
-    const halfW = Math.max(1, img.displayWidth / 2 - shapeInset);
-    const halfH = Math.max(1, img.displayHeight / 2 - shapeInset);
-
-    // For both objects and shapes, use the geometry implied by matchKey.
-    if (matchKey) {
-      if (matchKey === 'CIRCLE') {
-        const r = Math.max(1, Math.min(img.displayWidth, img.displayHeight) / 2 - shapeInset);
-        return { x: cx + ux * r, y: cy + uy * r };
-      }
-
-      if (matchKey === 'SQUARE' || matchKey === 'RECTANGLE') {
-        // Prefer touching a side (not a corner). Since objects are left/right of shapes,
-        // pick the facing vertical edge and clamp Y inside the edge, away from corners.
-        const padY = Math.max(halfH * 0.28, LINE_THICKNESS * 1.2);
-        const minY = cy - halfH + padY;
-        const maxY = cy + halfH - padY;
-        const y = clamp(towardY, minY, maxY);
-        const x = towardX >= cx ? cx + halfW : cx - halfW;
-        return { x, y };
-      }
-
+    if (matchKey === 'TRIANGLE') {
       return intersectTriangle(halfW, halfH);
     }
 
-    // Fallback: inset box.
-    return intersectBox(halfW, halfH);
+    if (matchKey === 'CIRCLE' && itemId !== 'OBJ_CLOCK') {
+      const r = Math.max(1, Math.min(img.displayWidth, img.displayHeight) / 2 - shapeInset);
+      return { x: cx + ux * r, y: cy + uy * r };
+    }
+
+    // Default for SQUARE, RECTANGLE, OBJ_CLOCK, and other objects:
+    // Connect to the vertical center of the facing edge, respecting the inset.
+    const x = towardX >= cx ? cx + halfW : cx - halfW;
+    return { x, y: cy };
   }
 }

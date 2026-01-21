@@ -20,7 +20,7 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   correct_answer_3: { src: `${BASE_PATH}correct_answer_3.mp3`, volume: 1.0 },
   correct_answer_4: { src: `${BASE_PATH}correct_answer_4.mp3`, volume: 1.0 },
 
-  bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.3, html5: false },
+  bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.25, html5: false },
 
   complete: { src: `${BASE_PATH}vic_sound.mp3` },
   voice_intro: { src: `${BASE_PATH}color.mp3`, volume: 1.0 },
