@@ -230,15 +230,6 @@ import Phaser from 'phaser';
 
         // Hiển thị bàn tay hướng dẫn nối khi vào màn chơi
         this.showGuideHand(true);
-        this.input.once('pointerdown', () => {
-            this.hideGuideHand();
-            // Nếu bé chưa kéo sau 3s thì hiện lại bàn tay
-            this.guideHandTimeout = this.time.delayedCall(3000, () => {
-                if (!this.dragging) {
-                    this.showGuideHand(false);
-                }
-            });
-        });
         this.input.on('pointerdown', this.onDown, this);
         this.input.on('pointermove', this.onMove, this);
         this.input.on('pointerup', this.onUp, this);
@@ -277,6 +268,7 @@ import Phaser from 'phaser';
     }
 
     private onDown(pointer: Phaser.Input.Pointer) {
+        if (this.isCountingSequence) return;
         const bag = this.bags.find((b) => b.getBounds().contains(pointer.x, pointer.y));
         if (!bag) return;
         if (this.locked.has(bag)) return;
@@ -343,31 +335,36 @@ import Phaser from 'phaser';
 
         // Phát âm thanh đúng mỗi lần ghép đúng
         AudioManager.play('sfx_correct');
-            // Phát âm thanh đúng theo thứ tự (correct_answer_1, 2, 3, 4)
-            this.playCorrectAnswerSound();
+        const correctSoundKey = this.playCorrectAnswerSound();
+        const delay = this.audioDurations[correctSoundKey] || 800;
 
 
         this.dragging = undefined;
-        if (this.locked.size === this.bags.length) {
-            // Cho bé kịp nhìn kết quả trước khi qua màn
-            this.time.delayedCall(1400, () => {
-                this.showCountingSequence(() => {
-                    this.advanceCountLevel();
-                });
-            });
-        } else {
-            // Hiển thị lại bàn tay hướng dẫn cho object còn lại
-            this.time.delayedCall(400, () => this.showGuideHand(false));
-        } // Không hiện lại bàn tay khi chưa xong
+        
+        this.time.delayedCall(delay, () => {
+            // Play counting sequence for the single connected bag
+            this.showCountingSequence(() => {
+                if (this.locked.size === this.bags.length) {
+                    // All items connected, advance level after a delay
+                    this.time.delayedCall(800, () => {
+                        this.advanceCountLevel();
+                    });
+                } else {
+                    // Not all items connected, show guide hand for the next one
+                    this.showGuideHand(false);
+                }
+            }, bag);
+        });
     }
 
     // Phát âm thanh đúng tiếng Việt, random 1 trong 4 file
-    private playCorrectAnswerSound() {
+    private playCorrectAnswerSound(): string {
         // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh đúng
         ['voice_guide_connect'].forEach((k) => AudioManager.stop(k));
         const idx = Math.floor(Math.random() * 4) + 1; // 1-4
         const key = `correct_answer_${idx}`;
         AudioManager.playWhenReady?.(key);
+        return key;
     }
 
     private findBox(x: number, y: number) {
@@ -720,17 +717,21 @@ import Phaser from 'phaser';
         '11': 600, // Placeholder duration in milliseconds
         '12': 550, // Placeholder duration in milliseconds
         '21': 650, // Placeholder duration in milliseconds
+        'correct_answer_1': 800,
+        'correct_answer_2': 800,
+        'correct_answer_3': 800,
+        'correct_answer_4': 800,
     };
 
-    private showCountingSequence(onDone?: () => void) {
+    private showCountingSequence(onDone?: () => void, bagToCount?: SpriteOrArc) {
         if (this.isCountingSequence) return;
         this.isCountingSequence = true;
         this.clearCountingLabels();
 
-        const sortedBags = [...this.bags].sort((a, b) => a.x - b.x);
+        const bagsToCount = bagToCount ? [bagToCount] : [...this.bags].sort((a, b) => a.x - b.x);
 
         const runStep = (index: number) => {
-            if (index >= sortedBags.length) {
+            if (index >= bagsToCount.length) {
                 this.time.delayedCall(this.lastAudioDuration + 120, () => {
                     this.isCountingSequence = false;
                     onDone?.();
@@ -738,7 +739,7 @@ import Phaser from 'phaser';
                 return;
             }
 
-            const bag = sortedBags[index];
+            const bag = bagsToCount[index];
             const bounds = bag.getBounds();
             const labelX = bounds.centerX;
             const labelY = bounds.bottom + 12;
@@ -765,7 +766,8 @@ import Phaser from 'phaser';
 
             let soundKey: string;
             if (this.currentCountLevelIndex === 0) { // Bóng (Ball) screen
-                soundKey = index === 0 ? '1' : '11';
+                const leftBag = this.bags.sort((a,b) => a.x - b.x)[0];
+                soundKey = (bag === leftBag) ? '1' : '11';
             } else { // Bi (Marble) screen
                 soundKey = bagCount === 1 ? '12' : '21';
             }
@@ -877,6 +879,9 @@ import Phaser from 'phaser';
             repeat: -1,
         });
         if (first) this.guideHandShown = true;
+
+        // Set a timer to re-show the hand if the user is idle.
+        this.guideHandTimeout = this.time.delayedCall(4000, () => this.showGuideHand(false));
     }
     private hideGuideHand() {
         if (this.guideHand) {
