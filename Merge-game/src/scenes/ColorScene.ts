@@ -80,47 +80,6 @@ export class ColorScene extends Phaser.Scene {
     super('ColorScene');
   }
 
-  // private ensureNumberBgMaskTexture(numberKey: string) {
-  //   const maskKey = `${numberKey}__bgmask`;
-  //   if (this.textures.exists(maskKey)) return maskKey;
-  //   if (!this.textures.exists(numberKey)) return undefined;
-
-  //   const tex = this.textures.get(numberKey);
-  //   const src = tex.getSourceImage() as HTMLImageElement | HTMLCanvasElement | null;
-  //   if (!src) return undefined;
-
-  //   const w = (src as any).width || 0;
-  //   const h = (src as any).height || 0;
-  //   if (!w || !h) return undefined;
-
-  //   const canvas = document.createElement('canvas');
-  //   canvas.width = w;
-  //   canvas.height = h;
-  //   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  //   if (!ctx) return undefined;
-
-  //   ctx.drawImage(src as any, 0, 0);
-  //   const img = ctx.getImageData(0, 0, w, h);
-  //   const d = img.data;
-
-  //   // Cho tô toàn bộ vùng có alpha > alphaMin (full background)
-  //   // const whiteMin = 200;     // càng cao càng “chỉ nền trắng”
-  //   const alphaMin = 0;
-
-  //   for (let i = 0; i < d.length; i += 4) {
-  //     const a = d[i + 3];
-  //     if (a < alphaMin) { d[i + 3] = 0; continue; }
-
-  //     // Background = alpha 255 (tô được), viền/số = alpha 0 (không tô)
-  //     d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
-  //     d[i + 3] = a >= alphaMin ? 255 : 0;
-  //   }
-
-  //   ctx.putImageData(img, 0, 0);
-  //   this.textures.addCanvas(maskKey, canvas);
-  //   return maskKey;
-  // }
-
   init(data: { gameData: GameData }) {
     this.dataGame = data.gameData;
 
@@ -202,6 +161,7 @@ export class ColorScene extends Phaser.Scene {
       this.hidePaletteGuideHand();
       // Nếu bé chưa chọn màu sau 3s thì hiện lại bàn tay
       this.paletteGuideHandTimeout = this.time.delayedCall(3000, () => {
+        if (this.isPainting) return;
         if (!this.selected) {
           this.showPaletteGuideHand(false);
         } else {
@@ -909,14 +869,14 @@ export class ColorScene extends Phaser.Scene {
     if (!box || !box.image) return;
 
     if (this.textures.exists('guide_hand')) {
-      this.boxGuideHand = this.add.image(box.image.x, box.image.y + 40, 'guide_hand')
+      this.boxGuideHand = this.add.image(box.image.x, box.image.y + 20, 'guide_hand')
         .setOrigin(0.2, 0.1)
         .setScale(0.5)
         .setDepth(100)
         .setAlpha(0.92);
       this.boxGuideHandTween = this.tweens.add({
         targets: this.boxGuideHand,
-        y: box.image.y + 10,
+        y: box.image.y - 10,
         duration: 700,
         ease: 'Cubic.InOut',
         yoyo: true,
@@ -981,11 +941,11 @@ export class ColorScene extends Phaser.Scene {
     console.log(`[onPointerUp] Box ${box.n} - isCorrect: ${isCorrect}, box.n: ${box.n}, level.total: ${level.total}, selectedColor: ${this.selected}, targetColor: ${level.targetColor}`);
 
     // Ngưỡng hoàn thành tô màu (ví dụ: 60% số lượng lần vẽ dự kiến)
-    const completionThreshold = 0.7; // Giảm ngưỡng xuống 70% để dễ pass hơn
+    const completionThreshold = 0.3; // Giảm ngưỡng xuống 70% để dễ pass hơn
 
     console.log(`[onPointerUp] Box ${box.n} - isCorrect: ${isCorrect}, paintProgress: ${box.paintProgress}, Total Area: ${this.totalPaintableArea}, Threshold: ${this.totalPaintableArea * completionThreshold}`);
 
-    const paintProgressMeetsThreshold = (box.paintProgress ?? 0) >= (this.totalPaintableArea * completionThreshold);
+    const paintProgressMeetsThreshold = (box.paintProgress ?? 0) > (this.totalPaintableArea * completionThreshold);
     console.log(`[onPointerUp] paintProgressMeetsThreshold: ${paintProgressMeetsThreshold}`);
 
     console.assert(paintProgressMeetsThreshold === ((box.paintProgress ?? 0) > (this.totalPaintableArea * completionThreshold)), "Assertion failed: paintProgressMeetsThreshold calculation is incorrect");
@@ -995,6 +955,7 @@ export class ColorScene extends Phaser.Scene {
       box.painted = true;
       this.playCorrectSound();
       this.hidePaletteGuideHand();
+      this.hideBoxGuideHand();
       this.advanceColorLevel();
     } else {
       console.log(`[onPointerUp] Condition NOT met: isCorrect: ${isCorrect}, paintProgressMeetsThreshold: ${paintProgressMeetsThreshold}. Resetting paint progress.`);
