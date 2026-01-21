@@ -158,7 +158,7 @@ import Phaser from 'phaser';
         this.boxes = [];
         const maxNumber = this.dataGame.maxNumber;
         const scale = 0.45; // scale nhỏ lại như hình mẫu
-        const gap = 0; // khoảng cách giữa các số - tăng lên để test
+        const gap = 0; // khoảng cách giữa các số như hình mẫu
         // Tính tổng width thực tế của tất cả asset số (sau khi scale)
         let totalW = 0;
         const widths: number[] = [];
@@ -180,7 +180,6 @@ import Phaser from 'phaser';
             cx += widths[i] / 2;
             const n = i + 1;
             const numberKey = `number_${n}`;
-            console.log(`[CountConnectScene] Creating number ${n} at cx=${cx}, totalW=${totalW}, midX=${midX}`);
             let image: Phaser.GameObjects.Image | undefined = undefined;
             if (this.textures.exists(numberKey)) {
                 image = this.add.image(cx, numberY, numberKey).setOrigin(0.5);
@@ -520,7 +519,7 @@ import Phaser from 'phaser';
         this.boardInnerRect.setTo(innerX, innerY, innerW, innerH);
         this.numberRowY = innerY + innerH * 0.12;
 
-        const objSpacing = Math.min(innerW * 0.7, 450);
+        const objSpacing = Math.min(innerW * 0.5, 300);
         // Đặt bóng/bi xuống gần đáy board hơn
         const objY = innerY + innerH * 0.72;
 
@@ -539,7 +538,7 @@ import Phaser from 'phaser';
         this.drawBoardFrame();
         }
 
-        // this.repositionNumberBoxes(); // Tạm thời disable để test
+        this.repositionNumberBoxes();
         this.positionObjects();
         this.redrawFixedLines();
         this.ensureBannerAssets();
@@ -567,7 +566,7 @@ import Phaser from 'phaser';
         const boxW = 64;
         const padding = Math.min(36, this.boardInnerRect.width * 0.05);
         const availableWidth = this.boardInnerRect.width - padding * 2;
-        const minGap = 20;
+        const minGap = 8;
 
         const gap =
         this.boxes.length > 1
@@ -615,7 +614,7 @@ import Phaser from 'phaser';
         if (!this.fixedConnections.length) return;
 
         // Group connections by target box
-        const connectionsByBox = new Map<NumBox, { bag: SpriteOrArc; box: NumBox }[]>();
+        const connectionsByBox = new Map<NumBox, { bag: SpriteOrArc; box: NumBox; dropX: number }[]>();
         this.fixedConnections.forEach((conn) => {
             if (!connectionsByBox.has(conn.box)) {
                 connectionsByBox.set(conn.box, []);
@@ -623,7 +622,7 @@ import Phaser from 'phaser';
             connectionsByBox.get(conn.box)?.push(conn);
         });
 
-            connectionsByBox.forEach((conns: Array<{ bag: SpriteOrArc; box: NumBox; dropX: number }>) => {
+            connectionsByBox.forEach((conns) => {
                 const numConnectionsInBox = conns.length;
                 const box = conns[0].box; // Tất cả các kết nối trong nhóm này đều đến cùng một box
                 let bounds;
@@ -847,18 +846,14 @@ import Phaser from 'phaser';
         // Lùi lại vào trong quả một đoạn nhỏ để line “ăn” vào quả
         const offset =
             target instanceof Phaser.GameObjects.Image
-                ? Math.min(20, Math.max(8, Math.min(target.displayWidth, target.displayHeight) * 0.12))
-                : Math.min(18, Math.max(6, target.radius * 0.18));
+                ? Math.min(14, Math.max(8, Math.min(target.displayWidth, target.displayHeight) * 0.12))
+                : Math.min(12, Math.max(6, target.radius * 0.18));
 
-        let adjustedOffset = offset;
+        // Adjust offset to always pull the line start point towards the center of the bag
+        const adjustedOffsetX = (dx / len) * offset;
+        const adjustedOffsetY = (dy / len) * offset;
 
-        // Check if the connection is diagonal (both dx and dy are significant)
-        const angleThreshold = 0.5; // Adjust this value to control what's considered "diagonal"
-        if (Math.abs(dx) > len * angleThreshold && Math.abs(dy) > len * angleThreshold) {
-            adjustedOffset += 15; // Increased offset for diagonal connections
-        }
-
-        return { x: target.x - (dx / len) * adjustedOffset, y: target.y - (dy / len) * adjustedOffset };
+        return { x: target.x + adjustedOffsetX, y: target.y + adjustedOffsetY };
     }
 
     private shakeObject(target: SpriteOrArc, intensity = 12, duration = 220) {
