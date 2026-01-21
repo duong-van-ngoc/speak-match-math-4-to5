@@ -1229,8 +1229,9 @@ export default class GameScene extends Phaser.Scene {
     }
     this.wrongLine.setVisible(true).setAlpha(0.95);
 
-    const start = this.getAnchorWorldPoint(objectImg, shapeImg.x, shapeImg.y);
-    const end = this.getAnchorWorldPoint(shapeImg, objectImg.x, objectImg.y);
+    // Sử dụng vị trí kéo cuối cùng (dragLineEnd) thay vì center của shape
+    const start = this.getAnchorWorldPoint(objectImg, this.dragLineEnd!.x, this.dragLineEnd!.y);
+    const end = this.getAnchorWorldPoint(shapeImg, this.dragLineEnd!.x, this.dragLineEnd!.y);
     const x1 = start.x;
     const y1 = start.y;
     const x2 = end.x;
