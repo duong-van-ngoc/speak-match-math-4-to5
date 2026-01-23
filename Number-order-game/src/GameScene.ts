@@ -204,17 +204,22 @@ export default class GameScene extends Phaser.Scene {
     dashedGraphics.setDepth(2);
     this.dottedPathGroup.add(dashedGraphics);
 
-    const dashedSteps = Math.floor(this.totalCurveLength / 15);
-    const dashLen = 8;
-    dashedGraphics.lineStyle(1, 0x555555, 1);
+    // Layout: Dashes 19, 19 | Border 1px
+    const dashLen = 19;
+    const gapLen = 19;
+    const stepSize = (dashLen + gapLen);
+    const numSteps = Math.floor(this.totalCurveLength / stepSize);
 
-    for (let i = 0; i < dashedSteps; i++) {
-      const t = i / dashedSteps;
-      const p = this.pathCurve.getPoint(t);
-      const tangent = this.pathCurve.getTangent(t);
-      const start = p.clone().subtract(tangent.clone().scale(dashLen / 2));
-      const end = p.clone().add(tangent.clone().scale(dashLen / 2));
-      dashedGraphics.lineBetween(start.x, start.y, end.x, end.y);
+    dashedGraphics.lineStyle(1, 0x555555, 0.8);
+
+    for (let i = 0; i < numSteps; i++) {
+      const tStart = (i * stepSize) / this.totalCurveLength;
+      const tEnd = (i * stepSize + dashLen) / this.totalCurveLength;
+
+      const pStart = this.pathCurve.getPoint(tStart);
+      const pEnd = this.pathCurve.getPoint(tEnd);
+
+      dashedGraphics.lineBetween(pStart.x, pStart.y, pEnd.x, pEnd.y);
     }
 
     this.paintedPathGraphics = this.add.graphics();
