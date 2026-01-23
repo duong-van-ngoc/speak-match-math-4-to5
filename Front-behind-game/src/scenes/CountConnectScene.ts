@@ -1,25 +1,22 @@
 import Phaser from 'phaser';
-    import type { GameData } from '../data/gameData';
-    import type { NumBox } from '../ui/helpers';
-    import { FLOW_GO_COLOR } from '../flow/events';
-    // import { COLORS } from '../data/gameData';
-    import {
-        BOARD_ASSET_KEYS,
-        COUNT_CONNECT_ASSETS,
-        // NUMBER_ASSETS,
-        loadAssetGroups,
-    } from '../assets';
-    import AudioManager from '../AudioManager';
+import type { GameData } from '../data/gameData';
+import type { NumBox } from '../ui/helpers';
+import { FLOW_GO_COLOR } from '../flow/events';
+import {
+    BOARD_ASSET_KEYS,
+    loadAssetGroups,
+} from '../assets';
+import AudioManager from '../AudioManager';
 
-    type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
+type SpriteOrArc = Phaser.GameObjects.Arc | Phaser.GameObjects.Image;
 
-    type DragState = {
+type DragState = {
     bag: SpriteOrArc; // giữ tên bag để không phải sửa nhiều logic, nhưng thực tế là "object trái/phải"
     startX: number;
     startY: number;
-    };
+};
 
-    type CountLevel = {
+type CountLevel = {
     label: string;
     counts: [number, number];
 
@@ -29,19 +26,19 @@ import Phaser from 'phaser';
     // fallback nếu không có texture
     objectFill: number;
     objectStroke: number;
-    };
+};
 
-    export class CountConnectScene extends Phaser.Scene {
-        // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
-        private playGuideVoiceForCurrentLevel() {
-            // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
-            const voiceKeys = [
-                'voice_guide_connect',
-            ];
-            voiceKeys.forEach((k) => AudioManager.stop(k));
-            const key = voiceKeys[this.currentCountLevelIndex] || voiceKeys[0];
-            AudioManager.playWhenReady(key);
-        }
+export class CountConnectScene extends Phaser.Scene {
+    // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
+    private playGuideVoiceForCurrentLevel() {
+        // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
+        const voiceKeys = [
+            'voice_guide_connect',
+        ];
+        voiceKeys.forEach((k) => AudioManager.stop(k));
+        const key = voiceKeys[this.currentCountLevelIndex] || voiceKeys[0];
+        AudioManager.playWhenReady(key);
+    }
     private dataGame!: GameData;
 
     private boxes: NumBox[] = [];
@@ -77,7 +74,7 @@ import Phaser from 'phaser';
 
     private readonly boardAssetKey = BOARD_ASSET_KEYS.frame;
     private readonly bannerBgKey = BOARD_ASSET_KEYS.bannerBg;
-    private readonly bannerTextKey = BOARD_ASSET_KEYS.bannerText;
+    private readonly bannerTextKey = 'connect_hint';
 
     private guideHand?: Phaser.GameObjects.Image;
     private guideHandTween?: Phaser.Tweens.Tween;
@@ -91,61 +88,35 @@ import Phaser from 'phaser';
     init(data: { gameData: GameData }) {
         this.dataGame = data.gameData;
 
-        // Level 1 = BÓNG: trái/phải đều là 1
-        // Level 2 = BI: trái 1, phải 2
-        const ballKeys = COUNT_CONNECT_ASSETS.bagTextures ?? [];
-        const marbleKeys = COUNT_CONNECT_ASSETS.marbleTextures ?? [];
-
-        const pick2 = (arr: Array<string | undefined>) => [
-            arr[0],
-            arr[1] ?? arr[0],
-        ] as (string | undefined)[];
-
-        this.countLevels = [
-            {
-                label: 'Bóng',
-                counts: [1, 1], // trái/phải đều là 1
-                objectTextureKeys: pick2(ballKeys),
-                objectFill: 0xdff6ff,
-                objectStroke: 0x7cc8ff,
-            },
-            {
-                label: 'Bi',
-                counts: [1, 2], // trái 1, phải 2
-                objectTextureKeys: pick2(marbleKeys),
-                objectFill: 0xffffff,
-                objectStroke: 0x6a87ff,
-            },
-        ];
     }
 
     preload() {
-        loadAssetGroups(this, 'shared', 'countConnect', 'numbers', 'countingNumbers', 'ui');
+        loadAssetGroups(this, 'shared', 'ui');
     }
 
     create() {
-                // Reset về level đầu tiên khi chơi lại
-                this.currentCountLevelIndex = 0;
-            // Reset toàn bộ trạng thái kết nối khi vào lại scene (chơi lại)
-            this.locked = new Set();
-            this.fixedConnections = [];
-            if (this.fixedLines) this.fixedLines.clear();
-            if (this.lines) this.lines.clear();
-            this.dragging = undefined;
-            this.clearCountingLabels?.();
-            this.boxes = [];
+        // Reset về level đầu tiên khi chơi lại
+        this.currentCountLevelIndex = 0;
+        // Reset toàn bộ trạng thái kết nối khi vào lại scene (chơi lại)
+        this.locked = new Set();
+        this.fixedConnections = [];
+        if (this.fixedLines) this.fixedLines.clear();
+        if (this.lines) this.lines.clear();
+        this.dragging = undefined;
+        this.clearCountingLabels?.();
+        this.boxes = [];
         this.boardFallbackGfx = this.add.graphics().setDepth(0);
         this.layoutBoard();
         this.scale.on('resize', this.layoutBoard, this);
 
         this.levelLabel = this.add
-        .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
-            fontFamily: 'Baloo, Arial',
-            fontSize: '26px',
-            color: '#0b1b2a',
-        })
-        .setOrigin(0.5, 0)
-        .setDepth(6);
+            .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
+                fontFamily: 'Baloo, Arial',
+                fontSize: '26px',
+                color: '#0b1b2a',
+            })
+            .setOrigin(0.5, 0)
+            .setDepth(6);
 
         this.updateLevelLabel();
         this.levelLabel.setVisible(false);
@@ -205,9 +176,9 @@ import Phaser from 'phaser';
         this.fixedLines = this.add.graphics().setDepth(3);
 
         const objectLayout = this.objectPositions ?? {
-        leftX: midX - 160,
-        rightX: midX + 160,
-        y: this.scale.height * 0.8, // dịch xuống thêm một chút
+            leftX: midX - 160,
+            rightX: midX + 160,
+            y: this.scale.height * 0.8, // dịch xuống thêm một chút
         };
 
         const level = this.getCurrentCountLevel();
@@ -242,7 +213,7 @@ import Phaser from 'phaser';
         this.input.on('pointerup', this.onUp, this);
 
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-        this.scale.off('resize', this.layoutBoard, this);
+            this.scale.off('resize', this.layoutBoard, this);
             // Reset các asset để khi chơi lại sẽ tạo mới
             this.boardImage = undefined;
             this.bannerBg = undefined;
@@ -288,9 +259,9 @@ import Phaser from 'phaser';
 
         this.lines.clear();
         this.lines.lineStyle(
-        this.connectionLineStyle.width,
-        this.connectionLineStyle.color,
-        this.connectionLineStyle.alpha
+            this.connectionLineStyle.width,
+            this.connectionLineStyle.color,
+            this.connectionLineStyle.alpha
         );
         this.lines.beginPath();
         this.lines.moveTo(this.dragging.startX, this.dragging.startY);
@@ -334,8 +305,8 @@ import Phaser from 'phaser';
 
         // Phát âm thanh đúng mỗi lần ghép đúng
         AudioManager.play('sfx_correct');
-            // Phát âm thanh đúng theo thứ tự (correct_answer_1, 2, 3, 4)
-            this.playCorrectAnswerSound();
+        // Phát âm thanh đúng theo thứ tự (correct_answer_1, 2, 3, 4)
+        this.playCorrectAnswerSound();
 
 
         this.dragging = undefined;
@@ -434,9 +405,9 @@ import Phaser from 'phaser';
 
     private advanceCountLevel() {
         if (this.currentCountLevelIndex + 1 < this.countLevels.length) {
-        this.currentCountLevelIndex++;
-        this.resetForNextCountLevel();
-        return;
+            this.currentCountLevelIndex++;
+            this.resetForNextCountLevel();
+            return;
         }
 
         // xong 2 level -> qua flow tiếp
@@ -483,11 +454,11 @@ import Phaser from 'phaser';
         let boardH = maxH;
 
         if (ratio) {
-        boardH = boardW / ratio;
-        if (boardH > maxH) {
-            boardH = maxH;
-            boardW = boardH * ratio;
-        }
+            boardH = boardW / ratio;
+            if (boardH > maxH) {
+                boardH = maxH;
+                boardW = boardH * ratio;
+            }
         }
 
         const boardX = (w - boardW) / 2;
@@ -519,11 +490,11 @@ import Phaser from 'phaser';
 
         this.createBoardImageIfNeeded();
         if (this.boardImage) {
-        this.boardImage.setPosition(boardX + boardW / 2, boardY + boardH / 2);
-        this.boardImage.setDisplaySize(boardW, boardH);
-        this.boardFallbackGfx.clear();
+            this.boardImage.setPosition(boardX + boardW / 2, boardY + boardH / 2);
+            this.boardImage.setDisplaySize(boardW, boardH);
+            this.boardFallbackGfx.clear();
         } else {
-        this.drawBoardFrame();
+            this.drawBoardFrame();
         }
 
         this.repositionNumberBoxes();
@@ -540,12 +511,12 @@ import Phaser from 'phaser';
 
         this.boardFallbackGfx.clear();
         this.boardFallbackGfx
-        .fillStyle(0xffffff, 1)
-        .fillRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
+            .fillStyle(0xffffff, 1)
+            .fillRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
 
         this.boardFallbackGfx
-        .lineStyle(6, 0x1d4ed8, 1)
-        .strokeRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
+            .lineStyle(6, 0x1d4ed8, 1)
+            .strokeRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
     }
 
     private repositionNumberBoxes() {
@@ -557,12 +528,12 @@ import Phaser from 'phaser';
         const minGap = 8;
 
         const gap =
-        this.boxes.length > 1
-            ? Math.max(
-                minGap,
-                Math.min(28, (availableWidth - boxW * this.boxes.length) / (this.boxes.length - 1))
-            )
-            : minGap;
+            this.boxes.length > 1
+                ? Math.max(
+                    minGap,
+                    Math.min(28, (availableWidth - boxW * this.boxes.length) / (this.boxes.length - 1))
+                )
+                : minGap;
 
         const totalW = boxW * this.boxes.length + gap * (this.boxes.length - 1);
         const startX = this.boardInnerRect.centerX - totalW / 2 + boxW / 2;
@@ -589,8 +560,8 @@ import Phaser from 'phaser';
         const xs = [leftX, rightX];
 
         this.bags.forEach((bag, index) => {
-        const targetX = xs[index] ?? xs[0];
-        bag.setPosition(targetX, y);
+            const targetX = xs[index] ?? xs[0];
+            bag.setPosition(targetX, y);
         });
     }
 
@@ -633,9 +604,9 @@ import Phaser from 'phaser';
         if (!this.textures.exists(this.boardAssetKey)) return;
 
         this.boardImage = this.add
-        .image(0, 0, this.boardAssetKey)
-        .setDepth(0)
-        .setOrigin(0.5);
+            .image(0, 0, this.boardAssetKey)
+            .setDepth(0)
+            .setOrigin(0.5);
     }
 
     private getBoardAssetRatio() {
@@ -652,17 +623,17 @@ import Phaser from 'phaser';
         if (!this.textures.exists(this.bannerBgKey) && !this.textures.exists(this.bannerTextKey)) return;
 
         if (!this.bannerBg && this.textures.exists(this.bannerBgKey)) {
-        this.bannerBg = this.add
-            .image(0, 0, this.bannerBgKey)
-            .setOrigin(0.5, 0.5)
-            .setDepth(35);
+            this.bannerBg = this.add
+                .image(0, 0, this.bannerBgKey)
+                .setOrigin(0.5, 0.5)
+                .setDepth(35);
         }
 
         if (!this.bannerTextImage && this.textures.exists(this.bannerTextKey)) {
-        this.bannerTextImage = this.add
-            .image(0, 0, this.bannerTextKey)
-            .setOrigin(0.5, 0.5)
-            .setDepth(36);
+            this.bannerTextImage = this.add
+                .image(0, 0, this.bannerTextKey)
+                .setOrigin(0.5, 0.5)
+                .setDepth(36);
         }
 
         this.positionBannerAssets();
@@ -684,12 +655,12 @@ import Phaser from 'phaser';
         this.bannerBg.setPosition(x, y);
 
         if (this.bannerTextImage) {
-        // Tăng kích thước asset banner text lên 1.1 lần so với mặc định
-        const textRatio = this.getTextureRatio(this.bannerTextKey) ?? 1;
-        const textWidth = targetWidth * 0.8; // tăng từ 0.7 lên 0.77
-        const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
-        this.bannerTextImage.setDisplaySize(textWidth, textHeight);
-        this.bannerTextImage.setPosition(x, y);
+            // Tăng kích thước asset banner text lên 1.1 lần so với mặc định
+            const textRatio = this.getTextureRatio(this.bannerTextKey) ?? 1;
+            const textWidth = targetWidth * 0.8; // tăng từ 0.7 lên 0.77
+            const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
+            this.bannerTextImage.setDisplaySize(textWidth, textHeight);
+            this.bannerTextImage.setPosition(x, y);
         }
     }
 
@@ -826,4 +797,4 @@ import Phaser from 'phaser';
             this.guideHandTimeout = undefined;
         }
     }
-    }
+}

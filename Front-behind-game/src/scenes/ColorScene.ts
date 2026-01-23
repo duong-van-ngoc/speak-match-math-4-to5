@@ -98,6 +98,8 @@ export class ColorScene extends Phaser.Scene {
   private paletteGuideHandTween?: Phaser.Tweens.Tween;
   private paletteGuideHandTimeout?: Phaser.Time.TimerEvent;
   private paletteGuideHandShown = false;
+  private guideHandShowToken = 0;
+  private introEnsureToken = 0;
 
   private actionGuideHand?: Phaser.GameObjects.Image;
   private actionGuideHandTween?: Phaser.Tweens.Tween;
@@ -110,8 +112,6 @@ export class ColorScene extends Phaser.Scene {
   }
 
   init(_data: { gameData: GameData }) {
-    const ballKeys = COLOR_SCENE_ASSETS.ballTextures;
-
     // Level 1: Tô màu vàng vào con mèo đằng trước (object 0)
     // Level 2: Khoanh tròn con mèo đằng sau (object 1)
     // (Chưa có asset mèo trong repo nên tạm dùng texture sẵn có.)
@@ -121,19 +121,19 @@ export class ColorScene extends Phaser.Scene {
         mode: 'color',
         targetObjectIndex: 0,
         targetColor: COLORS.yellow,
-        objectTextureKeys: [FRONT_BEHIND_SCENE_ASSETS.catFront, FRONT_BEHIND_SCENE_ASSETS.catBehind, ...ballKeys],
+        objectTextureKeys: [FRONT_BEHIND_SCENE_ASSETS.catFront, FRONT_BEHIND_SCENE_ASSETS.catBehind],
       },
       {
         label: 'Khoanh tròn con mèo đằng sau',
         mode: 'circle',
         targetObjectIndex: 1,
-        objectTextureKeys: [FRONT_BEHIND_SCENE_ASSETS.catFront, FRONT_BEHIND_SCENE_ASSETS.catBehind, ...ballKeys],
+        objectTextureKeys: [FRONT_BEHIND_SCENE_ASSETS.catFront, FRONT_BEHIND_SCENE_ASSETS.catBehind],
       },
     ];
   }
 
   preload() {
-    loadAssetGroups(this, 'shared', 'colorScene', 'numbers', 'ui', 'countConnect');
+    loadAssetGroups(this, 'shared', 'colorScene', 'ui');
     // Không load audio hướng dẫn ở đây, AudioManager sẽ quản lý và load bằng howler
   }
 
@@ -149,6 +149,16 @@ export class ColorScene extends Phaser.Scene {
     this.circledObjectIndex = undefined;
     this.paletteDots = [];
     this.objects = [];
+    // Paint-related objects may have been destroyed by Phaser when the scene was stopped,
+    // but our references can still point to them. Clear references so ensurePaintForLevel()
+    // never tries to reuse a destroyed GameObject.
+    this.painting = false;
+    this.paintRT = undefined;
+    this.paintMaskSprite = undefined;
+    this.paintBrush = undefined;
+    this.paintTargetSize = undefined;
+    this.paintCellHits = new Set<string>();
+    this.paintColorCounts.clear();
     this.boardImage = undefined;
     this.bannerBg = undefined;
     this.bannerTextImage = undefined;
@@ -185,12 +195,12 @@ export class ColorScene extends Phaser.Scene {
     this.layoutBoard();
 
     this.applyCurrentColorLevel();
-    // Đảm bảo bàn tay hiện ngay khi vào màn đầu tiên
-    this.time.delayedCall(0, () => {
+    // Đảm bảo bàn tay hiện ngay khi vào màn đầu tiên, nhưng nếu người chơi chạm cực sớm
+    // (trước khi delayedCall chạy) thì không hiện bàn tay lại sau cú chạm đó.
+    // Hiển thị bàn tay chỉ vào bảng màu khi bắt đầu.
+    this.time.delayedCall(100, () => {
       this.showPaletteGuideHand(true);
     });
-    // Phát voice hướng dẫn cho màn đầu tiên (không ảnh hưởng bàn tay)
-    this.playGuideVoiceForCurrentLevel();
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off('resize', this.layoutBoard, this);
@@ -207,16 +217,25 @@ export class ColorScene extends Phaser.Scene {
 
     this.resetInactivityTimer();
   }
-  // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager (howler)
   // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager
   private playGuideVoiceForCurrentLevel() {
-    // Ngắt tất cả âm thanh hướng dẫn trước khi phát mới
-    const voiceKeys = [
+    const key = this.currentColorLevelIndex === 0 ? 'voice_guide_color_1' : 'voice_guide_color_2';
+
+    // Dừng CẢ các câu khen ngợi cũ và voice hướng dẫn cũ để tránh lồng tiếng và xung đột âm lượng
+    const allVoiceKeys = [
       'voice_guide_color_1',
       'voice_guide_color_2',
+      'correct_answer_1',
+      'correct_answer_2',
+      'correct_answer_3',
+      'correct_answer_4'
     ];
-    voiceKeys.forEach((k) => AudioManager.stop(k));
-    const key = voiceKeys[this.currentColorLevelIndex] || voiceKeys[0];
+
+    allVoiceKeys.forEach(k => {
+      // Dừng tất cả trừ cái sắp phát
+      if (k !== key) AudioManager.stop(k);
+    });
+
     AudioManager.playWhenReady(key);
   }
 
@@ -333,7 +352,7 @@ export class ColorScene extends Phaser.Scene {
 
       try {
         this.textures.get(baseKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
-      } catch {}
+      } catch { }
 
       const tex = this.textures.get(baseKey);
       const src = tex.getSourceImage() as HTMLImageElement | HTMLCanvasElement | null;
@@ -412,7 +431,7 @@ export class ColorScene extends Phaser.Scene {
       try {
         this.textures.get(lineKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
         this.textures.get(maskKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -455,7 +474,7 @@ export class ColorScene extends Phaser.Scene {
     if (!this.textures.exists(key)) return;
     try {
       this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
-    } catch {}
+    } catch { }
     this.girl = this.add.image(0, 0, key).setOrigin(0.5).setDepth(35);
   }
 
@@ -517,16 +536,33 @@ export class ColorScene extends Phaser.Scene {
     this.positionObjects();
     this.ensurePaintForLevel();
     this.updateBannerTextImage();
-    // Phát voice hướng dẫn khi chuyển màn
-    this.playGuideVoiceForCurrentLevel();
+    // PHÁT VOICE HƯỚNG DẪN:
+    const win = window as any;
+    if (win.__audioUnlocked__) {
+      this.playGuideVoiceForCurrentLevel();
+    } else {
+      this.input.once('pointerdown', () => {
+        this.playGuideVoiceForCurrentLevel();
+      });
+    }
+
     // Reset trạng thái đã hiện bàn tay, không gọi showPaletteGuideHand ở đây để tránh xóa bàn tay vừa hiện ở create
     this.paletteGuideHandShown = false;
     this.hidePaletteGuideHand();
     if (level.mode === 'color') {
-      this.time.delayedCall(0, () => this.showPaletteGuideHand(true));
+      const token = ++this.guideHandShowToken;
+      this.time.delayedCall(0, () => {
+        if (token !== this.guideHandShowToken) return;
+        this.showPaletteGuideHand(true);
+      });
     } else if (level.mode === 'circle') {
-      this.time.delayedCall(250, () => this.showCircleGuideHand(true));
+      const token = ++this.guideHandShowToken;
+      this.time.delayedCall(250, () => {
+        if (token !== this.guideHandShowToken) return;
+        this.showCircleGuideHand(true);
+      });
     }
+
   }
 
   private resetForNextColorLevel() {
@@ -699,7 +735,7 @@ export class ColorScene extends Phaser.Scene {
     if (def.spriteKey && this.textures.exists(def.spriteKey)) {
       try {
         this.textures.get(def.spriteKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
-      } catch {}
+      } catch { }
       return this.add.image(0, 0, def.spriteKey).setOrigin(0.5);
     }
     // Viền giống hệt CSS: border 2px solid rgba(0,55,255,1)
@@ -756,7 +792,7 @@ export class ColorScene extends Phaser.Scene {
   private setCanvasCursor(cursor: string) {
     try {
       this.input.manager.canvas.style.cursor = cursor;
-    } catch {}
+    } catch { }
   }
 
   private updatePaintHoverCursor(hoverObjectIndex: number | undefined, isOver: boolean) {
@@ -1222,7 +1258,7 @@ export class ColorScene extends Phaser.Scene {
     this.actionGuideHand = this.add.image(0, 0, 'guide_hand').setOrigin(0.2, 0.2).setDepth(240);
     try {
       this.textures.get('guide_hand').setFilter(Phaser.Textures.FilterMode.LINEAR);
-    } catch {}
+    } catch { }
     return this.actionGuideHand;
   }
 
@@ -1359,13 +1395,22 @@ export class ColorScene extends Phaser.Scene {
     this.resetInactivityTimer();
 
     if (level.mode === 'color') {
-      // First interaction hides the palette guide hand.
-      this.hidePaletteGuideHand();
-      this.paletteGuideHandTimeout?.remove(false);
-      this.paletteGuideHandTimeout = this.time.delayedCall(3000, () => {
-        if (this.getCurrentColorLevel().mode !== 'color') return;
-        if (this.paletteSelectedIndex === -1) this.showPaletteGuideHand(false);
-      });
+      // Only dismiss/cancel if the player actually interacts with the board area.
+      if (!this.isPointerInBoard(pointer)) return;
+
+      // If a guide-hand show is pending on the next tick, cancel it.
+      this.guideHandShowToken++;
+
+      // We no longer hide the palette guide hand here on any click.
+      // It is specifically hidden in applyPaletteSelection when a color is chosen.
+      if (this.paletteSelectedIndex === -1) {
+        // Keep or refresh the timeout to show it again if they stay idle.
+        this.paletteGuideHandTimeout?.remove(false);
+        this.paletteGuideHandTimeout = this.time.delayedCall(3000, () => {
+          if (this.getCurrentColorLevel().mode !== 'color') return;
+          if (this.paletteSelectedIndex === -1) this.showPaletteGuideHand(false);
+        });
+      }
       if (this.levelSolved) return;
 
       const target = this.objects[level.targetObjectIndex];

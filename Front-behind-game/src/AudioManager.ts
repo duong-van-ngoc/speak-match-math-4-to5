@@ -20,23 +20,17 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   correct_answer_3: { src: `${BASE_PATH}correct_answer_3.mp3`, volume: 1.0 },
   correct_answer_4: { src: `${BASE_PATH}correct_answer_4.mp3`, volume: 1.0 },
 
-  bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.3, html5: false },
+  bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.25, html5: false },
 
-  complete: { src: `${BASE_PATH}vic_sound.mp3` },
-  voice_need_finish: { src: `${BASE_PATH}voice_need_finish.mp3` },
+  complete: { src: `${BASE_PATH}vic_sound.mp3`, volume: 1.0 },
+  voice_need_finish: { src: `${BASE_PATH}voice_need_finish.mp3`, volume: 1.0 },
 
   voice_complete: { src: `${BASE_PATH}complete.mp3`, volume: 0.35 },
-  fireworks: { src: `${BASE_PATH}fireworks.mp3`, volume: 1.0 },
-  applause: { src: `${BASE_PATH}applause.mp3`, volume: 1.0 },
-  // Instruction voices for scenes
-  voice_guide_connect: { src: `${BASE_PATH}count.mp3`, volume: 0.8 },
+  fireworks: { src: `${BASE_PATH}fireworks.mp3`, volume: 0.8 },
+  applause: { src: `${BASE_PATH}applause.mp3`, volume: 0.8 },
   // ColorScene level 1/2 guide voices
-  voice_guide_color_1: { src: `${BASE_PATH}color.mp3`, volume: 0.9 },
-  voice_guide_color_2: { src: `${BASE_PATH}cricle.mp3`, volume: 0.9 },
-  // Counting voices
-  voice_count_1: { src: `${BASE_PATH}1.mp3`, volume: 1.0 },
-  voice_count_2: { src: `${BASE_PATH}2.mp3`, volume: 1.0 },
-
+  voice_guide_color_1: { src: `${BASE_PATH}color.mp3`, volume: 1.0 },
+  voice_guide_color_2: { src: `${BASE_PATH}cricle.mp3`, volume: 1.0 },
 };
 
 const isIOS = () => {
@@ -56,6 +50,7 @@ class AudioManager {
 
   private unlocked = false;
   private unlocking = false;
+  private activeBgmId: string | null = null;
 
   constructor() {
     Howler.autoUnlock = true;
@@ -102,7 +97,7 @@ class AudioManager {
     });
   }
 
-  async unlockAndWarmup(ids: string[] = ['sfx_click', 'sfx_correct', 'sfx_wrong']) {
+  unlockAndWarmup(ids: string[] = ['sfx_click', 'sfx_correct', 'sfx_wrong']): void {
     if (this.unlocked || this.unlocking) return;
     this.unlocking = true;
 
@@ -110,21 +105,16 @@ class AudioManager {
       const ctx = (Howler as any).ctx as AudioContext | undefined;
       if (ctx && ctx.state === 'suspended') {
         try {
-          await ctx.resume();
-        } catch {}
+          void ctx.resume();
+        } catch {
+          // Ignore: some browsers throw if resume is not allowed.
+        }
       }
 
-      if (isIOS()) {
-        ids.forEach((id) => {
-          const sound = this.sounds[id];
-          if (!sound) return;
-          const state = (sound as any).state?.() as 'unloaded' | 'loading' | 'loaded' | undefined;
-          if (state === 'unloaded') sound.load();
-        });
-      } else {
-        await Promise.all(ids.map((id) => this.warmupOne(id).catch(() => undefined)));
-      }
-
+      // IMPORTANT:
+      // This must happen synchronously in the same user gesture stack to satisfy
+      // browser autoplay policies. Don't `await` here.
+      ids.forEach((id) => this.warmupOneSync(id));
       this.unlocked = true;
     } finally {
       this.unlocking = false;
@@ -139,36 +129,18 @@ class AudioManager {
     }
   }
 
-  private warmupOne(id: string): Promise<void> {
+  private warmupOneSync(id: string): void {
     const sound = this.sounds[id];
-    if (!sound) return Promise.resolve();
+    if (!sound) return;
 
-    return new Promise((resolve) => {
-      const state = (sound as any).state?.() as 'unloaded' | 'loading' | 'loaded' | undefined;
+    const state = (sound as any).state?.() as 'unloaded' | 'loading' | 'loaded' | undefined;
 
-      const doPlaySilent = () => {
-        const originalVol = sound.volume();
-        sound.volume(0);
-
-        const sid = sound.play();
-        setTimeout(() => {
-          try {
-            sound.stop(sid as any);
-          } catch {}
-          sound.volume(originalVol);
-          resolve();
-        }, 30);
-      };
-
-      if (state === 'loaded' || state === undefined) {
-        doPlaySilent();
-        return;
-      }
-
-      sound.once('load', () => doPlaySilent());
-
-      if (state === 'unloaded') sound.load();
-    });
+    // TRÁNH warmup bằng cách phát silent (volume=0) vì nó hay làm kẹt volume ở mức 0 hoặc thấp.
+    // Đối với trình duyệt hiện đại, chỉ cần tương tác người dùng gọi .resume() trên context
+    // hoặc phát 1 âm thanh thực sự (vd click) là đủ unlock.
+    if (state === 'unloaded') {
+      sound.load();
+    }
   }
 
   private clearQueuedPlay(id: string) {
@@ -201,7 +173,39 @@ class AudioManager {
     }
 
     this.lastPlayTimes[id] = now;
-    return sound.play();
+
+    // Nếu là BGM và đang phát rồi thì không phát đè lên
+    if (id === 'bgm_main' && this.activeBgmId === id) {
+      return;
+    }
+
+    // Đảm bảo master volume luôn ở mức 1.0
+    Howler.volume(1.0);
+
+    const config = SOUND_MAP[id];
+    const targetVol = config?.volume ?? 1.0;
+
+    // Set volume cho file gốc
+    sound.volume(targetVol);
+
+    const instanceId = sound.play();
+
+    // Đảm bảo volume được áp dụng cho chính instance vừa tạo
+    if (typeof instanceId === 'number') {
+      sound.volume(targetVol, instanceId);
+
+      // Fix cho một số trình duyệt: apply lại volume sau một tick nếu là BGM
+      if (id === 'bgm_main') {
+        setTimeout(() => {
+          try { sound.volume(targetVol, instanceId); } catch { }
+        }, 100);
+      }
+    }
+
+    if (id === 'bgm_main') {
+      this.activeBgmId = id;
+    }
+    return instanceId;
   }
 
   playWhenReady(id: string): void {
@@ -229,6 +233,11 @@ class AudioManager {
 
     sound.once('load', () => {
       this.pendingReadyPlays[id] = false;
+      // Khi load xong và chuẩn bị play, đảm bảo volume được set đúng config
+      const config = SOUND_MAP[id];
+      if (config && typeof config.volume === 'number') {
+        sound.volume(config.volume);
+      }
       this.play(id);
     });
     sound.once('loaderror', () => {
@@ -292,6 +301,12 @@ class AudioManager {
     }
 
     this.lastPlayTimes[id] = now;
+
+    // Đảm bảo volume luôn đúng theo config hoặc options khi play
+    const config = SOUND_MAP[id];
+    const targetVol = opts?.volume ?? config?.volume ?? 1.0;
+    sound.volume(targetVol);
+
     return sound.play();
   }
 
@@ -312,7 +327,31 @@ class AudioManager {
     this.queuedUnlockPlays = {};
     this.queuedMissingPlays = {};
     this.pendingReadyPlays = {};
+    this.activeBgmId = null;
+
+    // Ngắt toàn bộ âm thanh
     Howler.stop();
+
+    // Reload lại master volume
+    Howler.volume(1.0);
+
+    // Đảm bảo trạng thái âm lượng của từng sound được reset
+    Object.keys(this.sounds).forEach(id => {
+      const sound = this.sounds[id];
+      const config = SOUND_MAP[id];
+      if (sound) {
+        sound.stop();
+        if (config && typeof config.volume === 'number') {
+          sound.volume(config.volume);
+        }
+      }
+    });
+  }
+
+  // Phương thức tập trung để bật BGM, tránh lặp lại
+  startBgm(id: string = 'bgm_main'): void {
+    if (this.activeBgmId === id) return;
+    this.playWhenReady(id);
   }
 
   private getCooldown(id: string): number {
