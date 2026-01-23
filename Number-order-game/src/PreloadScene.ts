@@ -40,9 +40,9 @@ export default class PreloadScene extends Phaser.Scene {
     // =========================================================
 
     // Stations (Rabbit Scenes)
-    this.load.image('station_1', 'assets/icon/image 290.png');
+    this.load.image('station_1', 'assets/icon/image 293-1.png');
     this.load.image('station_2', 'assets/icon/image 293.png');
-    this.load.image('station_3', 'assets/icon/image 293-1.png');
+    this.load.image('station_3', 'assets/icon/image 290.png');
     this.load.image('station_4', 'assets/icon/image 293 (1).png');
     this.load.image('station_5', 'assets/icon/image 293 (2).png');
 

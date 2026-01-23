@@ -32,11 +32,11 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   applause: { src: `${BASE_PATH}applause.mp3`, volume: 1.0 },
 
   // Counting voices requested by user
-  count_1: { src: `${BASE_PATH}color.mp3`, volume: 1.0 },
-  count_2: { src: `${BASE_PATH}color.mp3`, volume: 1.0 },
-  count_3: { src: `${BASE_PATH}color.mp3`, volume: 1.0 },
-  count_4: { src: `${BASE_PATH}color.mp3`, volume: 1.0 },
-  count_5: { src: `${BASE_PATH}color.mp3`, volume: 1.0 },
+  count_1: { src: `${BASE_PATH}1.mp3`, volume: 1.0 },
+  count_2: { src: `${BASE_PATH}2.mp3`, volume: 1.0 },
+  count_3: { src: `${BASE_PATH}3.mp3`, volume: 1.0 },
+  count_4: { src: `${BASE_PATH}4.mp3`, volume: 1.0 },
+  count_5: { src: `${BASE_PATH}5.mp3`, volume: 1.0 },
 };
 
 const isIOS = () => {
@@ -206,8 +206,6 @@ class AudioManager {
 
     const sound = this.sounds[id];
     if (!sound) {
-      // The sound may not exist yet if `loadAll()` is still in progress.
-      // Queue this request so it can start once the Howl is created.
       this.queuedMissingPlays[id] = true;
       return;
     }
@@ -221,10 +219,14 @@ class AudioManager {
     if (this.pendingReadyPlays[id]) return;
     this.pendingReadyPlays[id] = true;
 
-    sound.once('load', () => {
-      this.pendingReadyPlays[id] = false;
-      this.play(id);
-    });
+    const onReady = () => {
+      if (this.pendingReadyPlays[id]) {
+        this.pendingReadyPlays[id] = false;
+        this.play(id);
+      }
+    };
+
+    sound.once('load', onReady);
     sound.once('loaderror', () => {
       this.pendingReadyPlays[id] = false;
     });
@@ -290,14 +292,17 @@ class AudioManager {
   }
 
   stop(id: string): void {
+    this.pendingReadyPlays[id] = false; // Cancel any pending playWhenReady
+    delete this.queuedUnlockPlays[id]; // Cancel queued unlock plays
+    delete this.queuedMissingPlays[id];
+
     const s = this.sounds[id];
     if (!s) return;
     s.stop();
   }
 
   stopSound(id: string): void {
-    const s = this.sounds[id];
-    if (s) s.stop();
+    this.stop(id);
   }
 
   stopAll(): void {
@@ -323,9 +328,11 @@ class AudioManager {
     voiceKeys.forEach((key) => this.stopSound(key));
   }
 
-  playCorrectAnswer(): void {
+  playCorrectAnswer(): string {
     const randomIndex = Math.floor(Math.random() * 4) + 1;
-    this.play(`correct_answer_${randomIndex}`);
+    const key = `correct_answer_${randomIndex}`;
+    this.play(key);
+    return key;
   }
 
   playPrompt(type: 'less' | 'more', animal: string): void {

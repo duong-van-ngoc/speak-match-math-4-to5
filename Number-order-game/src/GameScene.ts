@@ -3,34 +3,12 @@ import AudioManager from './AudioManager';
 import { sdk } from './main';
 // import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
 
-/* ===================== AUDIO GLOBAL FLAG ===================== */
 const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
 const AUDIO_UNLOCKED_EVENT = 'audio-unlocked';
-
-const BG_KEY = 'bg1';
-const VOICE_JOIN_KEY = 'voice_join'; // Giả định có voice hướng dẫn mới
-const SFX_CORRECT_KEY = 'sfx_correct';
-const SFX_WRONG_KEY = 'sfx_wrong';
-const SFX_CLICK_KEY = 'sfx_click';
 const SFX_COMPLETE_KEY = 'sfx_complete';
-const BANNER_TITLE = 'Bé tô số và đếm nấm'; // Tiêu đề mới
-
-// Tracing game assets
-const DOTTED_LINE_ASSET_KEY = 'dotted_line'; // Legacy, kept if needed later or remove
-const PAINT_LINE_ASSET_KEY = 'paint_line';
-
-// Counting game assets
-const RABBIT_ASSET_KEY = 'rabbit';
-const MUSHROOM_ASSET_KEY = 'mushroom';
-
-/* ===================== LAYOUT & CONFIG ===================== */
 
 const BANNER_Y = 55; // Shifted down from 42
-const BANNER_SCALE = 0.5;
 const PROMPT_FONT_SIZE = 30;
-const FEEDBACK_FONT_SIZE = 22;
-const LINE_THICKNESS = 12; // Độ dày của đường nét
-const TRACING_TOLERANCE = 20; // Khoảng cách tối đa để được coi là đang tô đúng
 
 /* ===================== TYPES ===================== */
 
@@ -50,29 +28,13 @@ export default class GameScene extends Phaser.Scene {
   private hasPlayedInstructionVoice = false;
 
   private promptText!: Phaser.GameObjects.Text;
-  private promptImage?: Phaser.GameObjects.Image;
-  private feedbackText!: Phaser.GameObjects.Text;
   private questionBanner!: Phaser.GameObjects.Image;
-  private itemsBoard?: Phaser.GameObjects.Image;
 
-  // private currentNumber = 1; // Removed
-  // Old tracing vars removed
   private isTracing = false;
   private visitedPoints: boolean[] = [];
   private isBlockingInput = false;
   private tutorialHand?: Phaser.GameObjects.Image;
-
-  private rabbit!: Phaser.GameObjects.Image; // Kept for now or remove if unused
-  private mushrooms: Phaser.GameObjects.Image[] = []; // Kept
-  private correctMushroomCount = 0;
-  private currentAnswerText!: Phaser.GameObjects.Text;
-  private answerInput!: Phaser.GameObjects.Text;
-  private numpadButtons: Phaser.GameObjects.Text[] = [];
-
-  private lastInteractionAtMs = 0;
   private audioReady = false;
-
-
 
   constructor() {
     super('GameScene');
@@ -82,7 +44,6 @@ export default class GameScene extends Phaser.Scene {
 
   init(data: { score?: number }) {
     this.score = data.score ?? 0;
-    this.promptImage = undefined;
     this.hasPlayedInstructionVoice = false;
 
     (window as any).irukaGameState = {
@@ -91,8 +52,6 @@ export default class GameScene extends Phaser.Scene {
     };
     sdk.score(this.score, 0);
 
-    this.lastInteractionAtMs = 0;
-
     const win = window as unknown as Record<string, unknown>;
     this.audioReady = !!win[AUDIO_UNLOCKED_KEY];
   }
@@ -100,15 +59,6 @@ export default class GameScene extends Phaser.Scene {
   private recordCorrect() {
     (window as any).irukaGameState.currentScore = this.score;
     sdk.score(this.score, 1);
-  }
-
-  private recordWrong() {
-  }
-
-  private addHint() {
-  }
-
-  private saveProgress() {
   }
 
   private finalizeAttempt() {
@@ -129,7 +79,7 @@ export default class GameScene extends Phaser.Scene {
       // Optional host helper may not exist.
     }
 
-    const { width, height } = this.scale;
+    const { width } = this.scale;
     const w = window as unknown as WindowGameApi;
     w.setGameButtonsVisible?.(true);
     w.setRandomGameViewportBg?.();
@@ -167,7 +117,6 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(20);
 
     // Banner Text Image (Question.png)
-    // Banner Text Image (Question.png)
     this.questionBanner = this.add
       .image(width / 2, BANNER_Y, 'banner_question')
       .setOrigin(0.5)
@@ -183,19 +132,10 @@ export default class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(21);
 
-    this.feedbackText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'Fredoka, Arial',
-        fontSize: `${FEEDBACK_FONT_SIZE}px`,
-        color: '#ffffff',
-      })
-      .setOrigin(0.5);
-
     this.createTracingGame();
     this.startTracingGame();
+    this.playInstructionVoice();
   }
-
-  /* ===================== PATH TRACING LOGIC ===================== */
 
   /* ===================== PATH TRACING LOGIC ===================== */
 
@@ -209,39 +149,32 @@ export default class GameScene extends Phaser.Scene {
   private traceProgress = 0; // 0.0 to 1.0 along the curve
   private totalCurveLength = 0;
 
+  private traceParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private burstParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
+
   private createTracingGame() {
+    this.stationImages = [];
+    this.numberImages = [];
+
     const { width, height } = this.scale;
     const centerX = width / 2;
     const centerY = height / 2;
 
-    // Add Game Board
-    // Using 'game_board' loaded in PreloadScene
-    // Add Game Board
-    // Using 'game_board' loaded in PreloadScene
-    // Shifted board up further as requested
     const board = this.add.image(centerX, centerY + 40, 'game_board');
-    // Scale board to fit nicely, assuming it's a rectangle
-    // width * 0.7 for narrower width
-    // height * 0.9 for taller height
-    // Scale board to fit nicely, slightly smaller as requested ("board co theo")
     board.setDisplaySize(width * 0.68, height * 0.82);
-    board.setDepth(1); // Behind lines and stations
+    board.setDepth(1);
 
-    // The board rendering bounds
     const boardX = centerX;
-    const boardY = centerY - 20; // Shifted up 40px from prev default (+20)
+    const boardY = centerY - 20;
     const boardW = width * 0.7;
     const boardH = height * 0.9;
 
-    // Bounds for stations inside the board
-    // We leave larger padding to ensure images attached to points don't go off-screen
     const padding = 120;
     const boundLeft = boardX - boardW / 2 + padding;
     const boundRight = boardX + boardW / 2 - padding;
     const boundTop = boardY - boardH / 2 + padding;
     const boundBottom = boardY + boardH / 2 + padding;
 
-    // Define 5 key points relative to these bounds (Zig-Zag: Left -> Right -> Center -> Left -> Right)
     const pointsNormalized = [
       { x: 0.1, y: 0.1 },   // 1 (Top Left)
       { x: 0.9, y: 0.3 },   // 2 (Top Right)
@@ -254,21 +187,18 @@ export default class GameScene extends Phaser.Scene {
       let x = boundLeft + p.x * (boundRight - boundLeft);
       let y = boundTop + p.y * (boundBottom - boundTop);
 
-      // Manual adjustments to align line/dot with user's specific station shifts
-      if (index === 0) { x += 110; y += 30; } // Follows Image 1 Right shift and Down slightly
-      if (index === 1) x -= 110;        // Follows Image 2 Left shift more (Compensated for increased separation)
-      if (index === 2) { x -= 20; y -= 20; } // Follows Image 3 Left/Up
-      if (index === 3) y -= 20;         // Follows Image 4 Up
-      if (index === 4) { x -= 110; y -= 120; } // Follows Image 5 Left/Up more (Compensated)
+      if (index === 0) { x += 140; y -= 15; }
+      if (index === 1) { x -= 110; y -= 80; }
+      if (index === 2) { x += 10; y -= 50; }
+      if (index === 3) { x += 20; y -= 40; }
+      if (index === 4) { x -= 90; y -= 80; }
 
       return new Phaser.Math.Vector2(x, y);
     });
 
-    // Create Spline Curve
     this.pathCurve = new Phaser.Curves.Spline(this.pathPoints);
     this.totalCurveLength = this.pathCurve.getLength();
 
-    // Create Dashed Line Visualization (replaced dots with 1px dashes)
     this.dottedPathGroup = this.add.group();
     const dashedGraphics = this.add.graphics();
     dashedGraphics.setDepth(2);
@@ -276,124 +206,98 @@ export default class GameScene extends Phaser.Scene {
 
     const dashedSteps = Math.floor(this.totalCurveLength / 15);
     const dashLen = 8;
-
     dashedGraphics.lineStyle(1, 0x555555, 1);
 
     for (let i = 0; i < dashedSteps; i++) {
       const t = i / dashedSteps;
       const p = this.pathCurve.getPoint(t);
       const tangent = this.pathCurve.getTangent(t);
-
       const start = p.clone().subtract(tangent.clone().scale(dashLen / 2));
       const end = p.clone().add(tangent.clone().scale(dashLen / 2));
-
       dashedGraphics.lineBetween(start.x, start.y, end.x, end.y);
     }
 
-    // Create Painted Graphics (for user tracing)
     this.paintedPathGraphics = this.add.graphics();
-    this.paintedPathGraphics.lineStyle(20, 0xffa500, 1); // Orange, thick
+    this.paintedPathGraphics.lineStyle(20, 0xffa500, 1);
     this.paintedPathGraphics.setDepth(3);
 
-    // Create Stations, Numbers, & Dots
     this.pathPoints.forEach((p, index) => {
-      // 1. Dot on the path
       const dot = this.add.image(p.x, p.y, 'dot').setScale(0.8).setDepth(5).setTint(0xff6600);
-      // We can store dots if we need to hide them later, or add them to a group
-      // For now, let's just make sure they render. 
-      // If we need to hide them for counting game, we might need a group.
-      // Let's add them to dottedPathGroup or a new group? 
-      // Reuse dottedPathGroup for "path elements" might be easiest if we hide it all.
       this.dottedPathGroup.add(dot);
 
-      // 2. Number Image (Above the dot)
       const numKey = `number_${index + 1}`;
       let localNumOffsetY = 45;
-      // Fix Number 4 obscured by line - move it further up
       if (index === 3) localNumOffsetY = 80;
 
       const numImg = this.add.image(p.x, p.y - localNumOffsetY, numKey).setScale(0.5).setDepth(20);
-      this.numberImages.push(numImg); // Changed from numberLabels text
+      this.numberImages.push(numImg);
 
-      // 3. Station Image (Scene) - ZigZag placement
       const stKey = `station_${index + 1}`;
-
-      // Use specific manually adjusted offsets
       let offsetX = 0;
       let offsetY = 0;
 
-      // Reverted to baseline offsets so image maintains relative position to the SHIFTED point
       switch (index) {
-        case 0:
-          offsetX = -130;  // Increased separation (was -80)
-          offsetY = -20;
-          break;
-        case 1:
-          offsetX = 130;   // Increased separation (was 80)
-          offsetY = -20;
-          break;
-        case 2:
-          offsetX = -140;
-          offsetY = -50;
-          break;
-        case 3:
-          offsetX = -120;
-          offsetY = -50;
-          break;
-        case 4:
-          offsetX = 130;   // Increased separation (was 80)
-          offsetY = -50;
-          break;
-        default:
-          offsetX = 0;
-          offsetY = 0;
+        case 0: offsetX = -130; offsetY = 10; break;
+        case 1: offsetX = 130; offsetY = -20; break;
+        case 2: offsetX = -140; offsetY = -50; break;
+        case 3: offsetX = -120; offsetY = -50; break;
+        case 4: offsetX = 130; offsetY = -50; break;
       }
-      console.log(`Station ${index + 1} offset: x=${offsetX}, y=${offsetY}`);
 
       const stImg = this.add.image(p.x + offsetX, p.y + offsetY, stKey).setScale(0.5).setDepth(10);
       this.stationImages.push(stImg);
     });
 
-    // Setup Interaction
+    // Setup Particles
+    const particles = this.add.particles(0, 0, 'dot', {
+      scale: { start: 0.3, end: 0 },
+      alpha: { start: 0.8, end: 0 },
+      speed: 15,
+      lifespan: 600,
+      blendMode: 'ADD',
+      tint: 0xffa500,
+      emitting: false
+    }).setDepth(4);
+    this.traceParticles = particles;
+
+    this.burstParticles = this.add.particles(0, 0, 'dot', {
+      scale: { start: 0.5, end: 0 },
+      alpha: { start: 1, end: 0 },
+      speed: { min: 60, max: 200 },
+      lifespan: 800,
+      blendMode: 'ADD',
+      tint: 0xffff00,
+      emitting: false
+    }).setDepth(22);
+
     this.input.on('pointerdown', this.handlePathPointerDown, this);
     this.input.on('pointermove', this.handlePathPointerMove, this);
     this.input.on('pointerup', this.handlePathPointerUp, this);
   }
 
-
-
   private startTracingGame() {
     this.gameState = 'TRACING';
-    this.promptText.setVisible(false); // Hide text as banner image contains it
+    this.promptText.setVisible(false);
     this.traceProgress = 0;
     this.visitedPoints = new Array(5).fill(false);
     this.isBlockingInput = false;
     this.updatePaintedPath();
-
-    // Start tutorial after a short delay
     this.time.delayedCall(500, () => this.playHandTutorial());
   }
-
-  // --- Interaction Handlers for Path ---
 
   private handlePathPointerDown(pointer: Phaser.Input.Pointer) {
     if (this.gameState !== 'TRACING') return;
     if (this.isBlockingInput) return;
 
-    // Check if close to current progress point on curve
     const currentPoint = this.pathCurve.getPoint(this.traceProgress);
     const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, currentPoint.x, currentPoint.y);
 
-    if (dist < 100) { // Generous hit area
+    if (dist < 100) {
       this.isTracing = true;
-
-      // Stop tutorial if user interacts
       if (this.tutorialHand) {
         this.tutorialHand.destroy();
         this.tutorialHand = undefined;
       }
-
-      // Special check for Point 0 (Start)
       if (this.traceProgress < 0.05 && !this.visitedPoints[0]) {
         const distToStart = Phaser.Math.Distance.Between(pointer.x, pointer.y, this.pathPoints[0].x, this.pathPoints[0].y);
         if (distToStart < 100) {
@@ -407,22 +311,14 @@ export default class GameScene extends Phaser.Scene {
     if (this.gameState !== 'TRACING' || !this.isTracing) return;
     if (this.isBlockingInput) return;
 
-    // We want to advance traceProgress if pointer is "ahead" along the curve
-    // Simple approach: find closest point on curve? 
-    // Optimization: Just check if pointer is close to a future point.
-
-    // Look ahead a bit
-    const lookAhead = 0.05; // 5% of curve
+    const lookAhead = 0.05;
     let bestProgress = this.traceProgress;
 
-    // Scan a small segment ahead to see if user is tracing forward
     for (let p = this.traceProgress; p <= Math.min(1, this.traceProgress + lookAhead); p += 0.002) {
       const pt = this.pathCurve.getPoint(p);
       const d = Phaser.Math.Distance.Between(pointer.x, pointer.y, pt.x, pt.y);
-      if (d < 50) { // Close enough to the line
-        if (p > bestProgress) {
-          bestProgress = p;
-        }
+      if (d < 50) {
+        if (p > bestProgress) bestProgress = p;
       }
     }
 
@@ -430,20 +326,18 @@ export default class GameScene extends Phaser.Scene {
       this.traceProgress = bestProgress;
       this.updatePaintedPath();
 
-      // Check for voice playback at each point (Indices 1 to 4)
-      // We check all points just to be safe, but primarily new ones
+      // Emit particles at tip
+      const tip = this.pathCurve.getPoint(this.traceProgress);
+      this.traceParticles.emitParticleAt(tip.x, tip.y);
+
       this.pathPoints.forEach((p, i) => {
         if (!this.visitedPoints[i]) {
           const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, p.x, p.y);
-          if (dist < 60) {
-            this.triggerPointVisit(i);
-          }
+          if (dist < 60) this.triggerPointVisit(i);
         }
       });
 
-      // Check completion
       if (this.traceProgress >= 0.99 && !this.isBlockingInput) {
-        // Ensure all points visited?
         if (this.visitedPoints.every(v => v)) {
           this.handleTracingComplete();
         }
@@ -457,14 +351,12 @@ export default class GameScene extends Phaser.Scene {
     this.visitedPoints[index] = true;
     this.isBlockingInput = true;
 
-    // Play sound effects & voice
     AudioManager.play('sfx_correct');
-    AudioManager.playCorrectAnswer(); // "Correct!" voice
+    const correctKey = AudioManager.playCorrectAnswer();
 
-    const voiceKey = `count_${index + 1}`;
-    AudioManager.play(voiceKey);
+    // Visual Burst Animation
+    this.burstParticles.explode(20, this.pathPoints[index].x, this.pathPoints[index].y);
 
-    // Visual Animation (Pop effect)
     if (this.numberImages[index] && this.stationImages[index]) {
       this.tweens.add({
         targets: [this.numberImages[index], this.stationImages[index]],
@@ -475,14 +367,20 @@ export default class GameScene extends Phaser.Scene {
       });
     }
 
-    AudioManager.onceEnded(voiceKey, () => {
-      this.isBlockingInput = false;
+    const playCountVoice = () => {
+      const voiceKey = `count_${index + 1}`;
+      AudioManager.play(voiceKey);
 
-      // If completed immediately after voice
-      if (index === 4 && this.traceProgress >= 0.99) {
-        this.handleTracingComplete();
-      }
-    });
+      AudioManager.onceEnded(voiceKey, () => {
+        this.isBlockingInput = false;
+        if (index === 4) {
+          this.handleTracingComplete();
+        }
+      });
+    };
+
+    // For all points, wait for the congrats voice to finish first
+    AudioManager.onceEnded(correctKey, playCountVoice);
   }
 
   private handlePathPointerUp() {
@@ -491,26 +389,33 @@ export default class GameScene extends Phaser.Scene {
 
   private updatePaintedPath() {
     this.paintedPathGraphics.clear();
-    this.paintedPathGraphics.lineStyle(20, 0xff6600, 1);
-    // Use chained calls if available, otherwise just lineStyle. 
-    // High resolution points creates "round" join effect.
 
-    // Draw curve segment from 0 to traceProgress
-    // Increase resolution for smoother corners (totalCurveLength / 3)
     const points = this.pathCurve.getSpacedPoints(Math.floor(this.totalCurveLength / 3));
     const drawnPointsCount = Math.floor(points.length * this.traceProgress);
 
     if (drawnPointsCount < 2) return;
 
+    // 1. Draw Outer Glow (Blurry look)
+    this.paintedPathGraphics.lineStyle(30, 0xffa500, 0.2);
+    this.drawPath(points, drawnPointsCount);
+
+    // 2. Draw Middle Glow
+    this.paintedPathGraphics.lineStyle(24, 0xff6600, 0.4);
+    this.drawPath(points, drawnPointsCount);
+
+    // 3. Main Core Line
+    this.paintedPathGraphics.lineStyle(16, 0xffffff, 1);
+    this.drawPath(points, drawnPointsCount);
+  }
+
+  private drawPath(points: Phaser.Math.Vector2[], count: number) {
     this.paintedPathGraphics.beginPath();
     this.paintedPathGraphics.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < drawnPointsCount; i++) {
+    for (let i = 1; i < count; i++) {
       this.paintedPathGraphics.lineTo(points[i].x, points[i].y);
     }
-    // Add current exact point
     const tip = this.pathCurve.getPoint(this.traceProgress);
     this.paintedPathGraphics.lineTo(tip.x, tip.y);
-
     this.paintedPathGraphics.strokePath();
   }
 
@@ -521,20 +426,14 @@ export default class GameScene extends Phaser.Scene {
     this.recordCorrect();
     this.promptText.setText('Tuyệt vời! Bạn đã kết nối hết các trạm.');
 
-    this.time.delayedCall(500, () => {
-      // End game immediately (Single level as requested) - Very fast transition
-      AudioManager.play('voice_complete');
-      this.finalizeAttempt();
-      this.scene.start('EndGameScene', {
-        lessonId: '',
-        score: this.score,
-        total: 1,
-      });
+    AudioManager.play('voice_complete');
+    this.finalizeAttempt();
+    this.scene.start('EndGameScene', {
+      lessonId: '',
+      score: this.score,
+      total: 1,
     });
   }
-
-  // Removed Counting Game logic as requested (Single level)
-
 
   private playHandTutorial() {
     if (this.gameState !== 'TRACING' || this.isTracing) return;
@@ -543,36 +442,30 @@ export default class GameScene extends Phaser.Scene {
     const p0 = this.pathPoints[0];
     const p1 = this.pathPoints[1];
 
-    // Start slightly offset to show movement towards 1
-    this.tutorialHand = this.add.image(p0.x + 80, p0.y + 80, 'paint_brush')
-      .setScale(0.8)
+    this.tutorialHand = this.add.image(p0.x + 70, p0.y + 80, 'paint_brush')
+      .setScale(0.5)
       .setDepth(100)
       .setOrigin(0.5, 0);
 
-    // 1. Move to Number 1
     this.tweens.add({
       targets: this.tutorialHand,
-      x: p0.x,
+      x: p0.x - 10,
       y: p0.y,
       duration: 800,
       ease: 'Power2',
       onComplete: () => {
         if (!this.tutorialHand) return;
-
-        // 2. Tap indication (Scale down/up)
         this.tweens.add({
           targets: this.tutorialHand,
-          scale: 0.6,
+          scale: 0.4,
           duration: 200,
           yoyo: true,
           repeat: 1,
           onComplete: () => {
             if (!this.tutorialHand) return;
-
-            // 3. Move to Number 2 (Tracing help)
             this.tweens.add({
               targets: this.tutorialHand,
-              x: p1.x,
+              x: p1.x - 10,
               y: p1.y,
               duration: 1000,
               ease: 'Sine.easeInOut',
@@ -600,17 +493,15 @@ export default class GameScene extends Phaser.Scene {
       this.playInstructionVoice(force);
     } catch { }
   }
+
   private readonly onAudioUnlocked = () => {
     const win = window as unknown as Record<string, unknown>;
     win[AUDIO_UNLOCKED_KEY] = true;
     this.audioReady = true;
-
     try {
       void AudioManager.unlockAndWarmup?.();
     } catch { }
-
     this.consumePendingInstructionVoice();
-    this.playInstructionVoice();
   };
 
   private playInstructionVoice(force = false) {
@@ -619,13 +510,17 @@ export default class GameScene extends Phaser.Scene {
 
     const play = () => {
       if (!force && this.hasPlayedInstructionVoice) return;
-      if (force) AudioManager.stop('voice_join');
+
+      // Start BGM and Voice together
       try {
         (window as any).ensureBgmStarted?.();
       } catch { }
+
       AudioManager.playWhenReady?.('voice_join');
       this.hasPlayedInstructionVoice = true;
-      this.input.once('pointerdown', () => AudioManager.stop('voice_join'));
+      this.time.delayedCall(500, () => {
+        this.input.once('pointerdown', () => AudioManager.stop('voice_join'));
+      });
     };
 
     if (this.audioReady) {
