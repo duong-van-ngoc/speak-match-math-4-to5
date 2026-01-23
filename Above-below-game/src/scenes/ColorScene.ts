@@ -51,7 +51,7 @@ export class ColorScene extends Phaser.Scene {
   // Completion thresholds:
   // - Duck (index 0): allow a bit easier (~97%)
   // - Fish: allow a bit easier (~99%)
-  private readonly duckCompletionRatio = 0.97;
+  private readonly duckCompletionRatio = 0.99;
   private readonly fishCompletionRatio = 0.99;
   private paintStates = new Map<number, PaintState>();
   private activePaintObjectIndex?: number;
@@ -352,7 +352,7 @@ export class ColorScene extends Phaser.Scene {
 
       try {
         this.textures.get(baseKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
-      } catch {}
+      } catch { }
 
       const tex = this.textures.get(baseKey);
       const src = tex.getSourceImage() as HTMLImageElement | HTMLCanvasElement | null;
@@ -431,7 +431,7 @@ export class ColorScene extends Phaser.Scene {
       try {
         this.textures.get(lineKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
         this.textures.get(maskKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -476,7 +476,7 @@ export class ColorScene extends Phaser.Scene {
     if (!this.textures.exists(key)) return;
     try {
       this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
-    } catch {}
+    } catch { }
     this.sceneBg = this.add.image(0, 0, key).setOrigin(0.5).setDepth(1);
   }
 
@@ -752,7 +752,7 @@ export class ColorScene extends Phaser.Scene {
     if (def.spriteKey && this.textures.exists(def.spriteKey)) {
       try {
         this.textures.get(def.spriteKey).setFilter(Phaser.Textures.FilterMode.LINEAR);
-      } catch {}
+      } catch { }
       return this.add.image(0, 0, def.spriteKey).setOrigin(0.5);
     }
     // Viền giống hệt CSS: border 2px solid rgba(0,55,255,1)
@@ -809,7 +809,7 @@ export class ColorScene extends Phaser.Scene {
   private setCanvasCursor(cursor: string) {
     try {
       this.input.manager.canvas.style.cursor = cursor;
-    } catch {}
+    } catch { }
   }
 
   private updatePaintHoverCursor(hoverObjectIndex: number | undefined, isOver: boolean) {
@@ -882,9 +882,9 @@ export class ColorScene extends Phaser.Scene {
 
     const w = this.scale.width;
     const h = this.scale.height;
-    const maxW = Math.min(1200, w * 0.94);
+    const maxW = Math.min(1800, w * 0.94); // scale theo Full HD
     // Make the board a bit taller so there's more room for the palette row.
-    const maxH = Math.min(610, h * 0.9);
+    const maxH = Math.min(920, h * 0.9); // scale theo Full HD + 5px
     const ratio = this.getBoardAssetRatio();
     let boardW = maxW;
     let boardH = maxH;
@@ -1259,16 +1259,16 @@ export class ColorScene extends Phaser.Scene {
   private positionBannerAssets() {
     if (!this.bannerBg) return;
     // Stretch HTU background only in X (keep Y stable).
-    const maxWidth = Math.min(this.scale.width * 0.9, 720);
-    const maxWidthX = Math.min(this.scale.width * 0.96, 830);
+    const maxWidth = Math.min(this.scale.width * 0.95, 1180); // scale theo Full HD
+    const maxWidthX = Math.min(this.scale.width * 0.98, 1350); // scale theo Full HD
     const bgRatio = this.getTextureRatio(this.bannerBgKey) ?? 1;
 
     // Base size controls the height (Y). This stays stable.
-    const baseWidth = Math.min(maxWidth, this.boardRect.width * 0.9);
+    const baseWidth = Math.min(maxWidth, this.boardRect.width * 0.95);
     const targetHeight = bgRatio ? baseWidth / bgRatio : this.bannerBg.displayHeight;
 
     // Background can be wider (X) without changing height.
-    const targetWidth = Math.min(maxWidthX, this.boardRect.width * 0.96);
+    const targetWidth = Math.min(maxWidthX, this.boardRect.width * 0.98);
     const x = this.boardRect.centerX + 20;
     const y = Math.max(targetHeight / 2 + 8, this.boardRect.y - targetHeight / 2 - 8);
     this.bannerBg.setDisplaySize(targetWidth, targetHeight);
@@ -1380,7 +1380,7 @@ export class ColorScene extends Phaser.Scene {
     this.actionGuideHand = this.add.image(0, 0, 'guide_hand').setOrigin(0.2, 0.2).setDepth(240);
     try {
       this.textures.get('guide_hand').setFilter(Phaser.Textures.FilterMode.LINEAR);
-    } catch {}
+    } catch { }
     return this.actionGuideHand;
   }
 
@@ -1946,7 +1946,7 @@ export class ColorScene extends Phaser.Scene {
   private ensureBoardBackgroundLayout() {
     if (!this.sceneBg) return;
     const bgScale = 0.83; // make water (and fish) bigger
-    const bgYOffset = this.boardInnerRect.height * 0.06 + 30; // move water down a bit (+20px)
+    const bgYOffset = this.boardInnerRect.height * 0.06 + 60; // move water down a bit (+50px total)
     this.sceneBg.setPosition(this.boardInnerRect.centerX, this.boardInnerRect.centerY + bgYOffset);
     this.sceneBg.setDisplaySize(this.boardInnerRect.width * bgScale, this.boardInnerRect.height * bgScale);
   }
