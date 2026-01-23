@@ -1297,12 +1297,26 @@ export class ColorScene extends Phaser.Scene {
   private showPaletteGuideHand(first: boolean) {
     // Chỉ hiện lần đầu hoặc khi timeout
     if (first && this.paletteGuideHandShown) return;
+
+    // Only block initial auto-guidance if targets have been solved.
+    // If !first (inactivity/error), we allow showing help.
+    if (first && this.solvedPaintTargets.size > 0) return;
+
     // Xóa bàn tay cũ nếu có
     this.hidePaletteGuideHand();
     const level = this.getCurrentColorLevel();
     if (level.mode !== 'color') return;
-    const targetColor = level.colorTargets?.[0]?.color ?? level.targetColor;
-    if (targetColor == null) return;
+
+    // Find the first unsolved target to guide its color.
+    const targetMap = this.getColorTargetMap(level);
+    const unsolvedEntry = Array.from(targetMap.entries())
+      .find(([idx]) => !this.solvedPaintTargets.has(idx));
+
+    // If no unsolved targets, nothing to guide.
+    if (!unsolvedEntry) return;
+
+    const targetColor = unsolvedEntry[1];
+
     const paletteIndex = this.paletteDefs.findIndex((def) => def.c === targetColor);
     const paletteDot = this.paletteDots[paletteIndex];
     if (paletteDot && this.textures.exists('guide_hand')) {
@@ -1351,7 +1365,7 @@ export class ColorScene extends Phaser.Scene {
 
   private resetInactivityTimer() {
     this.inactivityTimeout?.remove(false);
-    this.inactivityTimeout = this.time.delayedCall(3000, () => this.onInactivity());
+    this.inactivityTimeout = this.time.delayedCall(10000, () => this.onInactivity());
   }
 
   private onInactivity() {
@@ -1360,17 +1374,35 @@ export class ColorScene extends Phaser.Scene {
 
     if (level.mode === 'color') {
       if (this.painting) return;
-      if (this.paletteSelectedIndex === -1) {
-        this.showPaletteGuideHand(false);
-      } else {
-        this.showPaintGuideHand(false);
-      }
+      this.showRelevantGuideHand(false);
       return;
     }
 
     if (level.mode === 'circle') {
       if (this.drawing) return;
       this.showCircleGuideHand(false);
+    }
+  }
+
+  private isCurrentColorValid() {
+    const level = this.getCurrentColorLevel();
+    if (level.mode !== 'color') return false;
+    if (this.selectedTool !== 'color' || this.selected === undefined) return false;
+
+    const targetMap = this.getColorTargetMap(level);
+    for (const [idx, color] of targetMap.entries()) {
+      if (!this.solvedPaintTargets.has(idx) && color === this.selected) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private showRelevantGuideHand(first: boolean) {
+    if (this.isCurrentColorValid()) {
+      this.showPaintGuideHand(first);
+    } else {
+      this.showPaletteGuideHand(first);
     }
   }
 
@@ -1400,10 +1432,11 @@ export class ColorScene extends Phaser.Scene {
     if (!target || !target.visible) return;
     const b = target.getBounds();
     // Start near the cat so the sweep animation can show "paint the whole cat".
-    const leftX = b.left + b.width * 0.22;
-    const yTop = b.top + b.height * 0.38;
-    hand.setPosition(leftX, yTop);
-    hand.setRotation(-Math.PI / 4);
+    // Point straight at the center of the animal, shifted down a bit.
+    const pointX = b.centerX;
+    const pointY = b.centerY + b.height * 0.25;
+    hand.setPosition(pointX, pointY);
+    hand.setRotation(0);
     hand.setScale(0.5);
   }
 
@@ -1413,6 +1446,9 @@ export class ColorScene extends Phaser.Scene {
     if (this.levelSolved) return;
     if (this.selectedTool === 'color' && this.selected === undefined) return;
 
+    // Only block initial auto-guidance if targets have been solved.
+    if (first && this.solvedPaintTargets.size > 0) return;
+
     const hand = this.ensureActionGuideHand();
     if (!hand) return;
     if (this.actionGuideHandMode === 'paint' && hand.visible) return;
@@ -1420,53 +1456,22 @@ export class ColorScene extends Phaser.Scene {
     this.actionGuideHandMode = 'paint';
     this.positionPaintGuideHand();
     hand.setVisible(true);
-    hand.setRotation(-Math.PI / 4);
+    hand.setRotation(0);
     hand.setScale(0.5);
 
-    this.actionGuideHandTween?.stop();
-    // Sweep across the cat to suggest "paint the whole cat".
-    const driver = { t: 0 };
+    // Pointing animation (blink/pulse in place).
     this.actionGuideHandTween = this.tweens.add({
-      targets: driver,
-      t: 1,
-      duration: first ? 1800 : 1500,
+      targets: hand,
+      scale: { from: 0.5, to: 0.6 },
+      alpha: { from: 1, to: 0.4 },
+      duration: 600,
+      yoyo: true,
       repeat: -1,
-      ease: 'Linear',
-      onUpdate: () => {
-        const levelNow = this.getCurrentColorLevel();
-        if (levelNow.mode !== 'color') return;
-        const targetMap = this.getColorTargetMap(levelNow);
-        const preferredColorNow = this.selectedTool === 'color' ? this.selected : undefined;
-        const candidatesNow = Array.from(targetMap.entries())
-          .filter(([idx]) => !this.solvedPaintTargets.has(idx))
-          .sort((a, b) => a[0] - b[0]);
-        const pickNow =
-          preferredColorNow !== undefined ? candidatesNow.find(([, c]) => c === preferredColorNow)?.[0] : candidatesNow[0]?.[0];
-        const target = pickNow != null ? this.objects[pickNow] : undefined;
-        if (!target || !target.visible) return;
-        const b = target.getBounds();
-
-        const leftX = b.left + b.width * 0.22;
-        const rightX = b.right - b.width * 0.22;
-        const yTop = b.top + b.height * 0.38;
-        const yBottom = b.top + b.height * 0.68;
-
-        // 2 passes: left->right (top), then right->left (bottom).
-        const tt = (driver.t % 1) * 2;
-        const pass = tt < 1 ? 0 : 1;
-        const u = tt < 1 ? tt : tt - 1;
-
-        const x = pass === 0
-          ? Phaser.Math.Linear(leftX, rightX, u)
-          : Phaser.Math.Linear(rightX, leftX, u);
-        const y = pass === 0 ? yTop : yBottom;
-
-        hand.setPosition(x, y);
-      },
+      ease: 'Sine.easeInOut',
     });
 
     this.actionGuideHandTimeout?.remove(false);
-    this.actionGuideHandTimeout = this.time.delayedCall(4500, () => this.hideActionGuideHand());
+    // Removed auto-hide: Hand persists until user interaction starts.
   }
 
   private showCircleGuideHand(first: boolean) {
@@ -1507,7 +1512,7 @@ export class ColorScene extends Phaser.Scene {
     });
 
     this.actionGuideHandTimeout?.remove(false);
-    this.actionGuideHandTimeout = this.time.delayedCall(5500, () => this.hideActionGuideHand());
+    // Removed auto-hide: Hand persists until user interaction starts.
   }
 
   private repositionGuideHands() {
@@ -1531,16 +1536,14 @@ export class ColorScene extends Phaser.Scene {
     this.resetInactivityTimer();
 
     if (level.mode === 'color') {
-      // First interaction hides the palette guide hand.
-      // Also cancel the initial "show hand" timer to prevent it from re-appearing right after the first tap.
+      // First interaction no longer hides the palette guide hand immediately.
+      // We rely on applyPaletteSelection to hide it when a color is actually selected.
+
       this.initialPaletteGuideHandTimeout?.remove(false);
       this.initialPaletteGuideHandTimeout = undefined;
-      this.hidePaletteGuideHand();
-      this.paletteGuideHandTimeout?.remove(false);
-      this.paletteGuideHandTimeout = this.time.delayedCall(3000, () => {
-        if (this.getCurrentColorLevel().mode !== 'color') return;
-        if (this.paletteSelectedIndex === -1) this.showPaletteGuideHand(false);
-      });
+
+      // Remove redundant paletteGuideHandTimeout; rely on resetInactivityTimer (5s).
+
       if (this.levelSolved) return;
 
       // Require a tool selection (color or eraser) before painting.
@@ -1564,6 +1567,7 @@ export class ColorScene extends Phaser.Scene {
     if (this.levelSolved) return;
     if (!this.isPointerInBoard(pointer)) return;
     this.setCanvasCursor('crosshair');
+    // Hide action hand only when drawing actually starts
     this.hideActionGuideHand();
     this.clearUserDrawing();
     this.drawing = true;
@@ -1848,7 +1852,7 @@ export class ColorScene extends Phaser.Scene {
       this.ensurePaintForObject(targetIndex);
       this.evaluatingPaintTargets.delete(targetIndex);
     });
-    this.time.delayedCall(650, () => this.showPaintGuideHand(false));
+    this.time.delayedCall(650, () => this.showRelevantGuideHand(false));
   }
 
   private fillTargetToFull(targetIndex: number, color: number) {
