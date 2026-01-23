@@ -113,7 +113,7 @@ export default class GameScene extends Phaser.Scene {
     this.add
       .image(width / 2, BANNER_Y, 'btn_primary_pressed')
       .setOrigin(0.5)
-      .setScale(0.85, 0.7) // Increased scale
+      .setScale(0.7, 0.75) // Increased scale
       .setDepth(20);
 
     // Banner Text Image (Question.png)
@@ -141,12 +141,14 @@ export default class GameScene extends Phaser.Scene {
 
   private pathCurve!: Phaser.Curves.Spline;
   private pathPoints: Phaser.Math.Vector2[] = [];
+  private curvePathPoints: Phaser.Math.Vector2[] = [];
   private stationImages: Phaser.GameObjects.Image[] = [];
   private numberImages: Phaser.GameObjects.Image[] = [];
   private dottedPathGroup!: Phaser.GameObjects.Group;
   private paintedPathGraphics!: Phaser.GameObjects.Graphics;
 
   private traceProgress = 0; // 0.0 to 1.0 along the curve
+  private traceIndex = 0;
   private totalCurveLength = 0;
 
   private traceParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
@@ -201,28 +203,44 @@ export default class GameScene extends Phaser.Scene {
     this.pathCurve = new Phaser.Curves.Spline(this.pathPoints);
     this.totalCurveLength = this.pathCurve.getLength();
 
+    // Generate high-resolution points for the entire path once (approx 1px spacing)
+    // Using simple array ensures both dashed and painted lines follow the EXACT same geometry
+    this.curvePathPoints = this.pathCurve.getSpacedPoints(Math.floor(this.totalCurveLength));
+
     this.dottedPathGroup = this.add.group();
     const dashedGraphics = this.add.graphics();
     dashedGraphics.setDepth(2);
     this.dottedPathGroup.add(dashedGraphics);
 
-    // Layout: Dashes 29, 29 | Border 2.5px
-    const dashLen = 29;
-    const gapLen = 29;
-    const stepSize = (dashLen + gapLen);
-    const numSteps = Math.floor(this.totalCurveLength / stepSize);
-
     dashedGraphics.lineStyle(2.5, 0x555555, 0.8);
 
-    for (let i = 0; i < numSteps; i++) {
-      const tStart = (i * stepSize) / this.totalCurveLength;
-      const tEnd = (i * stepSize + dashLen) / this.totalCurveLength;
+    const dashLen = 29;
+    const gapLen = 29;
+    const period = dashLen + gapLen;
+    // Calculate distance between points for accurate dashing
+    const pointDist = this.totalCurveLength / (this.curvePathPoints.length - 1);
 
-      const pStart = this.pathCurve.getPoint(tStart);
-      const pEnd = this.pathCurve.getPoint(tEnd);
+    dashedGraphics.beginPath();
+    let isDrawing = false;
 
-      dashedGraphics.lineBetween(pStart.x, pStart.y, pEnd.x, pEnd.y);
+    // Use the pre-calculated high-res points
+    for (let i = 0; i < this.curvePathPoints.length; i++) {
+      const p = this.curvePathPoints[i];
+      const currentDist = i * pointDist; // Approximate distance along curve based on index
+
+      // Check if current distance falls within the 'dash' portion of the cycle
+      if ((currentDist % period) < dashLen) {
+        if (!isDrawing) {
+          dashedGraphics.moveTo(p.x, p.y);
+          isDrawing = true;
+        } else {
+          dashedGraphics.lineTo(p.x, p.y);
+        }
+      } else {
+        isDrawing = false;
+      }
     }
+    dashedGraphics.strokePath();
 
     this.paintedPathGraphics = this.add.graphics();
     this.paintedPathGraphics.lineStyle(28, 0xffa500, 1);
@@ -295,6 +313,7 @@ export default class GameScene extends Phaser.Scene {
     this.gameState = 'TRACING';
     this.promptText.setVisible(false);
     this.traceProgress = 0;
+    this.traceIndex = 0;
     this.visitedPoints = new Array(5).fill(false);
     this.isBlockingInput = false;
     this.updatePaintedPath();
@@ -326,26 +345,38 @@ export default class GameScene extends Phaser.Scene {
   private handlePathPointerMove(pointer: Phaser.Input.Pointer) {
     if (this.gameState !== 'TRACING' || !this.isTracing) return;
     if (this.isBlockingInput) return;
+    if (!this.curvePathPoints || this.curvePathPoints.length === 0) return;
 
-    const lookAhead = 0.05;
-    let bestProgress = this.traceProgress;
+    // Look ahead in the pre-calculated points array (Arc-Length based)
+    // allowing the user to skip ahead slightly (e.g. cutting corners) but not too much
+    const maxLookAhead = 150; // number of points (approx 150px)
+    const maxIndex = Math.min(this.curvePathPoints.length - 1, this.traceIndex + maxLookAhead);
 
-    for (let p = this.traceProgress; p <= Math.min(1, this.traceProgress + lookAhead); p += 0.002) {
-      const pt = this.pathCurve.getPoint(p);
-      const d = Phaser.Math.Distance.Between(pointer.x, pointer.y, pt.x, pt.y);
-      if (d < 50) {
-        if (p > bestProgress) bestProgress = p;
+    let bestIndex = this.traceIndex;
+    let foundNew = false;
+
+    // Scan ahead to find the furthest point close to the pointer
+    for (let i = this.traceIndex; i <= maxIndex; i += 2) { // step by 2 for optimization
+      const p = this.curvePathPoints[i];
+      const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, p.x, p.y);
+      if (dist < 60) {
+        bestIndex = i;
+        foundNew = true;
       }
     }
 
-    if (bestProgress > this.traceProgress) {
-      this.traceProgress = bestProgress;
+    if (foundNew && bestIndex > this.traceIndex) {
+      this.traceIndex = bestIndex;
+      // Sync traceProgress for compatibility with other logic if needed
+      this.traceProgress = this.traceIndex / (this.curvePathPoints.length - 1);
+
       this.updatePaintedPath();
 
-      // Emit particles at tip
-      const tip = this.pathCurve.getPoint(this.traceProgress);
+      // Emit particles at current tip (matches drawn line perfecty)
+      const tip = this.curvePathPoints[this.traceIndex];
       this.traceParticles.emitParticleAt(tip.x, tip.y);
 
+      // Check for station visits
       this.pathPoints.forEach((p, i) => {
         if (!this.visitedPoints[i]) {
           const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, p.x, p.y);
@@ -410,32 +441,35 @@ export default class GameScene extends Phaser.Scene {
   private updatePaintedPath() {
     this.paintedPathGraphics.clear();
 
-    const points = this.pathCurve.getSpacedPoints(Math.floor(this.totalCurveLength / 3));
-    const drawnPointsCount = Math.floor(points.length * this.traceProgress);
+    if (!this.curvePathPoints || this.curvePathPoints.length === 0) return;
 
-    if (drawnPointsCount < 2) return;
+    const maxIndex = this.traceIndex;
 
-    // 1. Draw Outer Glow (Blurry look)
+    if (maxIndex < 1) return;
+
+    // 1. Draw Outer Glow
     this.paintedPathGraphics.lineStyle(30, 0xffa500, 0.2);
-    this.drawPath(points, drawnPointsCount);
+    this.drawPathSegments(maxIndex);
 
     // 2. Draw Middle Glow
     this.paintedPathGraphics.lineStyle(24, 0xff6600, 0.4);
-    this.drawPath(points, drawnPointsCount);
+    this.drawPathSegments(maxIndex);
 
-    // 3. Main Core Line
+    // 3. Draw Inner Core
     this.paintedPathGraphics.lineStyle(16, 0xffffff, 1);
-    this.drawPath(points, drawnPointsCount);
+    this.drawPathSegments(maxIndex);
   }
 
-  private drawPath(points: Phaser.Math.Vector2[], count: number) {
+  private drawPathSegments(maxIndex: number) {
     this.paintedPathGraphics.beginPath();
-    this.paintedPathGraphics.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < count; i++) {
-      this.paintedPathGraphics.lineTo(points[i].x, points[i].y);
+    this.paintedPathGraphics.moveTo(this.curvePathPoints[0].x, this.curvePathPoints[0].y);
+
+    // Draw all segments up to the current progress index
+    // Since points are 1px apart, this forms a silky smooth curve without corners
+    for (let i = 1; i <= maxIndex; i++) {
+      this.paintedPathGraphics.lineTo(this.curvePathPoints[i].x, this.curvePathPoints[i].y);
     }
-    const tip = this.pathCurve.getPoint(this.traceProgress);
-    this.paintedPathGraphics.lineTo(tip.x, tip.y);
+
     this.paintedPathGraphics.strokePath();
   }
 
