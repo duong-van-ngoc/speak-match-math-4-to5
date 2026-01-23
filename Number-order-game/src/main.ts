@@ -146,12 +146,12 @@ export function ensureBgmStarted() {
   // so it's safe to mark audio as unlocked here even when rotate overlay blocks propagation.
   try {
     markAudioUnlocked();
-  } catch {}
+  } catch { }
 
   // Kick off audio unlock immediately on the gesture (don’t block starting BGM on awaiting).
   try {
     void AudioManager.unlockAndWarmup?.();
-  } catch {}
+  } catch { }
 
   try {
     const startBgm = () => {
@@ -176,7 +176,7 @@ export function ensureBgmStarted() {
     } else {
       startBgm();
     }
-  } catch {}
+  } catch { }
 }
 
 
@@ -212,28 +212,27 @@ export function ensureBgmStarted() {
 // ================== CẤU HÌNH PHASER ==================
 // Increase internal canvas resolution to reduce blur (especially when Scale.FIT stretches the canvas).
 // Cap to avoid heavy GPU cost on very high-DPR devices.
-const RENDER_RESOLUTION = Math.min(3, window.devicePixelRatio || 1);
+const RENDER_RESOLUTION = window.devicePixelRatio || 1;
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
-  width: 1280,
-  height: 720, // 16:9
+  width: 1920,
+  height: 1080, // Full HD 16:9
   parent: containerId,
-  transparent: true, // Canvas trong suốt để nhìn thấy background của body
+  transparent: true,
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    expandParent: true,
   },
   render: {
     pixelArt: false,
     antialias: true,
-    roundPixels: true,
+    roundPixels: false,
   },
-  // Chạy PreloadScene trước để load toàn bộ asset, rồi mới vào GameScene
   scene: [PreloadScene, GameScene, EndGameScene],
 };
 
-// Phaser supports these, but the TS type in this project doesn't declare them.
 (config as any).resolution = RENDER_RESOLUTION;
 (config as any).render = (config as any).render ?? {};
 (config as any).render.antialiasGL = true;
@@ -311,7 +310,7 @@ async function initGame() {
   try {
     const win = window as unknown as Record<string, unknown>;
     if (win[AUDIO_UNLOCKED_KEY]) ensureBgmStarted();
-  } catch {}
+  } catch { }
 
   // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
   // setupGlobalBgm();
@@ -319,7 +318,7 @@ async function initGame() {
   if (!game) {
     // setRandomIntroViewportBg();
     game = new Phaser.Game(config);
-    initRotateOrientation(game); 
+    initRotateOrientation(game);
     setupHtmlButtons();
   }
 
@@ -332,69 +331,71 @@ async function initGame() {
       canvas.style.display = "block";
       canvas.style.imageRendering = "auto";
       canvas.style.backgroundColor = "transparent";
+      // Ensure the canvas looks crisp by explicitly setting its smooth property if available
+      (canvas as any).style.webkitFontSmoothing = "antialiased";
     }
   }, 50);
 }
 
 
-  // ========== IRUKA MINI GAME SDK INTEGRATION ==========
-  import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
+// ========== IRUKA MINI GAME SDK INTEGRATION ==========
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
 
-  function applyResize(width: number, height: number) {
-      const gameDiv = document.getElementById('game-container');
-      if (gameDiv) {
-          gameDiv.style.width = `${width}px`;
-          gameDiv.style.height = `${height}px`;
-      }
-      game?.scale.resize(width, height);
+function applyResize(width: number, height: number) {
+  const gameDiv = document.getElementById('game-container');
+  if (gameDiv) {
+    gameDiv.style.width = `${width}px`;
+    gameDiv.style.height = `${height}px`;
   }
+  game?.scale.resize(width, height);
+}
 
-  function broadcastSetState(payload: any) {
-      const scene = game?.scene.getScenes(true)[0] as any;
-      scene?.applyHubState?.(payload);
-  }
+function broadcastSetState(payload: any) {
+  const scene = game?.scene.getScenes(true)[0] as any;
+  scene?.applyHubState?.(payload);
+}
 
-  function getHubOrigin(): string {
-    const qs = new URLSearchParams(window.location.search);
-    const o = qs.get("hubOrigin");
-    if (o) return o;
-    try {
-      const ref = document.referrer;
-      if (ref) return new URL(ref).origin;
-    } catch {}
-    return "*";
-  }
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch { }
+  return "*";
+}
 
-  export const sdk = irukaGame.createGameSdk({
-    hubOrigin: getHubOrigin(),
-    onInit() {
-      sdk.ready({
-        capabilities: ["resize", "score", "complete", "save_load", "set_state"],
-      });
-    },
-    onStart() {
-      game?.scene.resume("GameScene");
-      game?.scene.resume("EndGameScene");
-    },
-    onPause() {
-      game?.scene.pause("GameScene");
-    },
-    onResume() {
-      game?.scene.resume("GameScene");
-    },
-    onResize(size) {
-      applyResize(size.width, size.height);
-    },
-    onSetState(state) {
-      broadcastSetState(state);
-    },
-    onQuit() {
-      irukaGame.finalizeAttempt("quit");
-      sdk.complete({
-        timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
-        extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
-      });
-    },
-  });
+export const sdk = irukaGame.createGameSdk({
+  hubOrigin: getHubOrigin(),
+  onInit() {
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+    });
+  },
+  onStart() {
+    game?.scene.resume("GameScene");
+    game?.scene.resume("EndGameScene");
+  },
+  onPause() {
+    game?.scene.pause("GameScene");
+  },
+  onResume() {
+    game?.scene.resume("GameScene");
+  },
+  onResize(size) {
+    applyResize(size.width, size.height);
+  },
+  onSetState(state) {
+    broadcastSetState(state);
+  },
+  onQuit() {
+    irukaGame.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+    });
+  },
+});
 
-  document.addEventListener("DOMContentLoaded", initGame);
+document.addEventListener("DOMContentLoaded", initGame);

@@ -194,8 +194,25 @@ class AudioManager {
       return;
     }
 
+    // Tự động dừng voice hướng dẫn khi phát audio khác (trừ BGM và một số SFX)
+    this.stopInstructionVoicesIfNeeded(id);
+
     this.lastPlayTimes[id] = now;
     return sound.play();
+  }
+
+  private stopInstructionVoicesIfNeeded(newId: string): void {
+    // Không dừng voice hướng dẫn nếu đang phát BGM hoặc một số SFX nhẹ
+    const ignoredIds = ['bgm_main', 'sfx_click'];
+    if (ignoredIds.includes(newId)) return;
+
+    // Dừng tất cả voice hướng dẫn khi phát audio mới
+    const instructionVoices = ['voice_join', 'voice_intro', 'voice_rotate'];
+    instructionVoices.forEach((voiceId) => {
+      if (voiceId !== newId && this.isPlaying(voiceId)) {
+        this.stop(voiceId);
+      }
+    });
   }
 
   playWhenReady(id: string): void {
