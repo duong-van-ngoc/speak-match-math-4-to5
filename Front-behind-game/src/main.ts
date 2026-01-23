@@ -198,8 +198,8 @@ const RENDER_RESOLUTION = Math.min(3, window.devicePixelRatio || 1);
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
-  width: 1280,
-  height: 720, // 16:9
+  width: 1920,
+  height: 1080, // 16:9
   parent: containerId,
   transparent: true, // Canvas trong suốt để nhìn thấy background của body
   backgroundColor: "rgba(0,0,0,0)",

@@ -99,7 +99,7 @@ export class ColorScene extends Phaser.Scene {
   private paletteGuideHandTimeout?: Phaser.Time.TimerEvent;
   private paletteGuideHandShown = false;
   private guideHandShowToken = 0;
-  private introEnsureToken = 0;
+
 
   private actionGuideHand?: Phaser.GameObjects.Image;
   private actionGuideHandTween?: Phaser.Tweens.Tween;
@@ -180,7 +180,7 @@ export class ColorScene extends Phaser.Scene {
     this.colorLevelLabel = this.add
       .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
         fontFamily: 'Baloo, Arial',
-        fontSize: '44px', // tăng kích thước chữ banner
+        fontSize: '66px', // tăng kích thước chữ banner từ 44px lên 66px cho Full HD
         color: '#0b1b2a',
       })
       .setOrigin(0.5, 0)
@@ -857,9 +857,9 @@ export class ColorScene extends Phaser.Scene {
 
     const w = this.scale.width;
     const h = this.scale.height;
-    const maxW = Math.min(1200, w * 0.94);
+    const maxW = Math.min(1800, w * 0.94); // Tăng từ 1200 lên 1800 cho Full HD
     // Make the board a bit taller so there's more room for the palette row.
-    const maxH = Math.min(610, h * 0.9);
+    const maxH = Math.min(920, h * 0.9); // Tăng từ 610 lên 920 cho Full HD
     const ratio = this.getBoardAssetRatio();
     let boardW = maxW;
     let boardH = maxH;
@@ -1146,12 +1146,12 @@ export class ColorScene extends Phaser.Scene {
 
   private positionBannerAssets() {
     if (!this.bannerBg) return;
-    const maxWidth = Math.min(this.scale.width * 0.9, 720);
+    const maxWidth = Math.min(this.scale.width * 0.9, 1100);
     const bgRatio = this.getTextureRatio(this.bannerBgKey) ?? 1;
     const targetWidth = Math.min(maxWidth, this.boardRect.width * 0.9);
     const targetHeight = bgRatio ? targetWidth / bgRatio : this.bannerBg.displayHeight;
     const x = this.boardRect.centerX;
-    const y = Math.max(targetHeight / 2 + 8, this.boardRect.y - targetHeight / 2 - 8);
+    const y = Math.max(targetHeight / 2 + 5, this.boardRect.y - targetHeight / 2 - 4);
     this.bannerBg.setDisplaySize(targetWidth, targetHeight);
     this.bannerBg.setPosition(x, y);
 

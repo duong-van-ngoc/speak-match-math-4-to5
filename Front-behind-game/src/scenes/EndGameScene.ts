@@ -5,7 +5,7 @@ import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
 import { loadAssetGroups } from "../assets";
 
 function hideGameButtons() {
-  (window as any).setGameButtonsVisible?.(false);
+    (window as any).setGameButtonsVisible?.(false);
 }
 
 
@@ -188,7 +188,7 @@ export default class EndGameScene extends Phaser.Scene {
             confetti = this.add.circle(
                 x,
                 y,
-                Phaser.Math.Between(4, 8),
+                Phaser.Math.Between(6, 12),
                 color,
                 1
             );
@@ -196,8 +196,8 @@ export default class EndGameScene extends Phaser.Scene {
             confetti = this.add.rectangle(
                 x,
                 y,
-                Phaser.Math.Between(6, 12),
-                Phaser.Math.Between(10, 20),
+                Phaser.Math.Between(9, 18),
+                Phaser.Math.Between(15, 30),
                 color,
                 1
             );

@@ -112,7 +112,7 @@ export class CountConnectScene extends Phaser.Scene {
         this.levelLabel = this.add
             .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
                 fontFamily: 'Baloo, Arial',
-                fontSize: '26px',
+                fontSize: '40px', // tăng kích thước chữ banner từ 26px lên 40px cho Full HD
                 color: '#0b1b2a',
             })
             .setOrigin(0.5, 0)
@@ -446,8 +446,8 @@ export class CountConnectScene extends Phaser.Scene {
 
         const w = this.scale.width;
         const h = this.scale.height;
-        const maxW = Math.min(1100, w * 0.92); // board nhỏ lại
-        const maxH = Math.min(540, h * 0.8); // board nhỏ lại
+        const maxW = Math.min(1600, w * 0.92); // Tăng từ 1100 lên 1600 cho Full HD
+        const maxH = Math.min(800, h * 0.8); // Tăng từ 540 lên 800 cho Full HD
 
         const ratio = this.getBoardAssetRatio();
         let boardW = maxW;
@@ -476,7 +476,8 @@ export class CountConnectScene extends Phaser.Scene {
         const innerH = boardH - padTop - padBottom;
 
         this.boardInnerRect.setTo(innerX, innerY, innerW, innerH);
-        this.numberRowY = innerY + innerH * 0.15;
+        // Đẩy hàng số lên cao hơn (về phía 0.05) để vào trong board hơn
+        this.numberRowY = innerY + innerH * 0.05;
 
         const objSpacing = Math.min(innerW * 0.5, 300);
         // Đặt bóng/bi xuống gần đáy board hơn
@@ -642,14 +643,15 @@ export class CountConnectScene extends Phaser.Scene {
     private positionBannerAssets() {
         if (!this.bannerBg) return;
 
-        const maxWidth = Math.min(this.scale.width * 0.9, 720);
+        const maxWidth = Math.min(this.scale.width * 0.9, 1100);
         const bgRatio = this.getTextureRatio(this.bannerBgKey) ?? 1;
 
         const targetWidth = Math.min(maxWidth, this.boardRect.width * 0.9);
         const targetHeight = bgRatio ? targetWidth / bgRatio : this.bannerBg.displayHeight;
 
         const x = this.boardRect.centerX;
-        const y = Math.max(targetHeight / 2 + 8, this.boardRect.y - targetHeight / 2 - 8);
+        // Đẩy banner dịch lên cao hơn để không đè vào board (từ -8 lên -35)
+        const y = Math.max(targetHeight / 2 + 5, this.boardRect.y - targetHeight / 2 - 4);
 
         this.bannerBg.setDisplaySize(targetWidth, targetHeight);
         this.bannerBg.setPosition(x, y);
