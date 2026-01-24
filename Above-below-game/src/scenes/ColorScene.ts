@@ -34,7 +34,7 @@ export class ColorScene extends Phaser.Scene {
   private readonly catScale = 1.0;
   private readonly catLineartSuffix = '__lineart';
   private readonly catMaskSuffix = '__mask';
-  private readonly paletteDotSize = 70;
+  private readonly paletteDotSize = 100;
   private readonly paletteBottomPadding = 15;
   // Negative values move the palette up.
   private readonly paletteYOffset = -10;
@@ -49,10 +49,10 @@ export class ColorScene extends Phaser.Scene {
   private paintBrush?: Phaser.GameObjects.Image;
   private paintGrid = { cols: 50, rows: 50 };
   // Completion thresholds:
-  // - Duck (index 0): allow a bit easier (~97%)
-  // - Fish: allow a bit easier (~99%)
-  private readonly duckCompletionRatio = 0.99;
-  private readonly fishCompletionRatio = 0.99;
+  // - Duck (index 0): allow a bit easier (~90%)
+  // - Fish: allow a bit easier (~90%)
+  private readonly duckCompletionRatio = 0.9;
+  private readonly fishCompletionRatio = 0.9;
   private paintStates = new Map<number, PaintState>();
   private activePaintObjectIndex?: number;
   // Targets that are already correct and locked.
@@ -659,8 +659,8 @@ export class ColorScene extends Phaser.Scene {
     if (!this.textures.exists('__paint_brush__')) {
       const g = this.add.graphics({ x: 0, y: 0 });
       g.fillStyle(0xffffff, 1);
-      g.fillCircle(18, 18, 18);
-      g.generateTexture('__paint_brush__', 36, 36);
+      g.fillCircle(30, 30, 30);
+      g.generateTexture('__paint_brush__', 60, 60);
       g.destroy();
     }
     this.paintBrush = this.add.image(-10000, -10000, '__paint_brush__').setVisible(true).setDepth(-2000);
@@ -1736,7 +1736,7 @@ export class ColorScene extends Phaser.Scene {
     if (localX < 0 || localY < 0 || localX > target.displayWidth || localY > target.displayHeight) return;
 
     const brushScale = Math.max(0.9, Math.min(1.6, target.displayWidth / 260));
-    const brushRadiusPx = 18 * brushScale; // brush texture is 36px (r=18)
+    const brushRadiusPx = 30 * brushScale; // brush texture is 60px (r=30)
 
     const updateCoverageCells = (add: boolean) => {
       const cellW = target.displayWidth / this.paintGrid.cols;
