@@ -7,6 +7,8 @@ import AudioManager from '../AudioManager';
 
 type ShapeKind = 'circle' | 'triangle' | 'rectangle' | 'square';
 
+type PaintTool = 'color' | 'eraser';
+
 type PaintShape = {
   kind: ShapeKind;
   label: string;
@@ -41,7 +43,7 @@ export class ColorScene extends Phaser.Scene {
 
   private painting = false;
   private activePointerId?: number;
-  private brushRadius = 14;
+  private brushRadius = 28;
   private currentPaintTarget?: PaintShape;
   // "Tô từ từ đến full": require very high coverage before accepting.
   private readonly coverageRequiredRatio = 0.98;
@@ -51,11 +53,19 @@ export class ColorScene extends Phaser.Scene {
 
   private paletteDots: Phaser.GameObjects.Image[] = [];
   private paletteSelectedIndex = 2; // default blue like sample
-  private eraserSelected = false;
+  private selectedTool: PaintTool = 'color';
+  private selectedColor?: number;
   private eraserBtn?: Phaser.GameObjects.Container;
   private readonly brushCursor = 'pointer';
-  private readonly characterLiftY = -150; // âm = dịch lên trên
-  private readonly paletteLiftY = -10; // vị trí thang màu sẽ căn theo đáy board
+  private readonly characterLiftY = -225; // âm = dịch lên trên
+  private readonly paletteLiftY = -16; // vị trí thang màu sẽ căn theo đáy board
+
+  private guideHand?: Phaser.GameObjects.Image;
+  private guideHandTween?: Phaser.Tweens.Tween;
+  private guideHandTimer?: Phaser.Time.TimerEvent;
+  private lastInteractionAtMs = 0;
+  private readonly guideHandIdleMs = 10000;
+  private guideHandMotionToken = 0;
 
   constructor() {
     super('ColorScene');
@@ -74,7 +84,8 @@ export class ColorScene extends Phaser.Scene {
     this.activePointerId = undefined;
     this.currentPaintTarget = undefined;
     this.paletteSelectedIndex = 2;
-    this.eraserSelected = false;
+    this.selectedTool = 'color';
+    this.selectedColor = this.getPaletteColors()[this.paletteSelectedIndex];
 
     this.boardImage?.destroy();
     this.boardImage = undefined;
@@ -108,6 +119,7 @@ export class ColorScene extends Phaser.Scene {
     this.setCursor(this.brushCursor);
     this.playGuideVoice();
     this.updatePaletteRings();
+    this.setupGuideHand();
 
     this.input.on(Phaser.Input.Events.POINTER_DOWN, this.onPointerDown, this);
     this.input.on(Phaser.Input.Events.POINTER_MOVE, this.onPointerMove, this);
@@ -120,6 +132,13 @@ export class ColorScene extends Phaser.Scene {
       this.input.off(Phaser.Input.Events.POINTER_MOVE, this.onPointerMove, this);
       this.input.off(Phaser.Input.Events.POINTER_UP, this.onPointerUp, this);
       this.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, this.onPointerUp, this);
+
+      this.guideHandTween?.stop();
+      this.guideHandTween = undefined;
+      this.guideHandTimer?.remove(false);
+      this.guideHandTimer = undefined;
+      this.guideHand?.destroy();
+      this.guideHand = undefined;
     });
   }
 
@@ -136,15 +155,166 @@ export class ColorScene extends Phaser.Scene {
   private playWrongSound() {
     AudioManager.stopGuideVoices();
     AudioManager.play('sfx_wrong');
+    this.showGuideHand();
   }
 
   private getPaletteColors(): number[] {
     return [COLORS.red, COLORS.yellow, COLORS.blue, COLORS.brown ?? 0x8b4513];
   }
 
-  private getSelectedColor(): number {
+  private getSelectedColor(): number | undefined {
+    if (this.selectedTool !== 'color') return undefined;
+    if (this.selectedColor !== undefined) return this.selectedColor;
     const palette = this.getPaletteColors();
     return palette[Math.max(0, Math.min(this.paletteSelectedIndex, palette.length - 1))];
+  }
+
+  private noteInteraction() {
+    this.lastInteractionAtMs = this.time.now;
+  }
+
+  private getHintTargetColor(): number | undefined {
+    const next = this.shapes.find((s) => !s.painted);
+    return next?.targetColor;
+  }
+
+  private getHintTargetShape(): PaintShape | undefined {
+    return this.shapes.find((s) => !s.painted);
+  }
+
+  private shouldGuidePaint(): boolean {
+    const next = this.getHintTargetShape();
+    if (!next) return false;
+    return this.selectedTool === 'color' && this.selectedColor !== undefined && this.selectedColor === next.targetColor;
+  }
+
+  private updateGuideHandPosition() {
+    if (!this.guideHand) return;
+
+    const offsetX = -15;
+    const offsetY = 42;
+    const tipOriginX = 0.13;
+    const tipOriginY = 0.085;
+
+    if (this.shouldGuidePaint()) {
+      const shape = this.getHintTargetShape();
+      if (!shape) return;
+      const x = shape.bounds.centerX;
+      const y = shape.bounds.centerY;
+      this.guideHand.setOrigin(tipOriginX, tipOriginY);
+      this.guideHand.setPosition(Math.round(x), Math.round(y));
+      return;
+    }
+
+    this.guideHand.setOrigin(0.5, 0.5);
+    const hintColor = this.getHintTargetColor();
+    const palette = this.getPaletteColors();
+    const idx = hintColor === undefined ? -1 : palette.findIndex((c) => c === hintColor);
+    const dot = idx >= 0 ? this.paletteDots[idx] : undefined;
+
+    if (!dot) {
+      this.guideHand.setPosition(Math.round(this.paletteRect.centerX + offsetX), Math.round(this.paletteRect.centerY + offsetY));
+      return;
+    }
+
+    const x = dot.x + dot.displayWidth * 0.55 + offsetX;
+    const y = dot.y - dot.displayHeight * 0.25 + offsetY;
+    this.guideHand.setPosition(Math.round(x), Math.round(y));
+  }
+
+  private showGuideHand() {
+    if (!this.guideHand || this.guideHand.visible) return;
+    this.updateGuideHandPosition();
+    this.guideHand.setVisible(true);
+
+    this.guideHandTween?.stop();
+    if (this.shouldGuidePaint()) {
+      // "Đi đi" animation (move around the target a bit) to suggest painting.
+      const shape = this.getHintTargetShape();
+      const b = shape?.bounds;
+      if (!b) return;
+
+      const cx = b.centerX;
+      const cy = b.centerY;
+      const amp = Phaser.Math.Clamp(Math.min(b.width, b.height) * 0.18, 10, 24);
+
+      this.guideHand.setPosition(Math.round(cx), Math.round(cy));
+
+      const points = [
+        { x: Math.round(cx + amp), y: Math.round(cy) },
+        { x: Math.round(cx - amp), y: Math.round(cy + amp * 0.5) },
+        { x: Math.round(cx), y: Math.round(cy - amp * 0.6) },
+        { x: Math.round(cx + amp * 0.6), y: Math.round(cy + amp * 0.6) },
+      ];
+
+      const token = (this.guideHandMotionToken += 1);
+      let idx = 0;
+      const playStep = () => {
+        if (token != this.guideHandMotionToken) return;
+        if (!this.guideHand || !this.guideHand.visible) return;
+        if (!this.shouldGuidePaint()) return;
+
+        const p = points[idx] ?? points[0]!;
+        idx = (idx + 1) % points.length;
+
+        this.guideHandTween?.stop();
+        this.guideHandTween = this.tweens.add({
+          targets: this.guideHand,
+          x: p.x,
+          y: p.y,
+          duration: 420,
+          yoyo: true,
+          hold: 70,
+          ease: 'Sine.easeInOut',
+          onComplete: () => playStep(),
+        });
+      };
+
+      playStep();
+    } else {
+      // Tap animation when guiding the kid to pick a color.
+      const baseY = this.guideHand.y;
+      this.guideHandTween = this.tweens.add({
+        targets: this.guideHand,
+        y: baseY + 6,
+        duration: 320,
+        yoyo: true,
+        repeat: -1,
+        repeatDelay: 850,
+        ease: 'Sine.easeInOut',
+      });
+    }
+  }
+
+  private hideGuideHand() {
+    if (!this.guideHand || !this.guideHand.visible) return;
+    this.guideHandMotionToken += 1;
+    this.guideHandTween?.stop();
+    this.guideHandTween = undefined;
+    this.guideHand.setVisible(false);
+  }
+
+  private setupGuideHand() {
+    this.lastInteractionAtMs = this.time.now;
+    if (!this.textures.exists('guide_hand')) return;
+
+    this.guideHand?.destroy();
+    this.guideHand = this.add.image(0, 0, 'guide_hand').setOrigin(0.5, 0.5).setDepth(2000).setVisible(false);
+    this.setDisplaySizeFromTextureScale(this.guideHand, 'guide_hand', 0.53);
+
+    this.updateGuideHandPosition();
+    this.showGuideHand();
+
+    this.guideHandTimer?.remove(false);
+    this.guideHandTimer = this.time.addEvent({
+      delay: 350,
+      loop: true,
+      callback: () => {
+        if (this.painting) return;
+        if (this.time.now - this.lastInteractionAtMs < this.guideHandIdleMs) return;
+        this.showGuideHand();
+      },
+    });
   }
 
   private getPartAssetKey(partLabel: string): string {
@@ -213,11 +383,12 @@ export class ColorScene extends Phaser.Scene {
 
   private createPalette() {
     const keys = [PALETTE_ASSET_KEYS.red, PALETTE_ASSET_KEYS.yellow, PALETTE_ASSET_KEYS.blue, PALETTE_ASSET_KEYS.brown];
+    const palette = this.getPaletteColors();
     const dots: Phaser.GameObjects.Image[] = [];
 
     keys.forEach((key, idx) => {
       const dot = this.add.image(0, 0, key).setDepth(40).setOrigin(0.5);
-      this.setDisplaySizeFromTextureScale(dot, key, 0.42);
+      this.setDisplaySizeFromTextureScale(dot, key, 0.65);
       dot.setInteractive({ useHandCursor: true });
       dot.on('pointerover', () => {
         if (this.painting) return;
@@ -228,8 +399,25 @@ export class ColorScene extends Phaser.Scene {
         this.setCursor(this.brushCursor);
       });
       dot.on('pointerdown', () => {
-        this.eraserSelected = false;
+        this.noteInteraction();
+        this.selectedTool = 'color';
         this.paletteSelectedIndex = idx;
+        const picked = palette[Math.max(0, Math.min(idx, palette.length - 1))];
+        this.selectedColor = picked;
+
+        // Do not dismiss the hint on first touch unless the kid picked the correct color cell.
+        const expected = this.getHintTargetColor();
+        if (expected !== undefined && picked === expected) {
+          // Switch guidance from "pick a color" -> "paint the next shape" immediately.
+          this.hideGuideHand();
+          // Only auto-show guidance for the very first shape (count == 0).
+          // For subsequent shapes, only show if idle or wrong.
+          if (this.shapes.every((s) => !s.painted)) {
+            this.updateGuideHandPosition();
+            this.showGuideHand();
+          }
+        }
+
         this.updatePaletteRings();
         AudioManager.play('sfx_click');
       });
@@ -239,7 +427,7 @@ export class ColorScene extends Phaser.Scene {
 
     const eraser = this.add.container(0, 0).setDepth(42);
     const eraserImg = this.add.image(0, 0, PALETTE_ASSET_KEYS.eraser).setOrigin(0.5);
-    this.setDisplaySizeFromTextureScale(eraserImg, PALETTE_ASSET_KEYS.eraser, 0.36);
+    this.setDisplaySizeFromTextureScale(eraserImg, PALETTE_ASSET_KEYS.eraser, 0.66);
     eraser.add([eraserImg]);
     eraser.setSize(eraserImg.displayWidth, eraserImg.displayHeight);
     eraser.setInteractive(new Phaser.Geom.Rectangle(-eraser.width / 2, -eraser.height / 2, eraser.width, eraser.height), Phaser.Geom.Rectangle.Contains);
@@ -252,13 +440,16 @@ export class ColorScene extends Phaser.Scene {
       this.setCursor(this.brushCursor);
     });
     eraser.on('pointerdown', () => {
+      this.noteInteraction();
       AudioManager.play('sfx_click');
-      this.eraserSelected = true;
+      this.selectedTool = 'eraser';
+      this.selectedColor = undefined;
       this.updatePaletteRings();
     });
     this.eraserBtn = eraser;
 
     this.updatePaletteRings();
+    this.updateGuideHandPosition();
   }
 
   private setDisplaySizeFromTextureScale(img: Phaser.GameObjects.Image, key: string, scale: number) {
@@ -285,11 +476,18 @@ export class ColorScene extends Phaser.Scene {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer) {
+    this.noteInteraction();
     if (this.painting) return;
     const hit = this.shapes.find((s) => !s.painted && this.containsPointByBounds(s, pointer.x, pointer.y));
     if (!hit) return;
 
-    if (this.eraserSelected) {
+    // If the hand is guiding painting, hide it as soon as the kid starts painting the correct next shape.
+    if (this.shouldGuidePaint()) {
+      const next = this.getHintTargetShape();
+      if (next && hit === next) this.hideGuideHand();
+    }
+
+    if (this.selectedTool === 'eraser') {
       // Erase gradually (brush erase), not instant reset.
       this.painting = true;
       this.activePointerId = pointer.id;
@@ -308,12 +506,13 @@ export class ColorScene extends Phaser.Scene {
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer) {
+    this.noteInteraction();
     if (!this.painting) return;
     if (this.activePointerId !== undefined && pointer.id !== this.activePointerId) return;
     const hit = this.currentPaintTarget;
     if (!hit || hit.painted) return;
     if (!this.containsPointByBounds(hit, pointer.x, pointer.y)) return;
-    if (this.eraserSelected) {
+    if (this.selectedTool === 'eraser') {
       this.eraseAtPointer(hit, pointer.x, pointer.y);
       return;
     }
@@ -321,13 +520,14 @@ export class ColorScene extends Phaser.Scene {
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
+    this.noteInteraction();
     if (this.activePointerId !== undefined && pointer.id !== this.activePointerId) return;
     this.painting = false;
     this.activePointerId = undefined;
     this.setCursor(this.brushCursor);
     const shape = this.currentPaintTarget;
     this.currentPaintTarget = undefined;
-    if (shape && !this.eraserSelected) this.maybeFinalizeShape(shape);
+    if (shape && this.selectedTool !== 'eraser') this.maybeFinalizeShape(shape);
   }
 
   private getCoverageRatio(shape: PaintShape): number {
@@ -348,19 +548,30 @@ export class ColorScene extends Phaser.Scene {
     shape.fillGfx.setBlendMode(Phaser.BlendModes.ERASE);
     shape.fillGfx.fillStyle(0xffffff, 1);
     shape.fillGfx.fillCircle(x, y, this.brushRadius);
+
+    this.updateCoverageAt(shape, x, y, false);
   }
 
-  private markCoverageAt(shape: PaintShape, x: number, y: number) {
+  private updateCoverageAt(shape: PaintShape, x: number, y: number, covered: boolean) {
     if (!shape.coverageSamples.length) return;
     const r2 = this.brushRadius * this.brushRadius;
     for (let i = 0; i < shape.coverageSamples.length; i++) {
-      if (shape.coverageMarked[i]) continue;
+      if (covered) {
+        if (shape.coverageMarked[i]) continue;
+      } else if (!shape.coverageMarked[i]) {
+        continue;
+      }
       const p = shape.coverageSamples[i]!;
       const dx = p.x - x;
       const dy = p.y - y;
       if (dx * dx + dy * dy <= r2) {
-        shape.coverageMarked[i] = 1;
-        shape.coverageMarkedCount += 1;
+        if (covered) {
+          shape.coverageMarked[i] = 1;
+          shape.coverageMarkedCount += 1;
+        } else {
+          shape.coverageMarked[i] = 0;
+          shape.coverageMarkedCount = Math.max(0, shape.coverageMarkedCount - 1);
+        }
       }
     }
   }
@@ -424,6 +635,10 @@ export class ColorScene extends Phaser.Scene {
     if (!this.containsPointByBounds(shape, x, y)) return;
 
     const selectedColor = this.getSelectedColor();
+    if (selectedColor === undefined) return;
+
+    const next = this.getHintTargetShape();
+    if (next && shape === next && this.shouldGuidePaint()) this.hideGuideHand();
     // If the kid changes color mid-way, treat it as "paint again" on the same part.
     if (shape.usedColor !== undefined && shape.usedColor !== selectedColor) {
       shape.fillGfx.clear();
@@ -445,7 +660,7 @@ export class ColorScene extends Phaser.Scene {
     shape.fillGfx.fillCircle(x, y, this.brushRadius);
 
     shape.strokes += 1;
-    this.markCoverageAt(shape, x, y);
+    this.updateCoverageAt(shape, x, y, true);
     if (this.getCoverageRatio(shape) >= this.coverageRequiredRatio) this.completeShape(shape);
   }
 
@@ -474,6 +689,8 @@ export class ColorScene extends Phaser.Scene {
 
     shape.painted = true;
     shape.lastPaint = undefined;
+    this.hideGuideHand();
+    this.noteInteraction();
 
     // Snap to a clean solid fill (still clipped by stencil mask).
     const b = shape.bounds;
@@ -508,21 +725,22 @@ export class ColorScene extends Phaser.Scene {
     // Only shrink width (not height).
     const widthScale = isSmallScreen ? 0.98 : 0.9;
     const maxWBase = w - margin * 2;
-    const maxH = h - margin * 2;
+    // Shrink max height slightly to make the board smaller vertically
+    const maxH = (h - margin * 2) * 0.92;
 
     const ratio = this.getBoardAssetRatio() ?? 1.45;
     // Fit by ratio first, then squash width only (keeps height unchanged).
     const bh = Math.min(maxH, maxWBase / ratio);
     const bw = bh * ratio * widthScale;
 
-    const yOffset = Math.min(36, margin);
+    const yOffset = Math.min(54, margin);
     this.boardRect.setTo((w - bw) / 2, (h - bh) / 2 + yOffset, bw, bh);
 
     const pad = Math.max(18, bw * 0.06);
     this.boardInnerRect.setTo(this.boardRect.x + pad, this.boardRect.y + pad, this.boardRect.width - pad * 2, this.boardRect.height - pad * 2);
 
     // Give more space to the character (bigger drawing area).
-    const paletteH = Math.max(48, this.boardInnerRect.height * 0.08);
+    const paletteH = Math.max(72, this.boardInnerRect.height * 0.08);
     this.paletteRect.setTo(this.boardInnerRect.x, this.boardInnerRect.bottom - paletteH, this.boardInnerRect.width, paletteH);
     this.contentRect.setTo(this.boardInnerRect.x, this.boardInnerRect.y, this.boardInnerRect.width, this.boardInnerRect.height - paletteH);
 
@@ -577,7 +795,7 @@ export class ColorScene extends Phaser.Scene {
     // this allows `characterLiftY` to visually move the character upward without clipping.
     const pad = 0.03;
     const baseS = Math.min((r.width * (1 - pad * 2)) / totalWBase, (r.height * (1 - pad * 2)) / totalHBase);
-    const s = baseS * 1.15; // tăng nhẹ kích thước toàn bộ bộ phận, giữ nguyên tỉ lệ & vị trí
+    const s = baseS * 1.18; // tăng thêm kích thước toàn bộ bộ phận
 
     const hatW = hatWBase * s;
     const hatH = hatHBase * s;
@@ -610,7 +828,7 @@ export class ColorScene extends Phaser.Scene {
     const neckCy = headCy + headD / 2 + jointGap + neckH / 2;
     const bodyTopY = neckCy + neckH / 2 + jointGap;
     const bodyCy = bodyTopY + body / 2;
-    const armCy = bodyTopY - jointGap - armH / 2 + 31;
+    const armCy = bodyTopY - jointGap - armH / 2 + 42;
     const legTopY = bodyCy + body / 2 + jointGap;
     const legCy = legTopY + legH / 2;
     const shoeTopY = legCy + legH / 2 + jointGap;
@@ -699,19 +917,27 @@ export class ColorScene extends Phaser.Scene {
     });
 
     this.updatePaletteRings();
+
+    if (this.guideHand) {
+      this.updateGuideHandPosition();
+      if (this.guideHand.visible) {
+        this.hideGuideHand();
+        this.showGuideHand();
+      }
+    }
   }
 
   private updatePaletteRings() {
     const selectedAlpha = 1;
     const otherAlpha = 0.4;
     this.paletteDots.forEach((d, idx) => {
-      if (this.eraserSelected) {
+      if (this.selectedTool === 'eraser') {
         d.setAlpha(otherAlpha);
         return;
       }
       d.setAlpha(idx === this.paletteSelectedIndex ? selectedAlpha : otherAlpha);
     });
-    this.eraserBtn?.setAlpha(this.eraserSelected ? selectedAlpha : otherAlpha);
+    this.eraserBtn?.setAlpha(this.selectedTool === 'eraser' ? selectedAlpha : otherAlpha);
   }
 
   private createBoardImageIfNeeded() {
@@ -752,13 +978,14 @@ export class ColorScene extends Phaser.Scene {
     if (!this.bannerBg) return;
 
     // Allow the banner to stretch wider without increasing height.
-    const maxWidth = Math.min(this.scale.width * 0.98, 860);
+    const maxWidth = Math.min(this.scale.width * 0.98, 1300);
     const bgRatio = this.getTextureRatio(this.bannerBgKey) ?? 1;
     // Base size for height calculation (kept constant even if we stretch X).
-    const baseWidthForHeight = Math.min(Math.min(this.scale.width * 0.95, 680), this.boardRect.width * 0.95);
-    const targetHeight = bgRatio ? baseWidthForHeight / bgRatio : this.bannerBg.displayHeight;
+    const baseWidthForHeight = Math.min(Math.min(this.scale.width * 0.92, 1050), this.boardRect.width * 0.95);
+    // Increase banner height by 25% (multiply by 1.25)
+    const targetHeight = (bgRatio ? baseWidthForHeight / bgRatio : this.bannerBg.displayHeight) * 1.25;
     // Increase X only (stretch horizontally), keep Y the same.
-    const targetWidth = Math.min(maxWidth, baseWidthForHeight * 1.2);
+    const targetWidth = Math.min(maxWidth, baseWidthForHeight * 1.3);
     const x = this.boardRect.centerX;
     const y = Math.max(targetHeight / 2 + 8, this.boardRect.y - targetHeight / 2 - 8);
     this.bannerBg.setDisplaySize(targetWidth, targetHeight);
@@ -769,7 +996,7 @@ export class ColorScene extends Phaser.Scene {
       const textRatio = this.getTextureRatio(key) ?? 1;
       // Keep text aspect ratio (do NOT stretch); just fit inside the stretched banner.
       const maxTextWidth = targetWidth * 0.88;
-      const maxTextHeight = targetHeight * 0.82;
+      const maxTextHeight = targetHeight * 0.88;
       const widthFromHeight = textRatio ? maxTextHeight * textRatio : maxTextWidth;
       const textWidth = Math.min(maxTextWidth, widthFromHeight);
       const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;

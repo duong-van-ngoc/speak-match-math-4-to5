@@ -46,6 +46,12 @@ export class CountConnectScene extends Phaser.Scene {
   private dragging?: { item: CountConnectItem };
   private connections: Array<{ kind: ShapeKind; n: number }> = [];
 
+  private guideHand?: Phaser.GameObjects.Image;
+  private guideHandTween?: Phaser.Tweens.Tween;
+  private guideHandTimer?: Phaser.Time.TimerEvent;
+  private lastInteractionAtMs = 0;
+  private readonly guideHandIdleMs = 5000;
+
   constructor() {
     super('CountConnectScene');
   }
@@ -103,6 +109,7 @@ export class CountConnectScene extends Phaser.Scene {
     this.layoutBoard();
 
     this.playGuideVoice();
+    this.setupGuideHand();
 
     this.input.on(Phaser.Input.Events.POINTER_MOVE, this.onPointerMove, this);
     this.input.on(Phaser.Input.Events.POINTER_UP, this.onPointerUp, this);
@@ -113,6 +120,13 @@ export class CountConnectScene extends Phaser.Scene {
       this.input.off(Phaser.Input.Events.POINTER_MOVE, this.onPointerMove, this);
       this.input.off(Phaser.Input.Events.POINTER_UP, this.onPointerUp, this);
       this.input.off(Phaser.Input.Events.POINTER_UP_OUTSIDE, this.onPointerUp, this);
+
+      this.guideHandTween?.stop();
+      this.guideHandTween = undefined;
+      this.guideHandTimer?.remove(false);
+      this.guideHandTimer = undefined;
+      this.guideHand?.destroy();
+      this.guideHand = undefined;
     });
   }
 
@@ -129,6 +143,82 @@ export class CountConnectScene extends Phaser.Scene {
   private playWrongSound() {
     AudioManager.stopGuideVoices();
     AudioManager.play('sfx_wrong');
+  }
+
+  private noteInteraction() {
+    this.lastInteractionAtMs = this.time.now;
+  }
+
+  private getGuideHandRoute() {
+    const item = this.items.find((i) => !i.connected);
+    if (!item) return undefined;
+    const target = this.numberTargets.find((t) => t.n === item.expected);
+    if (!target) return undefined;
+
+    const linePad = 6;
+    // For the guide hand, point fingertip to the center of the number cell.
+    const to = { x: Math.round(target.hitRect.centerX), y: Math.round(target.hitRect.centerY) };
+    const from = this.getItemEdgePoint(item, to.x, to.y, linePad);
+    return { from, to };
+  }
+
+  private showGuideHand() {
+    if (!this.guideHand || this.guideHand.visible) return;
+    const route = this.getGuideHandRoute();
+    if (!route) return;
+
+    this.guideHandTween?.stop();
+    this.guideHand.setOrigin(0.13, 0.085);
+    this.guideHand.setVisible(true);
+    this.guideHand.setPosition(Math.round(route.from.x), Math.round(route.from.y));
+
+    this.guideHandTween = this.tweens.add({
+      targets: this.guideHand,
+      x: Math.round(route.to.x),
+      y: Math.round(route.to.y),
+      duration: 750,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+  }
+
+  private hideGuideHand() {
+    if (!this.guideHand || !this.guideHand.visible) return;
+    this.guideHandTween?.stop();
+    this.guideHandTween = undefined;
+    this.guideHand.setVisible(false);
+  }
+
+  private setupGuideHand() {
+    this.lastInteractionAtMs = this.time.now;
+    if (!this.textures.exists('guide_hand')) return;
+
+    this.guideHand?.destroy();
+    this.guideHand = this.add.image(0, 0, 'guide_hand').setOrigin(0.5, 0.5).setDepth(2000).setVisible(false);
+    this.guideHand.setOrigin(0.13, 0.085);
+
+    const tex = this.textures.get('guide_hand');
+    const src = tex.getSourceImage() as HTMLImageElement | HTMLCanvasElement | null;
+    if (src) {
+      const { width, height } = src as unknown as { width: number; height: number };
+      this.guideHand.setDisplaySize(Math.round(width * 0.75), Math.round(height * 0.75));
+    } else {
+      this.guideHand.setScale(0.9);
+    }
+
+    this.guideHandTimer?.remove(false);
+    this.guideHandTimer = this.time.addEvent({
+      delay: 350,
+      loop: true,
+      callback: () => {
+        if (this.dragging) return;
+        if (this.time.now - this.lastInteractionAtMs < this.guideHandIdleMs) return;
+        this.showGuideHand();
+      },
+    });
+
+    this.showGuideHand();
   }
 
   private createPicturePlaceholder() {
@@ -179,7 +269,10 @@ export class CountConnectScene extends Phaser.Scene {
       };
 
       startBox.on('pointerdown', () => {
+        this.noteInteraction();
         if (item.connected) return;
+        // Only hide the guide hand when the kid starts connecting (begins drag).
+        this.hideGuideHand();
         this.dragging = { item };
         this.drawDragLine(startBox.x, startBox.y, startBox.x, startBox.y);
       });
@@ -216,14 +309,16 @@ export class CountConnectScene extends Phaser.Scene {
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer) {
+    this.noteInteraction();
     if (!this.dragging) return;
     const { item } = this.dragging;
-    const linePad = 6; // push to the visible edge (line width + stroke)
+    const linePad = 0; // touch the edge exactly
     const from = this.getItemEdgePoint(item, pointer.x, pointer.y, linePad);
     this.drawDragLine(from.x, from.y, pointer.x, pointer.y);
   }
 
   private onPointerUp(pointer: Phaser.Input.Pointer) {
+    this.noteInteraction();
     if (!this.dragging) return;
     const { item } = this.dragging;
     this.dragging = undefined;
@@ -240,7 +335,7 @@ export class CountConnectScene extends Phaser.Scene {
     item.iconImage?.setAlpha(1);
 
     this.connections.push({ kind: item.kind, n: hit.n });
-    const linePad = 6;
+    const linePad = 0;
     const to = this.getNumberAnchor(hit, item, linePad);
     const from = this.getItemEdgePoint(item, to.x, to.y, linePad);
     this.drawFixedConnection(from.x, from.y, to.x, to.y);
@@ -265,7 +360,7 @@ export class CountConnectScene extends Phaser.Scene {
     if (!this.dragLine) return;
     this.dragLine.clear();
     this.dragLine.lineStyle(4, 0x374151, 0.9);
-    drawDashedLine(this.dragLine, x1, y1, x2, y2, 14, 10);
+    drawSolidLine(this.dragLine, x1, y1, x2, y2);
   }
 
   private clearDragLine() {
@@ -275,7 +370,7 @@ export class CountConnectScene extends Phaser.Scene {
   private drawFixedConnection(x1: number, y1: number, x2: number, y2: number) {
     if (!this.fixedLines) return;
     this.fixedLines.lineStyle(4, 0x374151, 0.9);
-    drawDashedLine(this.fixedLines, x1, y1, x2, y2, 14, 10);
+    drawSolidLine(this.fixedLines, x1, y1, x2, y2);
   }
 
   private edgePointTowardsPadded(rectCenterX: number, rectCenterY: number, rectW: number, rectH: number, targetX: number, targetY: number, pad: number) {
@@ -296,9 +391,20 @@ export class CountConnectScene extends Phaser.Scene {
     const icon = item.iconImage;
     const cx = icon?.x ?? item.startBox.x;
     const cy = icon?.y ?? item.startBox.y;
-    const w = icon?.displayWidth ?? item.startBox.width;
-    const h = icon?.displayHeight ?? item.startBox.height;
-    return this.edgePointTowardsPadded(cx, cy, w, h, targetX, targetY, pad);
+    // Scale down to 0.75 to penetrate transparent whitespace in the PNG
+    const w = (icon?.displayWidth ?? item.startBox.width) * 0.75;
+    const h = (icon?.displayHeight ?? item.startBox.height) * 0.75;
+    const p = this.edgePointTowardsPadded(cx, cy, w, h, targetX, targetY, pad);
+
+    // Fine-tune line start position relative to the shape edge
+    const offsets: Record<string, number> = {
+      'circle': 15,
+      'triangle': -13,
+      'rectangle': 5,
+      'square': 16
+    };
+    p.x += (offsets[item.kind] || 0);
+    return p;
   }
 
   private getItemCenter(item: CountConnectItem) {
@@ -347,10 +453,10 @@ export class CountConnectScene extends Phaser.Scene {
     const bh = Math.min(maxH, maxWBase / ratio);
     const bw = bh * ratio * widthScale;
 
-    const yOffset = Math.min(36, margin);
+    const yOffset = Math.min(54, margin);
     this.boardRect.setTo((w - bw) / 2, (h - bh) / 2 + yOffset, bw, bh);
 
-    const pad = Math.max(18, bw * 0.06);
+    const pad = Math.max(27, bw * 0.06);
     this.boardInnerRect.setTo(this.boardRect.x + pad, this.boardRect.y + pad, this.boardRect.width - pad * 2, this.boardRect.height - pad * 2);
 
     this.createBoardImageIfNeeded();
@@ -367,13 +473,18 @@ export class CountConnectScene extends Phaser.Scene {
 
     this.positionBannerAssets();
     this.layoutPictureAndUI();
+
+    if (this.guideHand?.visible) {
+      this.hideGuideHand();
+      this.showGuideHand();
+    }
   }
 
   private layoutPictureAndUI() {
     const r = this.boardInnerRect;
 
-    const groupShiftX = -22; // shift picture + both columns to the left
-    const groupShiftY = 6; // shift picture + both columns down
+    const groupShiftX = -33; // shift picture + both columns to the left
+    const groupShiftY = 9; // shift picture + both columns down
 
     // Picture (Frame 142) bigger and closer to the board top-left.
     const pictureBoxW = r.width * 0.48;
@@ -421,19 +532,19 @@ export class CountConnectScene extends Phaser.Scene {
     // Shapes can be slightly bigger than numbers, but the column height stays equal.
     const availableHForBoxes = Math.max(1, rowsBottom - rowsTop);
     const numberCount = Math.max(1, this.numberTargets.length);
-    const numberBoxSize = Phaser.Math.Clamp(Math.floor(availableHForBoxes / numberCount), 70, 150);
-    const shapeBoxSize = Phaser.Math.Clamp(Math.round(numberBoxSize * 1.15), 72, 185);
+    const numberBoxSize = Phaser.Math.Clamp(Math.floor(availableHForBoxes / numberCount), 110, 225);
+    const shapeBoxSize = Phaser.Math.Clamp(Math.round(numberBoxSize * 1.15), 115, 290);
 
-    const columnExtraGap = 18;
+    const columnExtraGap = 27;
     const numberX = Math.round(r.right - r.width * 0.06 - numberBoxSize / 2) + groupShiftX + 10 + columnExtraGap;
     const numberLeft = numberX - numberBoxSize / 2;
 
     // Shapes column between picture and ladder, with large icons and enough space for connecting lines.
     // Move shape column slightly left while keeping space for connecting lines.
-    const shapeX = Math.round(pictureRight + (numberLeft - pictureRight) * 0.28) - 28 - 10 - columnExtraGap;
+    const shapeX = Math.round(pictureRight + (numberLeft - pictureRight) * 0.28) - 28 - 10 - columnExtraGap - 25;
 
     const itemRows = this.items.length;
-    const shapeFirstCy = rowsTop + shapeBoxSize / 2;
+    const shapeFirstCy = rowsTop + shapeBoxSize / 2 - 20; // Shift up slightly to align visual center with numbers
     const shapeLastCy = rowsBottom - shapeBoxSize / 2;
     const itemStep = itemRows <= 1 ? 0 : (shapeLastCy - shapeFirstCy) / (itemRows - 1);
 
@@ -504,7 +615,7 @@ export class CountConnectScene extends Phaser.Scene {
         const linePad = 6;
         const end = this.getNumberAnchor(target, item, linePad);
         const start = this.getItemEdgePoint(item, end.x, end.y, linePad);
-        drawDashedLine(this.fixedLines!, start.x, start.y, end.x, end.y, 14, 10);
+        drawSolidLine(this.fixedLines!, start.x, start.y, end.x, end.y);
       });
     }
   }
@@ -547,9 +658,9 @@ export class CountConnectScene extends Phaser.Scene {
     if (!this.bannerBg) return;
 
     // Stretch bannerBg in X only (do not increase height).
-    const maxWidth = Math.min(this.scale.width * 0.98, 860);
+    const maxWidth = Math.min(this.scale.width * 0.98, 1300);
     const bgRatio = this.getTextureRatio(this.bannerBgKey) ?? 1;
-    const baseWidthForHeight = Math.min(Math.min(this.scale.width * 0.95, 680), this.boardRect.width * 0.9);
+    const baseWidthForHeight = Math.min(Math.min(this.scale.width * 0.95, 1050), this.boardRect.width * 0.9);
     const targetHeight = bgRatio ? baseWidthForHeight / bgRatio : this.bannerBg.displayHeight;
     const targetWidth = Math.min(maxWidth, baseWidthForHeight * 1.3);
     const x = this.boardRect.centerX;
@@ -581,43 +692,11 @@ export class CountConnectScene extends Phaser.Scene {
   }
 }
 
-function drawDashedLine(gfx: Phaser.GameObjects.Graphics, x1: number, y1: number, x2: number, y2: number, dashLen: number, gapLen: number) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist <= 0.001) return;
-
-  const vx = dx / dist;
-  const vy = dy / dist;
-
-  const step = dashLen + gapLen;
-  let t = 0;
-  let lastEnd = 0;
-
-  while (t < dist) {
-    const dashStart = t;
-    const dashEnd = Math.min(t + dashLen, dist);
-    const sx = x1 + vx * dashStart;
-    const sy = y1 + vy * dashStart;
-    const ex = x1 + vx * dashEnd;
-    const ey = y1 + vy * dashEnd;
-    gfx.beginPath();
-    gfx.moveTo(sx, sy);
-    gfx.lineTo(ex, ey);
-    gfx.strokePath();
-    lastEnd = dashEnd;
-    t += step;
-  }
-
-  // Ensure the line touches the end even if the dash pattern would end in a gap.
-  if (lastEnd < dist - 0.5) {
-    const sx = x1 + vx * lastEnd;
-    const sy = y1 + vy * lastEnd;
-    gfx.beginPath();
-    gfx.moveTo(sx, sy);
-    gfx.lineTo(x2, y2);
-    gfx.strokePath();
-  }
+function drawSolidLine(gfx: Phaser.GameObjects.Graphics, x1: number, y1: number, x2: number, y2: number) {
+  gfx.beginPath();
+  gfx.moveTo(x1, y1);
+  gfx.lineTo(x2, y2);
+  gfx.strokePath();
 }
 
 // drawShapeIcon removed (icons are now PNG assets)
