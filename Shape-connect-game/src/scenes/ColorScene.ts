@@ -166,6 +166,27 @@ export class ColorScene extends Phaser.Scene {
     else if (id === 3) key = SHAPE_ASSET_KEYS.shape3;
     else if (id === 4) key = SHAPE_ASSET_KEYS.shape4;
 
+    // Hit area params
+    let hitW = w * 0.9;
+    if (id === 2) hitW = w * 0.6; // Shape 2 width smaller
+
+    let hitH = h * 0.9;
+    if (id === 2) hitH = h * 1.0; // Shape 2 height larger (+0.1)
+
+    let xOffset = 150;
+    if (id === 1) xOffset = 165;
+    else if (id === 2) xOffset = 55; // Was 85, shifted left 30 -> 55
+
+    const hitX = -hitW / 2 + xOffset;
+    const hitY = -hitH / 2 + 80;
+
+    // Create Fill Graphics (Background) - Matches Hit Area
+    const fillGfx = this.add.graphics();
+    fillGfx.fillStyle(0xff0000, 1);
+    fillGfx.fillRoundedRect(hitX, hitY, hitW, hitH, 24);
+    fillGfx.setVisible(false);
+    container.add(fillGfx);
+
     if (this.textures.exists(key)) {
       const img = this.add.image(0, 0, key);
       img.setDisplaySize(w, h);
@@ -205,8 +226,9 @@ export class ColorScene extends Phaser.Scene {
     }
 
     // Interaction
-    // Expanded hit area (1.6x) to make it very sensitive
-    container.setInteractive(new Phaser.Geom.Rectangle(-w * 0.8, -h * 0.8, w * 1.6, h * 1.6), Phaser.Geom.Rectangle.Contains);
+    // Use the same params as the fill graphics
+    const hitRect = new Phaser.Geom.Rectangle(hitX, hitY, hitW, hitH);
+    container.setInteractive(hitRect, Phaser.Geom.Rectangle.Contains);
 
     container.on('pointerover', () => {
       this.game.canvas.style.cursor = 'pointer';
@@ -280,7 +302,7 @@ export class ColorScene extends Phaser.Scene {
     // Condition: Select shape 1 and shape 2
     if (this.selectedShapes.has(1) && this.selectedShapes.has(2) && this.selectedShapes.size === 2) {
       this.handTutorial?.stop(); // Stop tutorial
-      this.time.delayedCall(500, () => {
+      this.time.delayedCall(1000, () => {
         this.game.events.emit(FLOW_GO_COUNT, {});
       });
     }

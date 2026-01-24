@@ -215,8 +215,22 @@ export class CountConnectScene extends Phaser.Scene {
       container.add(text);
     }
 
-    // Expanded Hit Area (1.6x)
-    container.setInteractive(new Phaser.Geom.Rectangle(-w * 0.8, -h * 0.8, w * 1.6, h * 1.6), Phaser.Geom.Rectangle.Contains);
+    // Hit area params (Match ColorScene)
+    let hitW = w * 0.9;
+    if (id === 2) hitW = w * 0.6; // Shape 2 width smaller
+
+    let hitH = h * 0.9;
+    if (id === 2) hitH = h * 1.0; // Shape 2 height larger
+
+    let xOffset = 150;
+    if (id === 1) xOffset = 165;
+    else if (id === 2) xOffset = 55; // Shape 2 shifted left
+
+    const hitX = -hitW / 2 + xOffset;
+    const hitY = -hitH / 2 + 80;
+
+    const hitRect = new Phaser.Geom.Rectangle(hitX, hitY, hitW, hitH);
+    container.setInteractive(hitRect, Phaser.Geom.Rectangle.Contains);
     this.input.setDraggable(container);
 
     container.on('pointerover', () => {
