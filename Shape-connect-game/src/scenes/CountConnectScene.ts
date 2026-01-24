@@ -312,11 +312,8 @@ export class CountConnectScene extends Phaser.Scene {
     if (hitTarget) {
       const targetId = hitTarget.getData('id');
       if (this.isValidConnection(sourceId, targetId)) {
-        // Adjust target point for visual "dashed" area
-        let tx = hitTarget.x;
-        let ty = hitTarget.y;
-        if (targetId === 100) tx += 60; // Shift right for Rect
-        if (targetId === 200) tx -= 40; // Shift left for Square
+        // Adjust target point for visual "dashed" area - unused currently
+        // (tx, ty logic removed to fix build error)
 
         // Create permanent connection using the USER'S PATH
         const finalPath = [...this.currentDragPath]; // Copy path
