@@ -22,7 +22,7 @@ export class ColorScene extends Phaser.Scene {
   private readonly catScale = 1.0;
   private readonly catLineartSuffix = '__lineart';
   private readonly catMaskSuffix = '__mask';
-  private readonly paletteDotSize = 70;
+  private readonly paletteDotSize = 100;
   private readonly paletteBottomPadding = 15;
   // Negative values move the palette up.
   private readonly paletteYOffset = -10;
@@ -580,7 +580,7 @@ export class ColorScene extends Phaser.Scene {
   }
 
   private advanceColorLevel() {
-    this.time.delayedCall(450, () => {
+    this.time.delayedCall(2000, () => {
       if (this.currentColorLevelIndex + 1 < this.colorLevels.length) {
         this.currentColorLevelIndex++;
         this.resetForNextColorLevel();
@@ -1478,6 +1478,8 @@ export class ColorScene extends Phaser.Scene {
       if (ratio >= 0.55) {
         const dominant = this.getDominantPaintColor();
         if (dominant === COLORS.yellow) {
+          // Fill completely with the correct color
+          this.paintRT?.fill(COLORS.yellow);
           this.onLevelSuccess();
         } else {
           this.shakeAsset(this.objects[level.targetObjectIndex]);
