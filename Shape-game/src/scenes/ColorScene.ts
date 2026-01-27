@@ -58,7 +58,7 @@ export class ColorScene extends Phaser.Scene {
   private eraserBtn?: Phaser.GameObjects.Container;
   private readonly brushCursor = 'pointer';
   private readonly characterLiftY = -225; // âm = dịch lên trên
-  private readonly paletteLiftY = -16; // vị trí thang màu sẽ căn theo đáy board
+
 
   private guideHand?: Phaser.GameObjects.Image;
   private guideHandTween?: Phaser.Tweens.Tween;
@@ -388,7 +388,7 @@ export class ColorScene extends Phaser.Scene {
 
     keys.forEach((key, idx) => {
       const dot = this.add.image(0, 0, key).setDepth(40).setOrigin(0.5);
-      this.setDisplaySizeFromTextureScale(dot, key, 0.65);
+      this.setDisplaySizeFromTextureScale(dot, key, 0.85);
       dot.setInteractive({ useHandCursor: true });
       dot.on('pointerover', () => {
         if (this.painting) return;
@@ -427,7 +427,7 @@ export class ColorScene extends Phaser.Scene {
 
     const eraser = this.add.container(0, 0).setDepth(42);
     const eraserImg = this.add.image(0, 0, PALETTE_ASSET_KEYS.eraser).setOrigin(0.5);
-    this.setDisplaySizeFromTextureScale(eraserImg, PALETTE_ASSET_KEYS.eraser, 0.66);
+    this.setDisplaySizeFromTextureScale(eraserImg, PALETTE_ASSET_KEYS.eraser, 0.85);
     eraser.add([eraserImg]);
     eraser.setSize(eraserImg.displayWidth, eraserImg.displayHeight);
     eraser.setInteractive(new Phaser.Geom.Rectangle(-eraser.width / 2, -eraser.height / 2, eraser.width, eraser.height), Phaser.Geom.Rectangle.Contains);
@@ -733,16 +733,16 @@ export class ColorScene extends Phaser.Scene {
     const bh = Math.min(maxH, maxWBase / ratio);
     const bw = bh * ratio * widthScale;
 
-    const yOffset = Math.min(54, margin);
+    const yOffset = Math.min(100, margin + 30);
     this.boardRect.setTo((w - bw) / 2, (h - bh) / 2 + yOffset, bw, bh);
 
     const pad = Math.max(18, bw * 0.06);
     this.boardInnerRect.setTo(this.boardRect.x + pad, this.boardRect.y + pad, this.boardRect.width - pad * 2, this.boardRect.height - pad * 2);
 
-    // Give more space to the character (bigger drawing area).
-    const paletteH = Math.max(72, this.boardInnerRect.height * 0.08);
-    this.paletteRect.setTo(this.boardInnerRect.x, this.boardInnerRect.bottom - paletteH, this.boardInnerRect.width, paletteH);
-    this.contentRect.setTo(this.boardInnerRect.x, this.boardInnerRect.y, this.boardInnerRect.width, this.boardInnerRect.height - paletteH);
+    // Palette on the right, Character on the left
+    const paletteW = Math.max(110, this.boardInnerRect.width * 0.22);
+    this.paletteRect.setTo(this.boardInnerRect.right - paletteW, this.boardInnerRect.y, paletteW, this.boardInnerRect.height);
+    this.contentRect.setTo(this.boardInnerRect.x, this.boardInnerRect.y, this.boardInnerRect.width - paletteW, this.boardInnerRect.height);
 
     this.createBoardImageIfNeeded();
     if (this.boardImage) {
@@ -795,7 +795,7 @@ export class ColorScene extends Phaser.Scene {
     // this allows `characterLiftY` to visually move the character upward without clipping.
     const pad = 0.03;
     const baseS = Math.min((r.width * (1 - pad * 2)) / totalWBase, (r.height * (1 - pad * 2)) / totalHBase);
-    const s = baseS * 1.18; // tăng thêm kích thước toàn bộ bộ phận
+    const s = baseS * 1.24; // tăng thêm kích thước toàn bộ bộ phận
 
     const hatW = hatWBase * s;
     const hatH = hatHBase * s;
@@ -820,7 +820,7 @@ export class ColorScene extends Phaser.Scene {
     // If the character already touches the top of `contentRect`, `characterLiftY` appears to do nothing
     // because it's clamped to `r.y`. Allow lifting into the board frame area.
     const minTop = this.boardRect.y + 12;
-    const maxTop = this.paletteRect.y - totalH - 6;
+    const maxTop = this.contentRect.bottom - totalH - 12;
     const top = Phaser.Math.Clamp(unclampedTop, minTop, maxTop);
 
     const hatCy = top + hatH / 2;
@@ -828,7 +828,7 @@ export class ColorScene extends Phaser.Scene {
     const neckCy = headCy + headD / 2 + jointGap + neckH / 2;
     const bodyTopY = neckCy + neckH / 2 + jointGap;
     const bodyCy = bodyTopY + body / 2;
-    const armCy = bodyTopY - jointGap - armH / 2 + 42;
+    const armCy = bodyTopY - jointGap - armH / 2 + 50;
     const legTopY = bodyCy + body / 2 + jointGap;
     const legCy = legTopY + legH / 2;
     const shoeTopY = legCy + legH / 2 + jointGap;
@@ -883,7 +883,7 @@ export class ColorScene extends Phaser.Scene {
     const pr = this.paletteRect;
     const cx = pr.centerX;
 
-    const gap = 28; // khoảng cách giữa các item màu
+    const gap = 20; // khoảng cách dọc giữa các item màu
     const items: Array<{ w: number; h: number; setPos: (x: number, y: number) => void }> = [];
 
     this.paletteDots.forEach((d) => {
@@ -901,19 +901,15 @@ export class ColorScene extends Phaser.Scene {
       });
     }
 
-    const totalW = items.reduce((sum, it) => sum + it.w, 0) + gap * Math.max(0, items.length - 1);
-    const maxH = items.reduce((m, it) => Math.max(m, it.h), 0);
-    // Note: `paletteRect.bottom` is the INNER board bottom (it includes board padding),
-    // so shifting by a few px can look like "no change". Anchor to the board frame bottom instead.
-    const bottomPad = 2; // cách đáy board 2px
-    const bottomAnchorY = this.boardRect.bottom;
-    const cy = Math.round(bottomAnchorY - bottomPad - maxH / 2 + this.paletteLiftY); // snap pixel để dễ thấy thay đổi
+    const totalH = items.reduce((sum, it) => sum + it.h, 0) + gap * Math.max(0, items.length - 1);
 
-    let x = cx - totalW / 2;
+    // Center vertically in the palette strip
+    let y = pr.centerY - totalH / 2;
+
     items.forEach((it, idx) => {
-      const px = Math.round(x + it.w / 2);
-      it.setPos(px, cy);
-      x += it.w + (idx === items.length - 1 ? 0 : gap);
+      const py = Math.round(y + it.h / 2);
+      it.setPos(cx, py);
+      y += it.h + (idx === items.length - 1 ? 0 : gap);
     });
 
     this.updatePaletteRings();
