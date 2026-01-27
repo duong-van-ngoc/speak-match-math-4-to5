@@ -45,6 +45,12 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   // Counting voices
   voice_count_1: { src: `${BASE_PATH}1.mp3`, volume: 1.0 },
   voice_count_2: { src: `${BASE_PATH}2.mp3`, volume: 1.0 },
+
+  // Shape voices
+  voice_shape_circle: { src: `${BASE_PATH}t.mp3`, volume: 1.0 },
+  voice_shape_triangle: { src: `${BASE_PATH}tg.mp3`, volume: 1.0 },
+  voice_shape_rectangle: { src: `${BASE_PATH}cn.mp3`, volume: 1.0 },
+  voice_shape_square: { src: `${BASE_PATH}v.mp3`, volume: 1.0 },
 };
 
 const GUIDE_VOICE_KEYS = [
@@ -147,7 +153,7 @@ class AudioManager {
       if (ctx && ctx.state === 'suspended') {
         try {
           await ctx.resume();
-        } catch {}
+        } catch { }
       }
 
       if (isIOS()) {
@@ -190,7 +196,7 @@ class AudioManager {
         setTimeout(() => {
           try {
             sound.stop(sid as any);
-          } catch {}
+          } catch { }
           sound.volume(originalVol);
           resolve();
         }, 30);

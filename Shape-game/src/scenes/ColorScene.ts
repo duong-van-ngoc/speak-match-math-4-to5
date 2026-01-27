@@ -28,6 +28,8 @@ type PaintShape = {
   coverageMarkedCount: number;
 };
 
+const PAINT_ORDER: ShapeKind[] = ['circle', 'triangle', 'rectangle', 'square'];
+
 export class ColorScene extends Phaser.Scene {
   private boardFallbackGfx?: Phaser.GameObjects.Graphics;
   private boardImage?: Phaser.GameObjects.Image;
@@ -67,6 +69,8 @@ export class ColorScene extends Phaser.Scene {
   private readonly guideHandIdleMs = 10000;
   private guideHandMotionToken = 0;
 
+  private currentStepIndex = 0;
+
   constructor() {
     super('ColorScene');
   }
@@ -83,9 +87,10 @@ export class ColorScene extends Phaser.Scene {
     this.painting = false;
     this.activePointerId = undefined;
     this.currentPaintTarget = undefined;
-    this.paletteSelectedIndex = 2;
+    this.paletteSelectedIndex = -1;
     this.selectedTool = 'color';
-    this.selectedColor = this.getPaletteColors()[this.paletteSelectedIndex];
+    this.selectedColor = undefined;
+    this.currentStepIndex = 0;
 
     this.boardImage?.destroy();
     this.boardImage = undefined;
@@ -144,7 +149,12 @@ export class ColorScene extends Phaser.Scene {
 
   private playGuideVoice() {
     AudioManager.stopGuideVoices();
-    AudioManager.playWhenReady('voice_guide_21');
+    const kind = PAINT_ORDER[this.currentStepIndex];
+    if (kind === 'circle') AudioManager.playWhenReady('voice_shape_circle');
+    else if (kind === 'triangle') AudioManager.playWhenReady('voice_shape_triangle');
+    else if (kind === 'rectangle') AudioManager.playWhenReady('voice_shape_rectangle');
+    else if (kind === 'square') AudioManager.playWhenReady('voice_shape_square');
+    else AudioManager.playWhenReady('voice_guide_21');
   }
 
   private playCorrectSound() {
@@ -174,12 +184,14 @@ export class ColorScene extends Phaser.Scene {
   }
 
   private getHintTargetColor(): number | undefined {
-    const next = this.shapes.find((s) => !s.painted);
+    const currentKind = PAINT_ORDER[this.currentStepIndex];
+    const next = this.shapes.find((s) => s.kind === currentKind && !s.painted);
     return next?.targetColor;
   }
 
   private getHintTargetShape(): PaintShape | undefined {
-    return this.shapes.find((s) => !s.painted);
+    const currentKind = PAINT_ORDER[this.currentStepIndex];
+    return this.shapes.find((s) => s.kind === currentKind && !s.painted);
   }
 
   private shouldGuidePaint(): boolean {
@@ -410,12 +422,6 @@ export class ColorScene extends Phaser.Scene {
         if (expected !== undefined && picked === expected) {
           // Switch guidance from "pick a color" -> "paint the next shape" immediately.
           this.hideGuideHand();
-          // Only auto-show guidance for the very first shape (count == 0).
-          // For subsequent shapes, only show if idle or wrong.
-          if (this.shapes.every((s) => !s.painted)) {
-            this.updateGuideHandPosition();
-            this.showGuideHand();
-          }
         }
 
         this.updatePaletteRings();
@@ -478,7 +484,8 @@ export class ColorScene extends Phaser.Scene {
   private onPointerDown(pointer: Phaser.Input.Pointer) {
     this.noteInteraction();
     if (this.painting) return;
-    const hit = this.shapes.find((s) => !s.painted && this.containsPointByBounds(s, pointer.x, pointer.y));
+    const currentKind = PAINT_ORDER[this.currentStepIndex];
+    const hit = this.shapes.find((s) => !s.painted && s.kind === currentKind && this.containsPointByBounds(s, pointer.x, pointer.y));
     if (!hit) return;
 
     // If the hand is guiding painting, hide it as soon as the kid starts painting the correct next shape.
@@ -700,6 +707,22 @@ export class ColorScene extends Phaser.Scene {
 
     this.playCorrectSound();
 
+    // Check if current step is done
+    const currentKind = PAINT_ORDER[this.currentStepIndex];
+    const remainingOfKind = this.shapes.some((s) => s.kind === currentKind && !s.painted);
+    if (!remainingOfKind) {
+      // Advance step
+      if (this.currentStepIndex < PAINT_ORDER.length - 1) {
+        this.currentStepIndex++;
+        this.time.delayedCall(600, () => {
+          if (!this.scene.isActive()) return;
+          this.playGuideVoice();
+          // Update guide hand key color etc if needed
+          this.updateGuideHandPosition();
+        });
+      }
+    }
+
     if (this.shapes.every((s) => s.painted)) {
       this.time.delayedCall(450, () => {
         this.game.events.emit(FLOW_GO_COUNT, {});
@@ -723,7 +746,7 @@ export class ColorScene extends Phaser.Scene {
     const margin = minSide * (isSmallScreen ? 0.03 : 0.06);
 
     // Only shrink width (not height).
-    const widthScale = isSmallScreen ? 0.98 : 0.9;
+    const widthScale = isSmallScreen ? 0.98 : 1.05;
     const maxWBase = w - margin * 2;
     // Shrink max height slightly to make the board smaller vertically
     const maxH = (h - margin * 2) * 0.92;
