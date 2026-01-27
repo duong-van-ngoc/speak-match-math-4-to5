@@ -440,20 +440,23 @@ export class CountConnectScene extends Phaser.Scene {
   private layoutBoard() {
     const w = this.scale.width;
     const h = this.scale.height;
-    // Make the board slightly smaller to give more breathing room around it.
-    const margin = Math.min(w, h) * 0.085;
+    // On small screens, make the board occupy more of the viewport to reduce downscale blur.
+    const minSide = Math.min(w, h);
+    const isSmallScreen = minSide < 720;
+    const margin = minSide * (isSmallScreen ? 0.03 : 0.06);
 
     // Only shrink width (not height).
-    const widthScale = 0.9;
+    const widthScale = isSmallScreen ? 0.98 : 1.05;
     const maxWBase = w - margin * 2;
-    const maxH = h - margin * 2;
+    // Shrink max height slightly to make the board smaller vertically
+    const maxH = (h - margin * 2) * 0.92;
 
     const ratio = this.getBoardAssetRatio() ?? 1.45;
     // Fit by ratio first, then squash width only (keeps height unchanged).
     const bh = Math.min(maxH, maxWBase / ratio);
     const bw = bh * ratio * widthScale;
 
-    const yOffset = Math.min(54, margin);
+    const yOffset = Math.min(85, margin + 10);
     this.boardRect.setTo((w - bw) / 2, (h - bh) / 2 + yOffset, bw, bh);
 
     const pad = Math.max(27, bw * 0.06);

@@ -529,25 +529,29 @@ export default class CircleMarkScene extends Phaser.Scene {
 
         const w = this.scale.width;
         const h = this.scale.height;
-        const maxW = Math.min(1650, w * 0.92);
-        const maxH = Math.min(810, h * 0.8);
+        // On small screens, make the board occupy more of the viewport to reduce downscale blur.
+        const minSide = Math.min(w, h);
+        const isSmallScreen = minSide < 720;
+        const margin = minSide * (isSmallScreen ? 0.03 : 0.06);
 
-        const ratio = this.getBoardAssetRatio();
-        let boardW = maxW;
-        let boardH = maxH;
+        // Only shrink width (not height).
+        const widthScale = isSmallScreen ? 1.0 : 1.35;
+        const maxWBase = w - margin * 2;
+        // Shrink max height slightly to make the board smaller vertically
+        const maxH = (h - margin * 2) * 0.92;
 
-        if (ratio) {
-            boardH = boardW / ratio;
-            if (boardH > maxH) {
-                boardH = maxH;
-                boardW = boardH * ratio;
-            }
-        }
+        const ratio = this.getBoardAssetRatio() ?? 1.45;
+        // Fit by ratio first, then squash width only (keeps height unchanged).
+        const bh = Math.min(maxH, maxWBase / ratio);
+        const bw = bh * ratio * widthScale;
 
-        const boardX = (w - boardW) / 2;
-        const boardY = Math.max(120, h * 0.16);
+        const yOffset = Math.min(100, margin + 30);
+        this.boardRect.setTo((w - bw) / 2, (h - bh) / 2 + yOffset, bw, bh);
 
-        this.boardRect.setTo(boardX, boardY, boardW, boardH);
+        const boardW = this.boardRect.width;
+        const boardH = this.boardRect.height;
+        const boardX = this.boardRect.x;
+        const boardY = this.boardRect.y;
 
         const padX = boardW * 0.05;
         const padTop = boardH * 0.15;

@@ -422,6 +422,11 @@ export class ColorScene extends Phaser.Scene {
         if (expected !== undefined && picked === expected) {
           // Switch guidance from "pick a color" -> "paint the next shape" immediately.
           this.hideGuideHand();
+          // Force show hand ONLY for the very first shape to clear up confusion.
+          if (this.currentStepIndex === 0 && this.shapes.every((s) => !s.painted)) {
+            this.updateGuideHandPosition();
+            this.showGuideHand();
+          }
         }
 
         this.updatePaletteRings();
@@ -484,8 +489,7 @@ export class ColorScene extends Phaser.Scene {
   private onPointerDown(pointer: Phaser.Input.Pointer) {
     this.noteInteraction();
     if (this.painting) return;
-    const currentKind = PAINT_ORDER[this.currentStepIndex];
-    const hit = this.shapes.find((s) => !s.painted && s.kind === currentKind && this.containsPointByBounds(s, pointer.x, pointer.y));
+    const hit = this.shapes.find((s) => !s.painted && this.containsPointByBounds(s, pointer.x, pointer.y));
     if (!hit) return;
 
     // If the hand is guiding painting, hide it as soon as the kid starts painting the correct next shape.
@@ -680,7 +684,11 @@ export class ColorScene extends Phaser.Scene {
   private completeShape(shape: PaintShape) {
     if (shape.painted) return;
     const finalColor = shape.usedColor;
-    const isCorrect = finalColor !== undefined && finalColor === shape.targetColor;
+    const isCorrectColor = finalColor !== undefined && finalColor === shape.targetColor;
+    const currentKind = PAINT_ORDER[this.currentStepIndex];
+    const isCorrectOrder = shape.kind === currentKind;
+
+    const isCorrect = isCorrectColor && isCorrectOrder;
 
     if (!isCorrect) {
       this.playWrongSound();
@@ -708,8 +716,8 @@ export class ColorScene extends Phaser.Scene {
     this.playCorrectSound();
 
     // Check if current step is done
-    const currentKind = PAINT_ORDER[this.currentStepIndex];
-    const remainingOfKind = this.shapes.some((s) => s.kind === currentKind && !s.painted);
+    const checkKind = PAINT_ORDER[this.currentStepIndex];
+    const remainingOfKind = this.shapes.some((s) => s.kind === checkKind && !s.painted);
     if (!remainingOfKind) {
       // Advance step
       if (this.currentStepIndex < PAINT_ORDER.length - 1) {
@@ -756,7 +764,7 @@ export class ColorScene extends Phaser.Scene {
     const bh = Math.min(maxH, maxWBase / ratio);
     const bw = bh * ratio * widthScale;
 
-    const yOffset = Math.min(100, margin + 30);
+    const yOffset = Math.min(70, margin + 10);
     this.boardRect.setTo((w - bw) / 2, (h - bh) / 2 + yOffset, bw, bh);
 
     const pad = Math.max(18, bw * 0.06);
