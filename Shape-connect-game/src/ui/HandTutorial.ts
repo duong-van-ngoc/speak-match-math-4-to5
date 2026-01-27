@@ -11,7 +11,7 @@ export class HandTutorial {
     constructor(scene: Phaser.Scene) {
         this.scene = scene;
         // Scale 0.7 as requested ("to lên 1 chút" from 0.5)
-        this.hand = this.scene.add.image(0, 0, 'guide_hand').setDepth(100).setVisible(false).setAlpha(0).setScale(0.7);
+        this.hand = this.scene.add.image(0, 0, 'guide_hand').setDepth(9999).setVisible(false).setAlpha(0).setScale(0.7);
         this.targetFn = () => null;
     }
 
@@ -64,7 +64,7 @@ export class HandTutorial {
         if (!target) return;
 
         this.isShowing = true;
-        this.hand.setVisible(true).setAlpha(1);
+        this.hand.setVisible(true).setAlpha(1).setDepth(9999);
         this.scene.tweens.killTweensOf(this.hand);
 
         if (target.type === 'click') {

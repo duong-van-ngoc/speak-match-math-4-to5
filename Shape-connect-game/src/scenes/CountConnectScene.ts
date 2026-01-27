@@ -9,10 +9,7 @@ import { HandTutorial } from '../ui/HandTutorial';
 export class CountConnectScene extends Phaser.Scene {
   private shapes: Phaser.GameObjects.Container[] = [];
   private targets: Phaser.GameObjects.Zone[] = [];
-  private connections: Map<number, Phaser.GameObjects.Graphics> = new Map(); // id -> line graphics
-  private activeLine?: Phaser.GameObjects.Graphics;
-  private draggingSource?: { id: number, x: number, y: number }; // x,y = pointer start position
-  private currentDragPath: { x: number, y: number }[] = [];
+  private completedShapes: Set<number> = new Set();
   private handTutorial?: HandTutorial;
   private isReplay = false;
 
@@ -32,22 +29,18 @@ export class CountConnectScene extends Phaser.Scene {
   create() {
     this.shapes = [];
     this.targets = [];
-    this.connections.clear();
-    this.activeLine = this.add.graphics().setDepth(100);
+    this.completedShapes.clear();
 
     this.addBackground();
     this.createLayout();
 
     this.playGuideVoice();
 
-    this.input.on('pointermove', this.onPointerMove, this);
-    this.input.on('pointerup', this.onPointerUp, this);
-
     // Setup Tutorial
     this.handTutorial = new HandTutorial(this);
     this.handTutorial.setTarget(() => {
       // Find unconnected valid shape (1 or 2)
-      const targetId = (!this.connections.has(1)) ? 1 : (!this.connections.has(2) ? 2 : null);
+      const targetId = (!this.completedShapes.has(1)) ? 1 : (!this.completedShapes.has(2) ? 2 : null);
       if (!targetId) return null;
 
       const shape = this.shapes.find(s => s.getData('id') === targetId);
@@ -97,10 +90,10 @@ export class CountConnectScene extends Phaser.Scene {
     }
 
     const bannerText = this.add.image(w / 2, bannerY, BOARD_ASSET_KEYS.bannerTextLevel2).setOrigin(0.5);
-    // Scale banner text to fit within banner width (smaller as requested)
+    // Scale banner text to fit within banner width
     const bannerWidth = Math.min(w * 0.8, 1100);
-    const maxTextWidth = bannerWidth * 0.75;
-    const maxTextHeight = 100 * 0.6;
+    const maxTextWidth = bannerWidth * 0.9;
+    const maxTextHeight = 100 * 0.8;
 
     const scale = Math.min(maxTextWidth / bannerText.width, maxTextHeight / bannerText.height);
     bannerText.setScale(scale);
@@ -240,128 +233,97 @@ export class CountConnectScene extends Phaser.Scene {
       this.game.canvas.style.cursor = 'default';
     });
 
-    container.on('dragstart', (pointer: Phaser.Input.Pointer) => {
+    container.on('dragstart', (_pointer: Phaser.Input.Pointer) => {
       this.handTutorial?.onInteraction();
       this.game.canvas.style.cursor = 'grabbing';
-      if (this.connections.has(id)) return; // Already connected
-      // Start line from pointer position to allow "edge" dragging
-      this.draggingSource = { id, x: pointer.x, y: pointer.y };
-      this.currentDragPath = [{ x: pointer.x, y: pointer.y }];
+      this.children.bringToTop(container);
+    });
+
+    container.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+      container.x = dragX;
+      container.y = dragY;
     });
 
     container.on('dragend', () => {
       this.game.canvas.style.cursor = 'default';
-    });
-
-    container.on('drag', (pointer: Phaser.Input.Pointer) => {
-      if (!this.draggingSource) return;
-      this.updateDragLine(pointer);
-    });
-
-    container.on('dragend', () => {
-      if (!this.draggingSource) return;
-      // Logic handled in onPointerUp usually, but container dragend might be separate
-      // Actually I'll use pointerUp global handler for drop check to be easier with zones
+      this.checkDrop(container);
     });
 
     this.shapes.push(container);
   }
 
-  private onPointerMove(pointer: Phaser.Input.Pointer) {
-    if (this.draggingSource) {
-      this.updateDragLine(pointer);
-    }
-  }
+  private checkDrop(shape: Phaser.GameObjects.Container) {
+    const shapeId = shape.getData('id');
 
-  private updateDragLine(pointer: Phaser.Input.Pointer) {
-    if (!this.activeLine || !this.draggingSource) return;
+    // Tìm target mà shape đang chạm vào (dùng center point của shape check với bounds target)
+    const centerX = shape.x;
+    const centerY = shape.y;
 
-    // Add point to path (throttle if needed, but simple push is okay for this scale)
-    // Only add if distance is meaningful to avoid massive arrays? 
-    // For "smooth" feel, just add.
-    const last = this.currentDragPath[this.currentDragPath.length - 1];
-    if (!last || Phaser.Math.Distance.Between(last.x, last.y, pointer.x, pointer.y) > 2) {
-      this.currentDragPath.push({ x: pointer.x, y: pointer.y });
-    }
-
-    this.activeLine.clear();
-    this.activeLine.lineStyle(4, 0x333333, 1);
-
-    // Draw freehand path
-    this.activeLine.beginPath();
-    this.activeLine.moveTo(this.currentDragPath[0].x, this.currentDragPath[0].y);
-    for (let i = 1; i < this.currentDragPath.length; i++) {
-      this.activeLine.lineTo(this.currentDragPath[i].x, this.currentDragPath[i].y);
-    }
-    this.activeLine.strokePath();
-  }
-
-  private onPointerUp(pointer: Phaser.Input.Pointer) {
-    if (!this.draggingSource) return;
-
-    const sourceId = this.draggingSource.id;
-    this.activeLine?.clear();
-    this.draggingSource = undefined;
-
-    // Check drop target
-    // Simple collision check with targets
-    const hitTarget = this.targets.find(t => Phaser.Geom.Rectangle.Contains(t.getBounds(), pointer.x, pointer.y));
-
-    const sourceContainer = this.shapes.find(s => s.getData('id') === sourceId);
+    const hitTarget = this.targets.find(t => Phaser.Geom.Rectangle.Contains(t.getBounds(), centerX, centerY));
 
     if (hitTarget) {
       const targetId = hitTarget.getData('id');
-      if (this.isValidConnection(sourceId, targetId)) {
-        // Adjust target point for visual "dashed" area - unused currently
-        // (tx, ty logic removed to fix build error)
-
-        // Create permanent connection using the USER'S PATH
-        const finalPath = [...this.currentDragPath]; // Copy path
-
-        // Ensure the last point connects nicely to target visual center if desired, 
-        // OR just keep user's path. User said "alpha theo drog ve cua be".
-        // Let's just use the path as is.
-        // DO NOT add extra points, just use what user drew
-        // finalPath.push({ x: tx, y: ty });
-
-        this.createPermanentConnection(sourceId, finalPath);
+      if (this.isValidMatch(shapeId, targetId)) {
+        // Correct
         AudioManager.play('sfx_correct');
         AudioManager.playCorrectAnswer();
-        // Correct Animation: Pop
-        if (sourceContainer) {
-          this.tweens.add({
-            targets: sourceContainer,
-            scaleX: 1.2,
-            scaleY: 1.2,
-            duration: 200,
-            yoyo: true,
-            ease: 'Back.easeOut'
-          });
-        }
+
+        // Snap to target
+        shape.setPosition(hitTarget.x, hitTarget.y);
+        shape.disableInteractive();
+        this.completedShapes.add(shapeId);
+
+        // Correct Animation
+        this.tweens.add({
+          targets: shape,
+          scaleX: 1.2,
+          scaleY: 1.2,
+          duration: 200,
+          yoyo: true,
+          ease: 'Back.easeOut'
+        });
+
         this.checkWin();
       } else {
+        // Wrong Target
         AudioManager.play('sfx_wrong');
-        // Wrong Animation: Shake
-        if (sourceContainer) {
-          this.tweens.add({
-            targets: sourceContainer,
-            x: sourceContainer.x + 10,
-            duration: 50,
-            yoyo: true,
-            repeat: 3,
-            ease: 'Sine.easeInOut'
-          });
-        }
+        this.tweens.add({
+          targets: shape,
+          x: shape.input!.dragStartX,
+          y: shape.input!.dragStartY,
+          duration: 300,
+          ease: 'Cubic.out'
+        });
+
+        // Shake logic
+        this.tweens.add({
+          targets: shape,
+          x: shape.input!.dragStartX + 10,
+          duration: 50,
+          yoyo: true,
+          repeat: 3,
+          ease: 'Sine.easeInOut',
+          delay: 300 // wait for return
+        });
+
         this.handTutorial?.showNow();
       }
+    } else {
+      // No Target - just return
+      this.tweens.add({
+        targets: shape,
+        x: shape.input!.dragStartX,
+        y: shape.input!.dragStartY,
+        duration: 300,
+        ease: 'Cubic.out'
+      });
     }
   }
 
-  private isValidConnection(shapeId: number, targetId: number): boolean {
+  private isValidMatch(shapeId: number, targetId: number): boolean {
     // 100 = Rect (Left). 200 = Square (Right).
     // Shapes: 1 (L) -> Rect
     // Shapes: 2 (R) -> Square
-    // Shapes 3 & 4 are WRONG (distractors)
     if (shapeId === 3 || shapeId === 4) return false;
 
     if (targetId === 100) return (shapeId === 1);
@@ -369,49 +331,10 @@ export class CountConnectScene extends Phaser.Scene {
     return false;
   }
 
-  private createPermanentConnection(shapeId: number, pathPoints: { x: number, y: number }[]) {
-    const shape = this.shapes.find(s => s.getData('id') === shapeId);
-    if (!shape) return;
-
-    const gfx = this.add.graphics().setDepth(50);
-    gfx.lineStyle(4, 0x000000, 1);
-    gfx.lineStyle(4, 0x374151, 1);
-
-    if (pathPoints.length > 0) {
-      // Simplify points to reduce jitter ("làm mượt hơn")
-      const simplified: { x: number, y: number }[] = [];
-      simplified.push(pathPoints[0]);
-
-      let lastP = pathPoints[0];
-      // Filter intermediate points
-      for (let i = 1; i < pathPoints.length - 1; i++) {
-        const p = pathPoints[i];
-        if (Phaser.Math.Distance.Between(lastP.x, lastP.y, p.x, p.y) > 20) {
-          simplified.push(p);
-          lastP = p;
-        }
-      }
-      // Always add the very last point from user input
-      if (pathPoints.length > 1) {
-        simplified.push(pathPoints[pathPoints.length - 1]);
-      }
-
-      const points = simplified.map(p => new Phaser.Math.Vector2(p.x, p.y));
-      const spline = new Phaser.Curves.Spline(points);
-      // Increase resolution for smoothness
-      spline.draw(gfx, points.length * 12);
-    }
-
-    this.connections.set(shapeId, gfx);
-
-    // Disable interaction based on drag logic check?
-    // Since drag start checks connections.has(id), it's fine.
-    shape.setAlpha(0.7); // Visual feedback
-  }
 
   private checkWin() {
     // Only need 2 correct connections now (Shape 1 and Shape 2)
-    if (this.connections.size === 2) {
+    if (this.completedShapes.size === 2) {
       this.handTutorial?.stop();
       this.time.delayedCall(1000, () => {
         this.game.events.emit(FLOW_GO_END, {});

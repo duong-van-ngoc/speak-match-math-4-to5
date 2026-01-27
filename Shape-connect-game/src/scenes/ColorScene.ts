@@ -92,8 +92,8 @@ export class ColorScene extends Phaser.Scene {
     // Scale banner text to fit within banner width
     // Banner width is controlled above: Math.min(w * 0.95, 1600)
     const bannerWidth = Math.min(w * 0.95, 1500);
-    const maxTextWidth = bannerWidth * 0.9;
-    const maxTextHeight = 110 * 0.85; // 85% of banner height
+    const maxTextWidth = bannerWidth * 0.95;
+    const maxTextHeight = 115 * 0.85; // 90% of banner height
 
     const scale = Math.min(maxTextWidth / bannerText.width, maxTextHeight / bannerText.height);
     bannerText.setScale(scale);
