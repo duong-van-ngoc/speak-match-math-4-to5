@@ -39,8 +39,11 @@ function setupGlobalAudioUnlock() {
   if (win[AUDIO_UNLOCKED_KEY]) return;
 
   const handler = () => unlockAudioFromUserGesture();
+  const targets: EventTarget[] = [document, window];
   (["pointerdown", "touchstart", "mousedown", "keydown"] as const).forEach((ev) => {
-    document.addEventListener(ev, handler, { once: true, capture: true } as AddEventListenerOptions);
+    targets.forEach((target) => {
+      target.addEventListener(ev, handler, { once: true, capture: true } as AddEventListenerOptions);
+    });
   });
 }
 
@@ -367,6 +370,7 @@ export const sdk = irukaGame.createGameSdk({
     });
   },
   onStart() {
+    unlockAudioFromUserGesture();
     gamePhaser?.scene.resume("GameScene");
     gamePhaser?.scene.resume("EndGameScene");
   },
