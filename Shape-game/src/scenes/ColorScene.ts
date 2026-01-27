@@ -43,7 +43,7 @@ export class ColorScene extends Phaser.Scene {
 
   private painting = false;
   private activePointerId?: number;
-  private brushRadius = 28;
+  private brushRadius = 45;
   private currentPaintTarget?: PaintShape;
   // "Tô từ từ đến full": require very high coverage before accepting.
   private readonly coverageRequiredRatio = 0.98;
