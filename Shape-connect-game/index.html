@@ -96,21 +96,12 @@
         nextBtn.style.display = display;
       };
 
-      // Hàm set background viewport cho game-container, tránh zoom to
+      // Hàm set background viewport cho game-container - DISABLED for transparency
       (window).setRandomGameViewportBg = function () {
         const container = document.getElementById('game-container');
         if (!container) return;
-        // Ví dụ chọn ngẫu nhiên 1 số background (nếu platform không override)
-        const bgs = [
-          'url(assets/bg_1.png)',
-          'url(assets/bg_2.png)',
-          'url(assets/bg_3.png)'
-        ];
-        const idx = Math.floor(Math.random() * bgs.length);
-        container.style.backgroundImage = bgs[idx];
-        container.style.backgroundRepeat = 'no-repeat';
-        container.style.backgroundPosition = 'center center';
-        container.style.backgroundSize = 'contain'; // không zoom quá
+        container.style.background = 'transparent';
+        container.style.backgroundImage = 'none';
       };
 
       // Log vị trí & kích thước sau khi layout xong

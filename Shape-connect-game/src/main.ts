@@ -83,6 +83,10 @@ function setViewportBg(url: string, position: string = "center center") {
   document.body.style.backgroundSize = "cover";
   document.body.style.backgroundPosition = position;
   document.body.style.boxSizing = "border-box";
+
+  // Ensure we don't force transparent anymore on body
+  // But game-container might need to be transparent or inherit? 
+  // Usually body bg is enough.
 }
 
 export function setRandomIntroViewportBg() {

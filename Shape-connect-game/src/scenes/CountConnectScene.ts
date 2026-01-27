@@ -79,8 +79,8 @@ export class CountConnectScene extends Phaser.Scene {
 
   private addBackground() {
     const w = this.scale.width;
-    const h = this.scale.height;
-    this.add.image(w / 2, h / 2, 'bg1').setDisplaySize(w, h).setDepth(-10);
+    // const h = this.scale.height;
+    // this.add.image(w / 2, h / 2, 'bg1').setDisplaySize(w, h).setDepth(-10);
 
     // Banner
     const bannerY = 90;

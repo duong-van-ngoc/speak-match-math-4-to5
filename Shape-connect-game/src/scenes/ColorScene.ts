@@ -75,11 +75,10 @@ export class ColorScene extends Phaser.Scene {
 
   private addBackground() {
     const w = this.scale.width;
-    const h = this.scale.height;
+    // const h = this.scale.height; // unused
 
-    // Background based on existing logic or generic image
-    // Using a simple color or existing bg
-    this.add.image(w / 2, h / 2, 'bg1').setDisplaySize(w, h).setDepth(-10);
+    // Background removed for transparency
+    // this.add.image(w / 2, h / 2, 'bg1').setDisplaySize(w, h).setDepth(-10);
 
     // Banner
     const bannerY = 90;
