@@ -157,9 +157,15 @@ export class ColorScene extends Phaser.Scene {
     else AudioManager.playWhenReady('voice_guide_21');
   }
 
-  private playCorrectSound() {
+  private playCorrectSound(onComplete?: () => void) {
+    AudioManager.stopAllVoicePrompts();
     AudioManager.play('sfx_correct');
-    AudioManager.playCorrectAnswer?.();
+    const randomIndex = Math.floor(Math.random() * 4) + 1;
+    const key = `correct_answer_${randomIndex}`;
+    AudioManager.play(key);
+    if (onComplete) {
+      AudioManager.onceEnded(key, onComplete);
+    }
   }
 
   private playWrongSound() {
@@ -713,30 +719,41 @@ export class ColorScene extends Phaser.Scene {
     shape.fillGfx.fillStyle(shape.targetColor, 1);
     shape.fillGfx.fillRect(b.x, b.y, b.width, b.height);
 
-    this.playCorrectSound();
-
     // Check if current step is done
     const checkKind = PAINT_ORDER[this.currentStepIndex];
     const remainingOfKind = this.shapes.some((s) => s.kind === checkKind && !s.painted);
-    if (!remainingOfKind) {
+
+    if (remainingOfKind) {
+      // Not finished with this group yet. Just play sound, user can continue immediately.
+      this.playCorrectSound();
+      return;
+    }
+
+    // Finished this group (or entire game).
+    // Wait for the praise voice to finish before introducing the next shape or ending.
+    this.playCorrectSound(() => {
+      if (!this.scene.isActive()) return;
+
+      if (this.shapes.every((s) => s.painted)) {
+        this.time.delayedCall(200, () => {
+          this.game.events.emit(FLOW_GO_COUNT, {});
+        });
+        return;
+      }
+
       // Advance step
       if (this.currentStepIndex < PAINT_ORDER.length - 1) {
         this.currentStepIndex++;
-        this.time.delayedCall(600, () => {
+        this.time.delayedCall(300, () => {
           if (!this.scene.isActive()) return;
           this.playGuideVoice();
           // Update guide hand key color etc if needed
           this.updateGuideHandPosition();
         });
       }
-    }
+    });
 
-    if (this.shapes.every((s) => s.painted)) {
-      this.time.delayedCall(450, () => {
-        this.game.events.emit(FLOW_GO_COUNT, {});
-      });
-      return;
-    }
+    // Remove old fall-through logic since we handle game-end inside the callback now.
   }
 
   private containsPointByBounds(shape: PaintShape, px: number, py: number): boolean {
