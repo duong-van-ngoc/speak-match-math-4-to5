@@ -1,0 +1,23 @@
+{
+    "name": "@iruka/voice-session-client",
+    "version": "1.0.0",
+    "description": "TypeScript client SDK for Iruka Voice Evaluation API",
+    "main": "voice-session-client.ts",
+    "types": "voice-session-client.ts",
+    "scripts": {
+        "build": "tsc",
+        "test": "echo \"No tests yet\""
+    },
+    "keywords": [
+        "iruka",
+        "voice",
+        "evaluation",
+        "pronunciation",
+        "education"
+    ],
+    "author": "Iruka Education Team",
+    "license": "PROPRIETARY",
+    "devDependencies": {
+        "typescript": "^5.0.0"
+    }
+}
