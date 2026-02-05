@@ -33,8 +33,8 @@ export default class EndGameScene extends Phaser.Scene {
         AudioManager.loadAll();
         AudioManager.play('complete');
 
-        // SDK: Chốt attempt khi vào màn EndGame
-        gameSDK.finalizeAttempt();
+        // SDK: Đã finalize ở màn ConnectSixScene hoặc khi Quit.
+        // KHÔNG gọi finalize ở đây để tránh bị tính là 2 attempt.
 
         this.time.delayedCall(GameConstants.ENDGAME.ANIM.FIREWORKS_DELAY, () => {
             AudioManager.play('fireworks');
@@ -113,20 +113,20 @@ export default class EndGameScene extends Phaser.Scene {
                 this.stopConfetti();
 
                 // SDK: Gửi COMPLETE cho Game Hub
-                const state = window.irukaGameState || {};
-                const timeMs = state.startTime ? Date.now() - state.startTime : 0;
-                    const score = state.currentScore || 100;
+                const stats = gameSDK.prepareSubmitData();
+                const timeMs = window.irukaGameState?.startTime ? Date.now() - window.irukaGameState.startTime : 0;
+                const score = stats.finalScore || 0;
 
                 sdk.complete({
-                        timeMs,
-                        extras: {
-                            reason: 'user_exit',
-                        stats: gameSDK.prepareSubmitData(),
-                        score,
-                        },
-                    });
+                    timeMs,
+                    extras: {
+                        reason: 'user_exit',
+                        stats: stats,
+                        score: score,
+                    },
+                });
 
-                console.log('[EndGame] SDK complete sent:', { timeMs, score });
+                console.log('[EndGame] SDK complete sent:', { timeMs, score, stats });
             });
 
             // Hover effect

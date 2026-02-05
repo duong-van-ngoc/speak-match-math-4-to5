@@ -25,6 +25,8 @@ const SOUND_MAP: Record<string, SoundConfig> = {
 
     'voice-rotate': { src: `${BASE_PATH}prompt/rotate.mp3`, volume: 1.0 },
     'voice_stage3_guide': { src: `${BASE_PATH}prompt/guide3.mp3`, volume: 1.0 },
+    'voice_correct': { src: `${BASE_PATH}sfx/correct_answer.mp3`, volume: 1.0 },
+    'voice_wrong': { src: `${BASE_PATH}sfx/wrong.mp3`, volume: 0.5 },
 
     // ---- Line Prompts (trước khi ghi âm mỗi dòng) ----
 

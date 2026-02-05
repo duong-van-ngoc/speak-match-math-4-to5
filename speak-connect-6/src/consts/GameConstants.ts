@@ -26,6 +26,7 @@ export const GameConstants = {
     // =========================================
     // CẤU HÌNH CHUNG (SYSTEM)
     // =========================================
+    IS_TEST_CONNECT_ONLY: true, // Bật để test riêng màn nối
     IDLE: {
         THRESHOLD: 10000,
         FADE_IN: 800,
@@ -66,9 +67,9 @@ export const GameConstants = {
         /** Danh sách từ khóa để so khớp (bài đồng dao) */
         KEYWORDS: 'ô tô, xe đạp, trực thăng, xe máy, con thuyền',
         /** API endpoint để gửi audio (legacy - không dùng nữa, dùng VoiceSessionManager) */
-        API_URL: 'https://iruka-cors-proxy-h7j3ksnhva-as.a.run.app/',
+        API_URL: 'https://iruka-cors-proxy-h7j3ksnhva-as.a.run.app',
         /** API endpoint để gửi audio (legacy - không dùng nữa, dùng VoiceSessionManager) */
-        API_URL_DEV: 'https://iruka-cors-proxy-h7j3ksnhva-as.a.run.app/',
+        API_URL_DEV: 'https://iruka-cors-proxy-h7j3ksnhva-as.a.run.app',
         /** Chế độ test: true = skip authentication/quota (development), false = production (requires auth) */
         // TEST_MODE: import.meta.env.DEV, // Tự động: true khi local, false khi build production
         TEST_MODE: true,
@@ -186,20 +187,40 @@ export const GameConstants = {
 
     // ===== CONNECT SCENE CONFIG =====
     CONNECT_SCENE: {
+        BANNER: {
+            X: 0.5,
+            Y: 0.09,
+            SCALE: 0.75,
+        },
         BOARD: {
-            SCALE_W: 1.05,
-            SCALE_H: 0.785,
+            W_RATIO: 1.05,
+            H_RATIO: 0.8,
             OFFSET_Y_RATIO: 0.07,
+            // Tỉ lệ padding bên trong board
+            PAD_X_RATIO: 0.065,
+            PAD_TOP_RATIO: 0.14,
+            PAD_BOTTOM_RATIO: 0.1,
+        },
+        LINE: {
+            WIDTH: 6,
+            COLOR: 0x374151,
+            ALPHA: 0.9,
         },
         ITEM: {
             HIT_W: 340,
             HIT_H: 280,
-            ICON_MAX_W: 480,
-            ICON_MAX_H: 400,
+            ICON_MAX_W: 450,
+            ICON_MAX_H: 360,
         },
         DICE: {
-            SIZE: 150,
-        }
+            SIZE: 220,
+        },
+        GROUPS: [
+            { id: 'scooters', label: 'xe máy', count: 6, texture: 'Connect_Veh_Scoooter' },
+            { id: 'bikes', label: 'xe đạp', count: 5, texture: 'Connect_Veh_Bike' },
+            { id: 'boats', label: 'thuyền', count: 6, texture: 'Connect_Veh_Boat' },
+            { id: 'helis', label: 'máy bay', count: 4, texture: 'Connect_Veh_Heli' },
+        ]
     },
 
     // =========================================
@@ -394,7 +415,7 @@ export const GameConstants = {
                 END_FRAME: 5,  // 6 frames
             },
             FRAME_DURATION: 150,
-            REPEAT: 2,
+            REPEAT: -1,
         },
 
         // Trạng thái 3b: Kết quả buồn (Result Sad)
@@ -408,7 +429,7 @@ export const GameConstants = {
                 END_FRAME: 5,  // 6 frames
             },
             FRAME_DURATION: 180,
-            REPEAT: 2,
+            REPEAT: -1,
         },
 
         // Trạng thái đứng yên (Idle) - hiển thị giữa các trạng thái

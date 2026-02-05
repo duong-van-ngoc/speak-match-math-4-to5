@@ -13,7 +13,7 @@ import SceneBase from '../SceneBase';
 import { SceneKeys, TextureKeys } from '../../consts/Keys';
 import { GameConstants } from '../../consts/GameConstants';
 import AudioManager from '../../audio/AudioManager';
-import { gameSDK } from '../../main';
+import { gameSDK, sdk } from '../../main';
 import { configureSdkContext, voice } from '@iruka-edu/mini-game-sdk';
 import { VoiceHandler } from '../../utils/VoiceHandler';
 import type { RecordingState } from '../../utils/VoiceHandler';
@@ -26,6 +26,12 @@ configureSdkContext({
         lessonId: GameConstants.BACKEND_SESSION.LESSON_ID,
         gameVersion: GameConstants.BACKEND_SESSION.GAME_VERSION,
     },
+});
+
+// Configure voice session client (Base URL for CORS proxy)
+voice.configureVoiceSessionClient({
+    baseUrl: GameConstants.VOICE_RECORDING.API_URL_DEV,
+    testMode: GameConstants.VOICE_RECORDING.TEST_MODE,
 });
 
 export default class VehicleScene extends SceneBase {
@@ -95,8 +101,10 @@ export default class VehicleScene extends SceneBase {
         this.events.on('wake', this.handleWake, this);
 
         // SDK Integration
-        const TOTAL_LEVELS = GameConstants.VEHICLES.TOTAL_LEVELS;
-        gameSDK.setTotal(TOTAL_LEVELS);
+        // Tổng cộng: 5 xe + 2 đường nối đúng = 7 bước
+        const TOTAL_STEPS = GameConstants.VEHICLES.TOTAL_LEVELS + 2;
+        gameSDK.setTotal(TOTAL_STEPS);
+        gameSDK.startQuestionTimer();
 
         window.irukaGameState = {
             startTime: Date.now(),
@@ -467,8 +475,10 @@ export default class VehicleScene extends SceneBase {
                 console.error('[VehicleScene] CRITICAL: Cannot start voice session. Check GAME_ID/LESSON_ID!', err);
             }
 
-            // Chỉ tay vào Loa trước
-            this.animateHandHintTo(this.speakerBtn.x, this.speakerBtn.y);
+            // Chỉ tay vào Loa trước (chỉ cho xe đầu tiên)
+            if (this.currentLevel === 0) {
+                this.animateHandHintTo(this.speakerBtn.x, this.speakerBtn.y);
+            }
 
             // Phát audio hướng dẫn
             AudioManager.play(GameConstants.VEHICLES.INTRO_AUDIO);
@@ -479,7 +489,6 @@ export default class VehicleScene extends SceneBase {
                     this.isSpeaking = false;
                     this._isMicActivated = false; // Luôn khóa Mic ở đầu level
                     this.idleManager.start();
-                    // Lưu ý: Chưa hiện mascot, chờ bé ấn Loa xong mới hiện
                 }
             });
 
@@ -489,6 +498,8 @@ export default class VehicleScene extends SceneBase {
     }
 
     protected showIdleHint(): void {
+        if (this.currentLevel > 0) return; // Chỉ hướng dẫn cho xe đầu tiên
+
         if (!this._isRecording && this.microBtn?.x > 0) {
             this.animateHandHintTo(this.microBtn.x, this.microBtn.y);
         }
@@ -499,12 +510,15 @@ export default class VehicleScene extends SceneBase {
     // ========================================
 
     private onSpeakerClick(): void {
-        if (!this.isGameActive || this.isSpeaking || this._isRecording) return;
+        if (!this.isGameActive) return;
 
-        this.isSpeaking = true;
-        this.resetIdleState();
+        // Tắt nhạc nền NGAY LẬP TỨC và dừng mọi tween tăng âm lượng đang chạy
+        if (this.bgm) {
+            this.tweens.killTweensOf(this.bgm);
+            (this.bgm as any).setVolume(0);
+        }
 
-        // Button press animation
+        // Button press animation (luôn chạy để có cảm giác click)
         this.tweens.add({
             targets: this.speakerBtn,
             scale: GameConstants.SPEAK_SCENE.SPEAKER.SCALE - 0.1,
@@ -512,52 +526,67 @@ export default class VehicleScene extends SceneBase {
             yoyo: true,
         });
 
+        if (this.isSpeaking || this._isRecording) return;
+
+        this.isSpeaking = true;
+        this.resetIdleState();
+
         // Phát audio mẫu
         const currentVehicle = GameConstants.VEHICLES.ITEMS[this.currentLevel];
         AudioManager.play(currentVehicle.audioKey);
         this.showSpeakAnimation();
 
-        // Tắt nhạc nền NGAY LẬP TỨC khi loa phát
-        if (this.bgm && this.bgm.isPlaying) {
-            (this.bgm as any).setVolume(0);
-        }
-
         const audioDuration = AudioManager.getDuration(currentVehicle.audioKey) || 2;
         this.time.delayedCall(audioDuration * 1000, () => {
+            if (!this.isGameActive) return;
             this.isSpeaking = false;
             this.hideSpeakAnimation();
 
-            // 1. Phát audio mic "Con hãy ấn vào micro để nói nhé" tự động sau khi loa mẫu kết thúc
+            // Bật lại nhạc nền ngay sau khi xong audio mẫu (voice hướng dẫn tiếp theo không ngắt nhạc)
+            if (this.bgm && this.bgm.isPlaying) {
+                this.tweens.add({ targets: this.bgm, volume: 0.25, duration: 500 });
+            }
+
+            // Phát audio mic tự động 
             const micAudioKey = GameConstants.VEHICLES.MIC_AUDIO;
             AudioManager.play(micAudioKey);
-            this.isSpeaking = true; // Block loa/mic khác trong lúc đang phát hướng dẫn
+            this.isSpeaking = true;
 
-            // Nhạc nền vẫn tắt
-
-
-            // 2. Chờ audio hướng dẫn mic kết thúc mới hiện Mascot và kích hoạt Mic
             AudioManager.onceEnd(micAudioKey, () => {
                 if (!this.isGameActive) return;
                 this.isSpeaking = false;
-                this._isMicActivated = true; // Kích hoạt nút Micro
+                this._isMicActivated = true;
                 this.showMicAndMascot();
-
-                // Bật lại nhạc nền chờ bé thao tác
-                if (this.bgm && this.bgm.isPlaying) {
-                    this.tweens.add({ targets: this.bgm, volume: 0.25, duration: 500 });
-                }
             });
         });
     }
 
     private onMicroClick(): void {
-        if (!this.isGameActive || this.isSpeaking || this._isRecording || !this._isMicActivated) return;
+        if (!this.isGameActive) return;
+
+        // Tắt nhạc nền NGAY LẬP TỨC và dừng mọi tween tăng âm lượng đang chạy
+        if (this.bgm) {
+            this.tweens.killTweensOf(this.bgm);
+            (this.bgm as any).setVolume(0);
+        }
+
+        if (this.isSpeaking || this._isRecording || !this._isMicActivated) {
+            // Hiệu ứng nảy khi click mà chưa được phép (feedback)
+            this.tweens.add({
+                targets: this.microBtn,
+                scale: GameConstants.SPEAK_SCENE.MICRO.SCALE - 0.1,
+                duration: 100,
+                yoyo: true,
+            });
+            return;
+        }
 
         this._isRecording = true;
+        this._isMicActivated = false; // Khóa mic ngay lập tức để tránh click bồi
         this.resetIdleState();
         this.idleManager.stop();
 
-        // Visual feedback
+        // Visual feedback (đang ghi âm - scale to hơn)
         this.tweens.add({
             targets: this.microBtn,
             scale: GameConstants.SPEAK_SCENE.MICRO.SCALE + 0.1,
@@ -571,11 +600,6 @@ export default class VehicleScene extends SceneBase {
         this.showMascot('recording');
         this.voiceHandler.start();
 
-        // Tắt nhạc nền NGAY LẬP TỨC khi thu âm
-        if (this.bgm && this.bgm.isPlaying) {
-            (this.bgm as any).setVolume(0);
-        }
-
         // Auto stop sau một khoảng thời gian
         this.time.delayedCall(GameConstants.SPEAK_SCENE.TIMING.RECORDING_DURATION, () => {
             if (this._isRecording) {
@@ -585,14 +609,15 @@ export default class VehicleScene extends SceneBase {
     }
 
     private async onRecordingComplete(audioBlob: Blob): Promise<void> {
-        if (!this._isRecording) return;
+        if (!this.isGameActive || !this._isRecording) return;
         this._isRecording = false;
+        this.isSpeaking = true; // Block mọi input cho đến khi xong level hoặc sang xe mới
 
         // Visual reset
         this.microBtn.clearTint();
         this.microBtn.setScale(GameConstants.SPEAK_SCENE.MICRO.SCALE);
 
-        // Bật lại nhạc nền
+        // Bật lại nhạc nền ngay sau khi thu âm xong để có nhạc lúc đang "chấm điểm"
         if (this.bgm && this.bgm.isPlaying) {
             this.tweens.add({ targets: this.bgm, volume: 0.25, duration: 500 });
         }
@@ -613,6 +638,7 @@ export default class VehicleScene extends SceneBase {
         ]);
 
         this.levelScores.push(score);
+        gameSDK.finishQuestionTimer();
 
         // Hiển thị kết quả điểm lên bảng (ẩn mascot popup, hiện ảnh điểm)
         this.showScoreBoardResult(score);
@@ -620,12 +646,17 @@ export default class VehicleScene extends SceneBase {
         // Feedback NGAY LẬP TỨC để đồng bộ với bảng điểm
         const passed = score >= GameConstants.VOICE_RECORDING.PASS_THRESHOLD;
         if (passed) {
-            gameSDK.recordCorrect({ scoreDelta: 1 });
+            gameSDK.recordCorrect({ scoreDelta: 1 }); // Mỗi xe 1 điểm
             this.showMascot('happy');
         } else {
             gameSDK.recordWrong();
             this.showMascot('sad');
         }
+
+        // Cập nhật tiến độ: (this.currentLevel + 1) / TOTAL_STEPS
+        const TOTAL_STEPS = GameConstants.VEHICLES.TOTAL_LEVELS + 2;
+        sdk.progress((this.currentLevel + 1) / TOTAL_STEPS);
+        sdk.score(gameSDK.prepareSubmitData().finalScore);
 
         // Calculate display score (fixed check)
         const displayScore = Math.max(4, Math.min(10, score));
@@ -654,7 +685,9 @@ export default class VehicleScene extends SceneBase {
         await waitForAudio;
 
         this.time.delayedCall(GameConstants.SPEAK_SCENE.TIMING.DELAY_NEXT_LEVEL, async () => {
+            if (!this.isGameActive) return;
             this.hideScoreBoard();
+            this.isSpeaking = false; // Mở khóa cho level tiếp theo
             await this.goToNextLevel();
         });
     }
@@ -704,6 +737,7 @@ export default class VehicleScene extends SceneBase {
             this.showMascot('idle');
             this.updateLevelUI();
             this.idleManager.start();
+            gameSDK.startQuestionTimer(); // Bắt đầu đếm giờ cho xe tiếp theo
         }
     }
 
@@ -737,8 +771,10 @@ export default class VehicleScene extends SceneBase {
         // Chỉ ẩn Mascot khi bắt đầu level mới, Mic vẫn hiện
         this.stopAllMascots();
 
-        // Chỉ tay vào Loa
-        this.animateHandHintTo(this.speakerBtn.x, this.speakerBtn.y);
+        // Chỉ tay vào Loa (chỉ cho xe đầu tiên)
+        if (this.currentLevel === 0) {
+            this.animateHandHintTo(this.speakerBtn.x, this.speakerBtn.y);
+        }
 
         AudioManager.play(GameConstants.VEHICLES.INTRO_AUDIO);
         const introDuration = AudioManager.getDuration(GameConstants.VEHICLES.INTRO_AUDIO) || 3;
@@ -746,7 +782,6 @@ export default class VehicleScene extends SceneBase {
         this.time.delayedCall(introDuration * 1000, () => {
             this.isSpeaking = false;
             this._isMicActivated = false; // Luôn khóa Mic ở đầu level mới
-            // Ở đây không gọi showMicAndMascot nữa, chờ bé bấm loa
         });
     }
 
@@ -759,8 +794,10 @@ export default class VehicleScene extends SceneBase {
         // Hiện Mascot Idle
         this.showMascot('idle');
 
-        // Hiện ngón tay chỉ vào mic
-        this.animateHandHintTo(this.microBtn.x, this.microBtn.y);
+        // Hiện ngón tay chỉ vào mic (chỉ cho xe đầu tiên)
+        if (this.currentLevel === 0) {
+            this.animateHandHintTo(this.microBtn.x, this.microBtn.y);
+        }
     }
 
     private async finishGame(): Promise<void> {
@@ -772,9 +809,8 @@ export default class VehicleScene extends SceneBase {
         window.irukaGameState.currentScore = finalScore;
         await this.endBackendSession(false);
 
-        // Gửi điểm từng phần (progress)
-        gameSDK.setTotal(GameConstants.VEHICLES.TOTAL_LEVELS); // Reset lại progress bar? Hoặc để nguyên.
-        // Tạm thời chỉ ghi nhận score, chưa finish lesson.
+        // Ghi nhận tổng điểm hiện tại qua SDK
+        sdk.score(gameSDK.prepareSubmitData().finalScore);
 
         this.time.delayedCall(1500, () => {
             this.scene.start(SceneKeys.ConnectSixScene);
@@ -788,24 +824,24 @@ export default class VehicleScene extends SceneBase {
     private async startBackendSession(): Promise<void> {
         console.log('[VehicleScene] Starting backend session with:', GameConstants.BACKEND_SESSION);
 
-        // RE-CONFIGURE SDK context just to be 100% sure
+        // RE-CONFIGURE SDK context & Voice Client
         configureSdkContext({
             fallback: {
                 gameId: GameConstants.BACKEND_SESSION.GAME_ID,
                 lessonId: GameConstants.BACKEND_SESSION.LESSON_ID,
                 gameVersion: GameConstants.BACKEND_SESSION.GAME_VERSION,
-                apiUrl: GameConstants.VOICE_RECORDING.API_URL_DEV,
-            } as any,
-            // Thử config ở root level lần nữa
-            apiUrl: GameConstants.VOICE_RECORDING.API_URL_DEV,
-        } as any);
+            }
+        });
+
+        voice.configureVoiceSessionClient({
+            baseUrl: GameConstants.VOICE_RECORDING.API_URL_DEV,
+            testMode: GameConstants.VOICE_RECORDING.TEST_MODE,
+        });
 
         try {
             const response = await voice.StartSession({
                 testmode: GameConstants.VOICE_RECORDING.TEST_MODE,
-                // Thử truyền apiUrl trực tiếp vào đây (hy vọng SDK nhận)
-                apiUrl: GameConstants.VOICE_RECORDING.API_URL_DEV
-            } as any);
+            });
 
             if (response && response.sessionId) {
                 this.sessionStarted = true;

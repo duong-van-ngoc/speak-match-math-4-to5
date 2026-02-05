@@ -1,18 +1,10 @@
 import Phaser from 'phaser';
-import { ConnectSixFlow, type ConnectGroupDef } from '../logic/connectSixFlow';
-
-import { createTopBanner } from '../ui/TopBanner';
-import AudioManager from '../../audio/AudioManager';
-import SceneBase from '../SceneBase';
-import { GameConstants } from '../../consts/GameConstants';
+import { ConnectSixFlow, type ConnectGroupDef } from '../../logic/connectSixFlow';
 import { SceneKeys, TextureKeys, AudioKeys } from '../../consts/Keys';
-import { game as gameSDK } from '@iruka-edu/mini-game-sdk';
-
-// ===== ASSETS (keys only; paths are loaded in PreloadScene) =====
-// - Board: CONNECT_SIX_ASSET_KEYS.board
-// - Banner: CONNECT_SIX_ASSET_KEYS.topBanner (+ CONNECT_SIX_ASSET_KEYS.topBannerText)
-// - Center dice: CONNECT_SIX_ASSET_KEYS.dice
-// - Vehicles: pack `spriteKey` values (e.g. veh_car, veh_bike, ...)
+import { GameConstants } from '../../consts/GameConstants';
+import AudioManager from '../../audio/AudioManager';
+import { gameSDK, sdk } from '../../main';
+import { changeBackground } from '../../utils/BackgroundManager';
 
 type GroupViewDef = ConnectGroupDef & {
     spriteKey: string;
@@ -30,11 +22,8 @@ type GroupView = {
     hit: Phaser.GameObjects.Rectangle;
 };
 
-export default class ConnectSixScene extends SceneBase {
+export default class ConnectSixScene extends Phaser.Scene {
     private flow!: ConnectSixFlow;
-
-    private promptText!: Phaser.GameObjects.Text;
-    private feedbackText!: Phaser.GameObjects.Text;
 
     private board?: Phaser.GameObjects.Image;
     private boardFallbackGfx?: Phaser.GameObjects.Graphics;
@@ -54,29 +43,27 @@ export default class ConnectSixScene extends SceneBase {
     private draggingGroupId: string | null = null;
     private dragStartByGroupId = new Map<string, Phaser.Math.Vector2>();
     private finishing = false;
-    private isVoicePlaying = false;
 
-    // Line tuning (edge-to-edge)
-    // Pencil-like line: thicker, dark graphite tone with slight transparency.
-    private readonly lineStyle = { width: 6, color: 0x374151, alpha: 0.9 };
-    // Note: pip layout was used previously for snapping to dice dots.
+    private readonly lineStyle = {
+        width: GameConstants.CONNECT_SCENE.LINE.WIDTH,
+        color: GameConstants.CONNECT_SCENE.LINE.COLOR,
+        alpha: GameConstants.CONNECT_SCENE.LINE.ALPHA
+    };
 
-    // pack (nhận từ GameScene)
+    // pack
     private groupsData: GroupViewDef[] = [];
 
-    init(data: { pack?: { groups: GroupViewDef[] } }) {
+    init() {
         this.finishing = false;
         this.draggingGroupId = null;
         this.dragStartByGroupId.clear();
-        // Nếu GameScene truyền pack thì dùng, không có thì fallback demo
-        this.groupsData =
-            data?.pack?.groups ??
-            [
-                { id: 'scooters', label: 'xe máy', count: 6, spriteKey: TextureKeys.Connect_Veh_Scoooter, x: 260, y: 170, cols: 3 },
-                { id: 'bikes', label: 'xe đạp', count: 5, spriteKey: TextureKeys.Connect_Veh_Bike, x: 1020, y: 170, cols: 3 },
-                { id: 'boats', label: 'thuyền', count: 6, spriteKey: TextureKeys.Connect_Veh_Boat, x: 260, y: 560, cols: 3 },
-                { id: 'helis', label: 'máy bay', count: 4, spriteKey: TextureKeys.Connect_Veh_Heli, x: 1020, y: 560, cols: 2 },
-            ];
+
+        this.groupsData = GameConstants.CONNECT_SCENE.GROUPS.map(g => ({
+            ...g,
+            spriteKey: (TextureKeys as any)[g.texture],
+            x: 0,
+            y: 0
+        }));
     }
 
     constructor() {
@@ -84,44 +71,55 @@ export default class ConnectSixScene extends SceneBase {
     }
 
     create() {
-        this.setupSystem();
-        this.setupBackgroundAndAudio();
-        this.createHandHint();
-
         this.input.enabled = true;
-        try {
-            (window as any).setGameButtonsVisible?.(true);
-        } catch { }
+
+        // SDK initialization if started directly
+        if (GameConstants.IS_TEST_CONNECT_ONLY) {
+            const TOTAL_STEPS = GameConstants.VEHICLES.TOTAL_LEVELS + 2;
+            gameSDK.setTotal(TOTAL_STEPS);
+
+            // Ensure background is set if testing directly
+            changeBackground('assets/images/bg/background_game.jpg');
+        }
+        gameSDK.startQuestionTimer();
 
         this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
 
+        // Stop guide voice on interaction
+        this.input.once('pointerdown', () => {
+            try {
+                AudioManager.stop(AudioKeys.Connect_Guide3);
+            } catch { }
+        });
+
         this.createBoard();
-        createTopBanner(
-            this,
-            { bannerKey: TextureKeys.Connect_TopBanner, textKey: '' },
-            { yRatio: 0.1, scale: 0.72 }
-        );
+
+        // Top Banner
+        const CFG_BANNER = GameConstants.CONNECT_SCENE.BANNER;
+        const bannerKey = TextureKeys.Connect_TopBanner;
+        const bannerX = this.scale.width * CFG_BANNER.X;
+        const bannerY = this.scale.height * CFG_BANNER.Y;
+
+        if (this.textures.exists(bannerKey)) {
+            const banner = this.add.image(bannerX, bannerY, bannerKey)
+                .setOrigin(0.5)
+                .setScale(CFG_BANNER.SCALE)
+                .setDepth(10);
+
+            // Text on banner
+            const textKey = TextureKeys.Connect_TopBannerTextConnect;
+            if (this.textures.exists(textKey)) {
+                this.add.image(banner.x, banner.y, textKey)
+                    .setOrigin(0.5)
+                    .setScale(0.52)
+                    .setDepth(11);
+            }
+        }
 
         this.flow = new ConnectSixFlow(
             this.groupsData.map(({ id, label, count }) => ({ id, label, count })),
             6
         );
-
-        // UI text (audio-only; no TTS fallback)
-        this.promptText = this.add.text(640, 18, '', {
-            fontFamily: 'Arial',
-            fontSize: '30px',
-            color: '#1f2937',
-        }).setOrigin(0.5, 0).setVisible(false);
-
-        this.feedbackText = this.add.text(640, 60, '', {
-            fontFamily: 'Arial',
-            fontSize: '26px',
-            color: '#111827',
-        }).setOrigin(0.5, 0).setVisible(false);
-
-        this.setPrompt('Con nối các nhóm có 6 phương tiện vào con xúc xắc ở giữa nhé');
-        this.setFeedback('Kéo từ nhóm và thả vào xúc xắc');
 
         // Lines
         this.fixedLines = this.add.graphics().setDepth(10);
@@ -162,7 +160,6 @@ export default class ConnectSixScene extends SceneBase {
 
             const overDice = this.diceHit.getBounds().contains(p.x, p.y);
             if (!overDice) {
-                this.setFeedback('Con thả vào con xúc xắc ở giữa nhé');
                 this.dragStartByGroupId.delete(groupId);
                 return;
             }
@@ -171,7 +168,6 @@ export default class ConnectSixScene extends SceneBase {
             if (!res) return;
 
             if (res.ok) {
-                // vẽ line cố định từ mép ảnh -> mép chấm trên xúc xắc
                 const dragFrom = this.dragStartByGroupId.get(groupId);
                 const dropTo = this.getDiceDropPoint(p.x, p.y);
                 const { from, to } = this.getConnectLineEndpoints(gv, dragFrom, dropTo);
@@ -184,134 +180,81 @@ export default class ConnectSixScene extends SceneBase {
 
                 gv.hit.disableInteractive();
 
-                this.setFeedback('Đúng rồi!', { voice: false });
+                try {
+                    AudioManager.stop(AudioKeys.Connect_Correct);
+                    AudioManager.stop(AudioKeys.Connect_Wrong);
+                    AudioManager.play(AudioKeys.Connect_Correct);
+                } catch { }
 
                 this.tweens.add({ targets: gv.root, scale: 1.06, duration: 120, yoyo: true, repeat: 1 });
 
+                // SDK record
+                gameSDK.finishQuestionTimer();
+                gameSDK.recordCorrect({ scoreDelta: 1 });
+                sdk.score(gameSDK.prepareSubmitData().finalScore);
+
+                const TOTAL_STEPS = GameConstants.VEHICLES.TOTAL_LEVELS + 2;
+                sdk.progress((GameConstants.VEHICLES.TOTAL_LEVELS + this.flow.connectedTargets) / TOTAL_STEPS);
+
                 if (res.done) {
-                    this.setPrompt('Hoàn thành!', { voice: false });
-                    this.setFeedback('Con giỏi quá!', { voice: false });
                     void this.finishMinigameAfterCorrectVoice();
                 } else {
-                    void this.playVoiceAndWait('sfx-correct');
-                    this.setPrompt(`Con nối tiếp nhé (${this.flow.connectedTargets}/${this.flow.totalTargets})`);
+                    gameSDK.startQuestionTimer();
                 }
             } else {
-                this.setFeedback('Chưa đúng. Con chỉ nối nhóm có 6 thôi nhé!');
                 try {
-                    AudioManager.play('sfx-wrong');
+                    AudioManager.stop(AudioKeys.Connect_Correct);
+                    AudioManager.stop(AudioKeys.Connect_Wrong);
+                    AudioManager.play(AudioKeys.Connect_Wrong);
                 } catch { }
                 this.shake(gv.root);
             }
             this.dragStartByGroupId.delete(groupId);
         });
 
-        this.scale.off('resize', this.layoutScene, this);
         this.scale.on('resize', this.layoutScene, this);
-        this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-            this.scale.off('resize', this.layoutScene, this);
-        });
-
         this.layoutScene();
-        this.initGameFlow();
-    }
 
-    protected createUI(): void {
-        // Redundant as logic is in create()
-    }
-
-    protected initGameFlow(): void {
-        this.isGameActive = true;
-        this.playBgm();
-
-        // Phát giọng nói hướng dẫn "Con hãy nối nhóm có 6 phương tiện..."
-        try {
-            AudioManager.play(AudioKeys.Connect_Guide3);
-        } catch { }
-
-        // Hiển thị chỉ tay hướng dẫn sau khi phát guide (hoặc sau 1 khoảng delay)
-        this.idleManager.start();
-    }
-
-    protected showIdleHint(): void {
-        if (this.draggingGroupId) return;
-
-        // Tìm 1 nhóm chưa nối để chỉ tay
-        const targetGroup = Array.from(this.groupViews.values()).find(gv => !this.flow.isConnected(gv.id));
-        if (targetGroup) {
-            this.animateHandHintTo(targetGroup.root.x, targetGroup.root.y);
+        // Play BGM if not playing
+        const bgm = this.sound.get(AudioKeys.BgmNen);
+        if (!bgm) {
+            this.sound.play(AudioKeys.BgmNen, { loop: true, volume: 0.25 });
+        } else if (!bgm.isPlaying) {
+            bgm.play({ loop: true, volume: 0.25 });
         }
-    }
 
-    // ===== helpers =====
-    private setPrompt(text: string, opts?: { voice?: boolean }) {
-        this.promptText.setText(text);
-        void opts;
-    }
-
-    private setFeedback(text: string, opts?: { voice?: boolean }) {
-        this.feedbackText.setText(text);
-        void opts;
-    }
-
-    private async playVoiceAndWait(key: string) {
-        return new Promise<void>((resolve) => {
-            if (this.isVoicePlaying) {
-                AudioManager.stop(key);
-            }
-            this.isVoicePlaying = true;
-            this.input.enabled = false;
-
-            try {
-                AudioManager.play(key);
-                AudioManager.onceEnd(key, () => {
-                    this.isVoicePlaying = false;
-                    if (!this.finishing) {
-                        this.input.enabled = true;
-                    }
-                    resolve();
-                });
-
-                // Fallback: Nếu vì lý do gì đó sound không bắn end event
-                const duration = AudioManager.getDuration(key) * 1000 + 500;
-                setTimeout(() => {
-                    if (this.isVoicePlaying) {
-                        this.isVoicePlaying = false;
-                        if (!this.finishing) this.input.enabled = true;
-                        resolve();
-                    }
-                }, Math.max(duration, 2000));
-            } catch (e) {
-                this.isVoicePlaying = false;
-                this.input.enabled = true;
-                resolve();
-            }
-        });
+        // Play intro guide
+        AudioManager.play(AudioKeys.Connect_Guide3);
     }
 
     private async finishMinigameAfterCorrectVoice() {
         if (this.finishing) return;
         this.finishing = true;
 
-        // Prevent further drags / taps while we play the final feedback.
         this.input.enabled = false;
-        this.isVoicePlaying = false;
         this.draggingGroupId = null;
         this.tempLine.clear();
         this.dragStartByGroupId.clear();
         for (const gv of this.groupViews.values()) gv.hit.disableInteractive();
 
         try {
-            AudioManager.stopAll();
+            // Đợi voice "Đúng rồi" phát xong mới chuyển màn
+            const audioKey = AudioKeys.Connect_Correct;
+            const duration = AudioManager.getDuration(audioKey) || 1.5;
+
+            await new Promise<void>(resolve => {
+                let handled = false;
+                const done = () => {
+                    if (handled) return;
+                    handled = true;
+                    resolve();
+                };
+                AudioManager.onceEnd(audioKey, done);
+                // Fallback nếu có lỗi load audio
+                this.time.delayedCall(duration * 1000 + 500, done);
+            });
         } catch { }
 
-        // Đợi voice xong mới chuyển màn
-        await this.playVoiceAndWait('sfx-correct');
-
-        // Finalize SDK
-        gameSDK.finalizeAttempt('pass');
-
-        // Chuyển sang EndGameScene
         this.scene.start(SceneKeys.EndGame);
     }
 
@@ -329,8 +272,6 @@ export default class ConnectSixScene extends SceneBase {
 
     private playConnectResultAnim(ok: boolean, at: Phaser.Math.Vector2) {
         if (!ok) return;
-        // Neutral "success" pulse (no color tint, no green tick).
-        // Burst ring at the connection point.
         const g = this.add.graphics().setDepth(50);
         g.lineStyle(6, 0xffffff, 0.95);
         g.strokeCircle(0, 0, 18);
@@ -352,7 +293,7 @@ export default class ConnectSixScene extends SceneBase {
     }
 
     private createBoard() {
-        const boardKey = TextureKeys.S1_Board;
+        const boardKey = TextureKeys.Connect_Board;
         if (this.textures.exists(boardKey)) {
             this.board = this.add.image(0, 0, boardKey).setOrigin(0.5).setDepth(1);
             return;
@@ -369,25 +310,15 @@ export default class ConnectSixScene extends SceneBase {
         this.fitImageTo(this.diceImg, size, size);
         this.diceRoot.add(this.diceImg);
 
-        // hit area
         this.diceHit = this.add.rectangle(cx, cy, size + 40, size + 40, 0x000000, 0.001)
             .setDepth(6)
             .setInteractive({ useHandCursor: true });
-
-        // (optional) bấm vào xúc xắc nhắc lại luật
-        this.diceHit.on('pointerdown', () => {
-            try {
-                AudioManager.stop(AudioKeys.Connect_Guide3);
-            } catch { }
-            this.setFeedback('Con thả nhóm có 6 vào đây nhé');
-        });
     }
 
     private layoutScene() {
         const w = this.scale.width;
         const h = this.scale.height;
 
-        // Layout board
         if (this.board) {
             const boardKey = this.board.texture.key;
             const tex = this.textures.get(boardKey);
@@ -395,19 +326,20 @@ export default class ConnectSixScene extends SceneBase {
             const tw = (src?.width || 1) as number;
             const th = (src?.height || 1) as number;
 
-            const scale = Math.min((w * GameConstants.CONNECT_SCENE.BOARD.SCALE_W) / tw, (h * GameConstants.CONNECT_SCENE.BOARD.SCALE_H) / th);
-            const boardOffsetY = h * GameConstants.CONNECT_SCENE.BOARD.OFFSET_Y_RATIO;
+            const CFG_BOARD = GameConstants.CONNECT_SCENE.BOARD;
 
-            this.board.setAngle(0);
+            const scale = Math.min((w * CFG_BOARD.W_RATIO) / tw, (h * CFG_BOARD.H_RATIO) / th);
+            const boardOffsetY = h * CFG_BOARD.OFFSET_Y_RATIO;
+
             this.board.setPosition(w / 2, h / 2 + boardOffsetY);
             this.board.setScale(scale);
 
             const bw = tw * scale;
             const bh = th * scale;
 
-            const padX = bw * 0.065;
-            const padTop = bh * 0.14;
-            const padBottom = bh * 0.1;
+            const padX = bw * CFG_BOARD.PAD_X_RATIO;
+            const padTop = bh * CFG_BOARD.PAD_TOP_RATIO;
+            const padBottom = bh * CFG_BOARD.PAD_BOTTOM_RATIO;
             const boardCenterY = h / 2 + boardOffsetY;
 
             this.boardContentRect.setTo(
@@ -437,12 +369,9 @@ export default class ConnectSixScene extends SceneBase {
         const r = this.boardContentRect;
         if (r.width <= 0 || r.height <= 0) return;
 
-        // Dice in center of board
         this.diceRoot.setPosition(r.centerX, r.centerY);
         this.diceHit.setPosition(r.centerX, r.centerY);
 
-        // Groups around inside board
-        // Put 4 group images evenly into the 4 corners of the board content area.
         const cornerPadX = r.width * 0.16;
         const cornerPadY = r.height * 0.18;
         const leftX = r.left + cornerPadX;
@@ -465,11 +394,11 @@ export default class ConnectSixScene extends SceneBase {
     }
 
     private createGroupView(g: GroupViewDef) {
-        const CFG = GameConstants.CONNECT_SCENE.ITEM;
-        const hitW = CFG.HIT_W;
-        const hitH = CFG.HIT_H;
-        const iconMaxW = CFG.ICON_MAX_W;
-        const iconMaxH = CFG.ICON_MAX_H;
+        const CFG_ITEM = GameConstants.CONNECT_SCENE.ITEM;
+        const hitW = CFG_ITEM.HIT_W;
+        const hitH = CFG_ITEM.HIT_H;
+        const iconMaxW = CFG_ITEM.ICON_MAX_W;
+        const iconMaxH = CFG_ITEM.ICON_MAX_H;
 
         const root = this.add.container(g.x, g.y).setDepth(2);
 
@@ -489,18 +418,13 @@ export default class ConnectSixScene extends SceneBase {
 
         hit.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
             if (this.flow.isConnected(g.id)) return;
-            try {
-                AudioManager.stop(AudioKeys.Connect_Guide3);
-            } catch { }
 
             this.draggingGroupId = g.id;
-            // Start from the child's touch point, but clamp it inside the icon bounds.
             const b = icon.getBounds();
             const inset = 2;
             const sx = Phaser.Math.Clamp(pointer.x, b.left + inset, b.right - inset);
             const sy = Phaser.Math.Clamp(pointer.y, b.top + inset, b.bottom - inset);
             this.dragStartByGroupId.set(g.id, new Phaser.Math.Vector2(sx, sy));
-            this.setFeedback(`Con kéo từ nhóm ${g.label} vào xúc xắc nhé`);
             this.tweens.add({ targets: root, scale: 1.03, duration: 120, yoyo: true });
         });
 
@@ -512,7 +436,6 @@ export default class ConnectSixScene extends SceneBase {
         const iconCenter = new Phaser.Math.Vector2(iconBounds.centerX, iconBounds.centerY);
 
         const fromRef = startOverride ?? iconCenter;
-        // End at the child's drop point (clamped inside the dice).
         const to = (endOverride ?? this.getDiceDropPoint(fromRef.x, fromRef.y)).clone();
 
         const from = startOverride ?? (this.getRectEdgePoint(iconBounds, to, iconCenter) ?? iconCenter.clone());

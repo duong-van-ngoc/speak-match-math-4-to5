@@ -94,23 +94,26 @@ export default class PreloadScene extends Phaser.Scene {
         // 8. Connect Six Assets
         // ========================================
         // Board & Banner
-        // Board & Banner
-        this.load.image(TextureKeys.Connect_Board, 'assets/connectScene/placeholder.png');
+        this.load.image(TextureKeys.Connect_Board, 'assets/images/bg/board_white.png');
         this.load.image(TextureKeys.Connect_TopBanner, 'assets/connectScene/banner.png');
-        this.load.image(TextureKeys.Connect_TopBannerText, 'assets/connectScene/placeholder.png'); // Fallback text
-        this.load.image(TextureKeys.Connect_TopBannerTextConnect, 'assets/connectScene/placeholder.png'); // Fallback text
+        // this.load.image(TextureKeys.Connect_TopBannerText, 'assets/connectScene/banner_text.png');
+        // this.load.image(TextureKeys.Connect_TopBannerTextConnect, 'assets/connectScene/text_connect.png');
 
         // Vehicles
         this.load.image(TextureKeys.Connect_Veh_Scoooter, 'assets/connectScene/scooter.png');
         this.load.image(TextureKeys.Connect_Veh_Bike, 'assets/connectScene/bike.png');
-        this.load.image(TextureKeys.Connect_Veh_Boat, 'assets/connectScene/boat.png'); // Thuyền
-        this.load.image(TextureKeys.Connect_Veh_Heli, 'assets/connectScene/heli.png'); // Máy bay
+        this.load.image(TextureKeys.Connect_Veh_Boat, 'assets/connectScene/boat.png');
+        this.load.image(TextureKeys.Connect_Veh_Heli, 'assets/connectScene/heli.png');
 
-        this.load.image(TextureKeys.Connect_Dice, 'assets/connectScene/placeholder.png'); // Placeholder dice
+        this.load.image(TextureKeys.Connect_Dice, 'assets/connectScene/placeholder.png');
     }
 
     create() {
         // Đảm bảo âm thanh đã load xong (hoặc đang load) trước khi vào game
-        this.scene.start(SceneKeys.SpeakScene);
+        if (GameConstants.IS_TEST_CONNECT_ONLY) {
+            this.scene.start(SceneKeys.ConnectSixScene);
+        } else {
+            this.scene.start(SceneKeys.SpeakScene);
+        }
     }
 }
