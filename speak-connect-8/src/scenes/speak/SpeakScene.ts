@@ -1,0 +1,897 @@
+/**
+ * SpeakScene - Màn chơi đọc tên các đồ vật ngày Tết
+ * 
+ * Flow:
+ * 1. Hiển thị hình phương tiện
+ * 2. Phát audio hướng dẫn "Con hãy đọc tên đồ vật này"
+ * 3. User nhấn loa để nghe audio mẫu (tùy chọn)
+ * 4. User nhấn mic để ghi âm
+ * 5. Chấm điểm phát âm
+ * 6. Chuyển sang level tiếp theo hoặc EndGame
+ */
+import SceneBase from '../SceneBase';
+import { SceneKeys, TextureKeys } from '../../consts/Keys';
+import { GameConstants } from '../../consts/GameConstants';
+import AudioManager from '../../audio/AudioManager';
+import { gameSDK, sdk } from '../../main';
+import { configureSdkContext } from '@iruka-edu/mini-game-sdk';
+import * as voice from '../../client-sdk/voice-session-client';
+import { VoiceHandler } from '../../utils/VoiceHandler';
+import type { RecordingState } from '../../utils/VoiceHandler';
+import { AnimationFactory } from '../../utils/AnimationFactory';
+
+// Configure SDK context for standalone mode (ensure it runs when starting from SpeakScene)
+configureSdkContext({
+    fallback: {
+        gameId: GameConstants.BACKEND_SESSION.GAME_ID,
+        lessonId: GameConstants.BACKEND_SESSION.LESSON_ID,
+        gameVersion: GameConstants.BACKEND_SESSION.GAME_VERSION,
+    },
+});
+
+export default class SpeakScene extends SceneBase {
+    // UI Elements
+    private itemImage!: Phaser.GameObjects.Image;
+    private itemNameImage!: Phaser.GameObjects.Image;
+    private speakerBtn!: Phaser.GameObjects.Image;
+    private microBtn!: Phaser.GameObjects.Image;
+
+    // State
+    private currentLevel: number = 0;
+    private _isRecording: boolean = false;
+    private _isMicActivated: boolean = false;
+    private isSpeaking: boolean = false;
+    private sessionStarted: boolean = false;
+    private sessionId: string = '';
+
+    // Voice Handler
+    private voiceHandler!: VoiceHandler;
+    private volumeBar!: Phaser.GameObjects.Graphics;
+    private recordingIndicator!: Phaser.GameObjects.Graphics;
+    private micPulseTween: Phaser.Tweens.Tween | null = null;
+
+    // Speak Animation (for Speaker)
+    private speakAnimSprite: Phaser.GameObjects.Image | null = null;
+    private speakAnimTimer: Phaser.Time.TimerEvent | null = null;
+    private speakAnimFrame: number = 0;
+
+    // Mascot Animations
+    private mascotIdle!: AnimationFactory;
+    private mascotRecording!: AnimationFactory;
+    private mascotProcessing!: AnimationFactory;
+    private mascotHappy!: AnimationFactory;
+    private mascotSad!: AnimationFactory;
+
+    // Score Board UI
+    private scoreBoard!: Phaser.GameObjects.Container;
+    private scoreBoardBg!: Phaser.GameObjects.Image;
+    private scoreImage!: Phaser.GameObjects.Image;
+    private scoreLoadingText!: Phaser.GameObjects.Text;
+    private scoreBoardMascotSprite!: Phaser.GameObjects.Sprite;
+
+    // Scores
+    private levelScores: number[] = [];
+
+    constructor() {
+        super(SceneKeys.SpeakScene);
+    }
+
+    create() {
+        // Reset state
+        this.currentLevel = 0;
+        this._isRecording = false;
+        this.isSpeaking = false;
+        this.levelScores = [];
+        this.micPulseTween = null;
+        this.speakAnimSprite = null;
+        this.speakAnimTimer = null;
+
+        this.setupSystem();
+        this.setupBackgroundAndAudio();
+        this.createHandHint();
+        this.setupVoiceHandler();
+        this.setupMascotAnimations();
+        this.createUI();
+        this.initGameFlow();
+
+        this.events.on('wake', this.handleWake, this);
+
+        // SDK Integration
+        // Tổng cộng: 5 đồ vật + 2 đường nối đúng = 7 bước
+        const TOTAL_STEPS = GameConstants.TET_ITEMS.TOTAL_LEVELS + 2;
+        gameSDK.setTotal(TOTAL_STEPS);
+        gameSDK.startQuestionTimer();
+
+        window.irukaGameState = {
+            startTime: Date.now(),
+            currentScore: 0,
+        };
+    }
+
+    update(_time: number, delta: number) {
+        this.idleManager.update(delta);
+    }
+
+    shutdown() {
+        this.voiceHandler?.destroy();
+        this.destroyMascots();
+        this.cleanupScene();
+    }
+
+    // ========================================
+    // MASCOT ANIMATIONS SETUP
+    // ========================================
+
+    private setupMascotAnimations(): void {
+        const MASCOT = GameConstants.MASCOT_ANIMATIONS;
+
+        // Create animation instances but DON'T play idle yet (wait for audio)
+        this.mascotIdle = new AnimationFactory(this, { ...MASCOT, ...MASCOT.IDLE });
+        this.mascotRecording = new AnimationFactory(this, { ...MASCOT, ...MASCOT.RECORDING });
+        this.mascotProcessing = new AnimationFactory(this, { ...MASCOT, ...MASCOT.PROCESSING });
+        this.mascotHappy = new AnimationFactory(this, { ...MASCOT, ...MASCOT.RESULT_HAPPY });
+        this.mascotSad = new AnimationFactory(this, { ...MASCOT, ...MASCOT.RESULT_SAD });
+
+        // Hide all mascots initially
+        this.stopAllMascots();
+    }
+
+    private stopAllMascots(): void {
+        this.mascotIdle?.stop();
+        this.mascotRecording?.stop();
+        this.mascotProcessing?.stop();
+        this.mascotHappy?.stop();
+        this.mascotSad?.stop();
+    }
+
+    private showMascot(state: 'idle' | 'recording' | 'processing' | 'happy' | 'sad'): void {
+        // Ẩn tất cả trước
+        this.stopAllMascots();
+
+        // Hiện mascot theo state
+        switch (state) {
+            case 'idle':
+                this.mascotIdle?.play();
+                break;
+            case 'recording':
+                this.mascotRecording?.play();
+                break;
+            case 'processing':
+                this.mascotProcessing?.play();
+                break;
+            case 'happy':
+                this.mascotHappy?.play();
+                break;
+            case 'sad':
+                this.mascotSad?.play();
+                break;
+        }
+    }
+
+    private destroyMascots(): void {
+        this.mascotIdle?.destroy();
+        this.mascotRecording?.destroy();
+        this.mascotProcessing?.destroy();
+        this.mascotHappy?.destroy();
+        this.mascotSad?.destroy();
+    }
+
+    // ========================================
+    // VOICE HANDLER SETUP
+    // ========================================
+
+    private setupVoiceHandler(): void {
+        this.voiceHandler = new VoiceHandler({
+            onStateChange: (state) => this.onVoiceStateChange(state),
+            onVolumeChange: (volume, isAbove) => this.updateVolumeIndicator(volume, isAbove),
+            onComplete: (blob) => this.onRecordingComplete(blob),
+            onError: (err) => this.onRecordingError(err),
+        });
+
+        this.volumeBar = this.add.graphics().setDepth(50);
+        this.recordingIndicator = this.add.graphics().setDepth(49);
+    }
+
+    private onVoiceStateChange(state: RecordingState): void {
+        switch (state) {
+            case 'recording':
+                this.startMicPulse();
+                break;
+            case 'processing':
+            case 'idle':
+                this.stopMicPulse();
+                this.recordingIndicator.clear();
+                this.volumeBar.clear();
+                break;
+        }
+    }
+
+    private updateVolumeIndicator(volume: number, isAboveThreshold: boolean): void {
+        if (!this._isRecording) return;
+
+        const normalizedVolume = Math.min(volume / 128, 1);
+        const radius = 85;
+        const lineWidth = 8;
+
+        this.volumeBar.clear();
+        this.volumeBar.lineStyle(lineWidth, isAboveThreshold ? 0x00FF00 : 0x666666, 0.8);
+
+        const startAngle = -Math.PI / 2;
+        const endAngle = startAngle + (normalizedVolume * Math.PI * 2);
+
+        this.volumeBar.beginPath();
+        this.volumeBar.arc(this.microBtn.x, this.microBtn.y, radius, startAngle, endAngle, false);
+        this.volumeBar.strokePath();
+
+        // Recording background indicator
+        this.recordingIndicator.clear();
+        this.recordingIndicator.fillStyle(isAboveThreshold ? 0x00FF00 : 0xFF6666, 0.3);
+        this.recordingIndicator.fillCircle(this.microBtn.x, this.microBtn.y, 80);
+    }
+
+    private startMicPulse(): void {
+        this.stopMicPulse();
+        const CFG = GameConstants.SPEAK_SCENE;
+        this.micPulseTween = this.tweens.add({
+            targets: this.microBtn,
+            scale: { from: CFG.MICRO.SCALE, to: CFG.MICRO.SCALE + 0.1 },
+            duration: 500,
+            yoyo: true,
+            repeat: -1
+        });
+    }
+
+    private stopMicPulse(): void {
+        if (this.micPulseTween) {
+            this.micPulseTween.stop();
+            this.micPulseTween = null;
+        }
+        this.microBtn.setScale(GameConstants.SPEAK_SCENE.MICRO.SCALE);
+    }
+
+    private showSpeakAnimation(): void {
+        const ANIM_CFG = GameConstants.SPEAK_SCENE.SPEAK_ANIMATION;
+
+        this.hideSpeakAnimation();
+
+        this.speakAnimFrame = 0;
+        this.speakAnimSprite = this.add.image(this.scale.width * ANIM_CFG.X, this.scale.height * ANIM_CFG.Y, ANIM_CFG.FRAMES[0])
+            .setOrigin(0, 0.5)
+            .setScale(ANIM_CFG.SCALE)
+            .setDepth(50);
+
+        this.speakAnimTimer = this.time.addEvent({
+            delay: ANIM_CFG.FRAME_DURATION,
+            callback: () => {
+                if (!this.speakAnimSprite) return;
+                this.speakAnimFrame = (this.speakAnimFrame + 1) % ANIM_CFG.FRAMES.length;
+                this.speakAnimSprite.setTexture(ANIM_CFG.FRAMES[this.speakAnimFrame]);
+            },
+            loop: true
+        });
+    }
+
+    private hideSpeakAnimation(): void {
+        this.speakAnimTimer?.destroy();
+        this.speakAnimTimer = null;
+        this.speakAnimSprite?.destroy();
+        this.speakAnimSprite = null;
+    }
+
+    // ========================================
+    // UI CREATION
+    // ========================================
+
+    protected createUI(): void {
+        const CFG = GameConstants.SPEAK_SCENE;
+        const w = this.scale.width;
+        const h = this.scale.height;
+
+        // 1. BOARD/CANVAS (Nền trắng làm lớp dưới cùng)
+        this.add.image(w * CFG.BOARD.X, h * CFG.BOARD.Y, TextureKeys.S1_Board)
+            .setScale(CFG.BOARD.SCALE_X, CFG.BOARD.SCALE_Y)
+            .setAlpha(CFG.BOARD.ALPHA)
+            .setDepth(1);
+
+        // 2. BANNER (Chứa tên bài học, nằm trên board)
+        const banner = this.add.image(w * CFG.BANNER.X, h * CFG.BANNER.Y, TextureKeys.Speak_Banner)
+            .setOrigin(0.5, 0)
+            .setScale(CFG.BANNER.SCALE, (CFG.BANNER as any).SCALE_Y ?? CFG.BANNER.SCALE)
+            .setDepth(2);
+
+        if (GameConstants.VOICE_RECORDING.TEST_MODE) {
+            banner.setInteractive({ useHandCursor: true });
+            banner.on('pointerdown', () => {
+                console.log('[SpeakScene] TEST_MODE: Skipping level');
+                this.goToNextLevel();
+            });
+        }
+
+        // 4. item NAME IMAGE (Thay thế cho Text)
+        const currentItem = GameConstants.TET_ITEMS.ITEMS[this.currentLevel];
+        const itemOffsetY = (currentItem as any).offsetY || 0;
+
+        this.itemNameImage = this.add.image(
+            w * CFG.ITEM_LABEL.X,
+            h * CFG.ITEM_LABEL.Y + 20 + itemOffsetY, // Dịch xuống 1 chút + offset riêng
+            (currentItem as any).textKey
+        )
+            .setOrigin(0.5)
+            .setScale(CFG.ITEM_LABEL.SCALE)
+            .setDepth(10);
+
+
+
+
+
+        // 5. ITEM IMAGE (sẽ thay đổi theo level)
+        this.itemImage = this.add.image(
+            w * CFG.ITEM_IMAGE.X,
+            h * CFG.ITEM_IMAGE.Y + 20 + itemOffsetY, // Dịch xuống 1 chút + offset riêng
+            currentItem.imageKey
+        ).setScale(CFG.ITEM_IMAGE.SCALE).setDepth(10);
+
+        // Floating animation
+        this.tweens.add({
+            targets: this.itemImage,
+            y: (h * CFG.ITEM_IMAGE.Y + 20 + itemOffsetY) - CFG.ANIM.FLOAT_DISTANCE,
+            duration: CFG.ANIM.FLOAT_DURATION,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
+
+        // 6. SPEAKER BUTTON (phát audio mẫu)
+        this.speakerBtn = this.add.image(
+            w * CFG.SPEAKER.X,
+            h * CFG.SPEAKER.Y,
+            TextureKeys.Speak_Speaker
+        )
+            .setScale(CFG.SPEAKER.SCALE)
+            .setInteractive({ useHandCursor: true })
+            .setDepth(10)
+            .on('pointerdown', () => this.onSpeakerClick())
+            .on('pointerover', () => this.speakerBtn.setScale(CFG.SPEAKER.SCALE + 0.08))
+            .on('pointerout', () => this.speakerBtn.setScale(CFG.SPEAKER.SCALE));
+
+        // 7. MICRO BUTTON (Luôn hiển thị)
+        this.microBtn = this.add.image(
+            w * CFG.MICRO.X,
+            h * CFG.MICRO.Y,
+            TextureKeys.Speak_Micro
+        )
+            .setScale(CFG.MICRO.SCALE)
+            .setAlpha(1)
+            .setInteractive({ useHandCursor: true })
+            .setDepth(10)
+            .on('pointerdown', () => this.onMicroClick())
+            .on('pointerover', () => {
+                this.microBtn.setScale(CFG.MICRO.SCALE + 0.08);
+            })
+            .on('pointerout', () => {
+                this.microBtn.setScale(CFG.MICRO.SCALE);
+            });
+
+        // 8. SCORE BOARD (Popup hiển thị điểm)
+        this.createScoreBoardUI();
+    }
+
+    private createScoreBoardUI(): void {
+        const CFG = GameConstants.SPEAK_SCENE.SCORE_BOARD;
+        const w = this.scale.width;
+        const h = this.scale.height;
+
+        // Popup hiện ở giữa màn hình
+        const popupY = h * 0.5;
+        this.scoreBoard = this.add.container(w * CFG.X, popupY).setDepth(200).setScale(0).setAlpha(0);
+
+        // Background: Dùng board trắng giống SpeakScene
+        this.scoreBoardBg = this.add.image(0, 0, TextureKeys.S1_Board).setScale(0.8);
+        this.scoreBoard.add(this.scoreBoardBg);
+
+        // Mascot (Dùng cho trạng thái loading)
+        this.scoreBoardMascotSprite = this.add.sprite(0, CFG.MASCOT_OFFSET_Y, 'mascot_processing')
+            .setScale(CFG.MASCOT_SCALE)
+            .setVisible(false);
+        this.scoreBoard.add(this.scoreBoardMascotSprite);
+
+        // Score Image
+        this.scoreImage = this.add.image(0, CFG.SCORE_IMG_OFFSET_Y, TextureKeys.Score_10)
+            .setScale(CFG.SCORE_IMG_SCALE)
+            .setVisible(false);
+        this.scoreBoard.add(this.scoreImage);
+
+        // Loading label
+        this.scoreLoadingText = this.add.text(0, CFG.TEXT_OFFSET_Y, 'Đang tính toán điểm số...', {
+            fontSize: '36px',
+            fontFamily: 'Fredoka, sans-serif',
+            color: '#333333',
+            fontStyle: 'bold'
+        }).setOrigin(0.5).setVisible(false);
+        this.scoreBoard.add(this.scoreLoadingText);
+    }
+
+
+
+    private showScoreBoardResult(score: number): void {
+        console.log('[SpeakScene] showScoreBoardResult:', score);
+        const CFG = GameConstants.SPEAK_SCENE.SCORE_BOARD;
+
+        this.scoreLoadingText.setVisible(false);
+        this.scoreBoardMascotSprite.stop();
+        this.scoreBoardMascotSprite.setVisible(false);
+
+        // Audio đã được chuyển sang onRecordingComplete để xử lý wait end
+        // AudioManager.play(`score-${displayScore}`);
+
+        // Setup visuals for Score
+        this.scoreBoardBg.setScale(CFG.SCALE_SCORE);
+
+        // Match texture with score
+        let scoreKey = TextureKeys.Score_10;
+        if (score <= 4) scoreKey = TextureKeys.Score_4;
+        else if (score === 5) scoreKey = TextureKeys.Score_5;
+        else if (score === 6) scoreKey = TextureKeys.Score_6;
+        else if (score === 7) scoreKey = TextureKeys.Score_7;
+        else if (score === 8) scoreKey = TextureKeys.Score_8;
+        else if (score === 9) scoreKey = TextureKeys.Score_9;
+
+        this.scoreImage.setTexture(scoreKey).setVisible(true);
+
+        this.scoreBoard.setAlpha(1);
+        // Luôn chạy tween scale để đảm bảo hiện (bỏ check scale === 0)
+        this.tweens.add({
+            targets: this.scoreBoard,
+            scale: 1,
+            duration: 400,
+            ease: 'Back.out'
+        });
+    }
+
+    private hideScoreBoard(): void {
+        this.tweens.add({
+            targets: this.scoreBoard,
+            scale: 0,
+            alpha: 0,
+            duration: 300,
+            ease: 'Back.in',
+            onComplete: () => {
+                this.scoreImage.setVisible(false);
+                this.scoreLoadingText.setVisible(false);
+                this.scoreBoardMascotSprite.setVisible(false);
+            }
+        });
+    }
+
+    protected initGameFlow(): void {
+        if (this.input.keyboard) this.input.keyboard.enabled = false;
+
+        this.isSpeaking = true;
+
+        this.startWithAudio(async () => {
+            console.log('[SpeakScene] Starting game flow');
+            this.playBgm();
+            this.isGameActive = true;
+
+            // Khởi tạo session giọng nói
+            try {
+                await this.startBackendSession();
+            } catch (err) {
+                console.error('[SpeakScene] CRITICAL: Cannot start voice session. Check GAME_ID/LESSON_ID!', err);
+            }
+
+            // Chỉ tay vào Loa trước (chỉ cho xe đầu tiên)
+            if (this.currentLevel === 0) {
+                this.animateHandHintTo(this.speakerBtn.x, this.speakerBtn.y);
+            }
+
+            // Phát audio hướng dẫn
+            AudioManager.play(GameConstants.TET_ITEMS.INTRO_AUDIO);
+
+            const introDuration = AudioManager.getDuration(GameConstants.TET_ITEMS.INTRO_AUDIO) || 3;
+            this.time.delayedCall((introDuration + 0.5) * 1000, () => {
+                if (this.isGameActive) {
+                    this.isSpeaking = false;
+                    this._isMicActivated = false; // Luôn khóa Mic ở đầu level
+                    this.idleManager.start();
+                }
+            });
+
+            if (this.input.keyboard) this.input.keyboard.enabled = true;
+            this.showButtons();
+        });
+    }
+
+    protected showIdleHint(): void {
+        if (this.currentLevel > 0) return; // Chỉ hướng dẫn cho xe đầu tiên
+
+        if (!this._isRecording && this.microBtn?.x > 0) {
+            this.animateHandHintTo(this.microBtn.x, this.microBtn.y);
+        }
+    }
+
+    // ========================================
+    // EVENT HANDLERS
+    // ========================================
+
+    private onSpeakerClick(): void {
+        if (!this.isGameActive) return;
+
+        // Tắt nhạc nền NGAY LẬP TỨC và dừng mọi tween tăng âm lượng đang chạy
+        if (this.bgm) {
+            this.tweens.killTweensOf(this.bgm);
+            (this.bgm as any).setVolume(0);
+        }
+
+        // Button press animation
+        this.tweens.add({
+            targets: this.speakerBtn,
+            scale: GameConstants.SPEAK_SCENE.SPEAKER.SCALE - 0.1,
+            duration: 100,
+            yoyo: true,
+        });
+
+        if (this.isSpeaking || this._isRecording) return;
+
+        this.isSpeaking = true;
+        this.resetIdleState();
+
+        // Phát audio mẫu
+        const currentitem = GameConstants.TET_ITEMS.ITEMS[this.currentLevel];
+        AudioManager.play(currentitem.audioKey);
+        this.showSpeakAnimation();
+
+        const audioDuration = AudioManager.getDuration(currentitem.audioKey) || 2;
+        this.time.delayedCall(audioDuration * 1000, () => {
+            if (!this.isGameActive) return;
+            this.isSpeaking = false;
+            this.hideSpeakAnimation();
+
+            // Bật lại nhạc nền ngay sau khi xong audio mẫu (voice hướng dẫn tiếp theo không ngắt nhạc)
+            if (this.bgm && this.bgm.isPlaying) {
+                this.tweens.add({ targets: this.bgm, volume: 0.25, duration: 500 });
+            }
+
+            // 1. Phát audio mic "Con hãy ấn vào micro để nói nhé" tự động sau khi loa mẫu kết thúc
+            const micAudioKey = GameConstants.TET_ITEMS.MIC_AUDIO;
+            AudioManager.play(micAudioKey);
+            this.isSpeaking = true; // Block loa/mic khác trong lúc đang phát hướng dẫn
+
+            // Nhạc nền vẫn tắt
+
+
+            // 2. Chờ audio hướng dẫn mic kết thúc mới hiện Mascot và kích hoạt Mic
+            AudioManager.onceEnd(micAudioKey, () => {
+                if (!this.isGameActive) return;
+                this.isSpeaking = false;
+                this._isMicActivated = true; // Kích hoạt nút Micro
+                this.showMicAndMascot();
+            });
+        });
+    }
+
+    private onMicroClick(): void {
+        if (!this.isGameActive) return;
+
+        // Tắt nhạc nền NGAY LẬP TỨC và dừng mọi tween tăng âm lượng đang chạy
+        if (this.bgm) {
+            this.tweens.killTweensOf(this.bgm);
+            (this.bgm as any).setVolume(0);
+        }
+
+        if (this.isSpeaking || this._isRecording || !this._isMicActivated) {
+            // Visual feedback for blocked click
+            this.tweens.add({
+                targets: this.microBtn,
+                scale: GameConstants.SPEAK_SCENE.MICRO.SCALE - 0.1,
+                duration: 100,
+                yoyo: true,
+            });
+            return;
+        }
+
+        this._isRecording = true;
+        this._isMicActivated = false; // Khóa mic ngay lập tức để tránh click bồi
+        this.resetIdleState();
+        this.idleManager.stop();
+
+        // Visual feedback
+        this.tweens.add({
+            targets: this.microBtn,
+            scale: GameConstants.SPEAK_SCENE.MICRO.SCALE + 0.1,
+            duration: 200,
+        });
+        this.microBtn.setTint(0xff6b6b);
+
+        console.log(`[SpeakScene] Mic clicked, starting recording`);
+
+        // Chuyển Mascot sang trạng thái RECORDING và BẮT ĐẦU THU NGAY
+        this.showMascot('recording');
+        this.voiceHandler.start();
+
+        // Auto stop sau một khoảng thời gian
+        this.time.delayedCall(GameConstants.SPEAK_SCENE.TIMING.RECORDING_DURATION, () => {
+            if (this._isRecording) {
+                this.voiceHandler.stop();
+            }
+        });
+    }
+
+    private async onRecordingComplete(audioBlob: Blob): Promise<void> {
+        if (!this.isGameActive || !this._isRecording) return;
+        this._isRecording = false;
+        this.isSpeaking = true; // Block mọi input cho đến khi xong level hoặc sang xe mới
+
+        // Visual reset
+        this.microBtn.clearTint();
+        this.microBtn.setScale(GameConstants.SPEAK_SCENE.MICRO.SCALE);
+
+        // Bật lại nhạc nền ngay sau khi thu âm xong để có nhạc lúc đang "chấm điểm"
+        if (this.bgm && this.bgm.isPlaying) {
+            this.tweens.add({ targets: this.bgm, volume: 0.25, duration: 500 });
+        }
+
+        // Hiện mascot PROCESSING và bảng loading giống SpeakScene
+        // Hiện mascot PROCESSING (Mascot chính trên màn hình)
+        this.showMascot('processing');
+        // KHÔNG hiện popup loading nữa theo yêu cầu: "popup chỉ hiện khi có điểm"
+        // this.showScoreBoardLoading('Đang chấm điểm...');
+
+        // Score the item + Fake delay để bé kịp nhìn thấy mascot "đang nghĩ"
+        const currentitem = GameConstants.TET_ITEMS.ITEMS[this.currentLevel];
+
+        // Chạy song song: Gọi API chấm điểm VÀ Chờ tối thiểu 2.5s
+        const [score] = await Promise.all([
+            this.submitForScoring(audioBlob, currentitem.name),
+            new Promise<void>(resolve => this.time.delayedCall(1500, resolve))
+        ]);
+
+        this.levelScores.push(score);
+        gameSDK.finishQuestionTimer();
+
+        // Hiển thị kết quả điểm lên bảng (ẩn mascot popup, hiện ảnh điểm)
+        this.showScoreBoardResult(score);
+
+        // Feedback NGAY LẬP TỨC để đồng bộ với bảng điểm
+        const passed = score >= GameConstants.VOICE_RECORDING.PASS_THRESHOLD;
+        if (passed) {
+            gameSDK.recordCorrect({ scoreDelta: 1 }); // Mỗi xe 1 điểm
+            this.showMascot('happy');
+        } else {
+            gameSDK.recordWrong();
+            this.showMascot('sad');
+        }
+
+        // Cập nhật tiến độ: (this.currentLevel + 1) / TOTAL_STEPS
+        const TOTAL_STEPS = GameConstants.TET_ITEMS.TOTAL_LEVELS + 2;
+        sdk.progress((this.currentLevel + 1) / TOTAL_STEPS);
+        sdk.score(gameSDK.prepareSubmitData().finalScore);
+
+        // Calculate display score (fixed check)
+        const displayScore = Math.max(4, Math.min(10, score));
+        const audioKey = `score-${displayScore}`;
+
+        // Play score audio
+        AudioManager.play(audioKey);
+
+        // Wait for audio to finish + Delay
+        const waitForAudio = new Promise<void>(resolve => {
+            let handled = false;
+            const done = () => {
+                if (handled) return;
+                handled = true;
+                resolve();
+            };
+
+            // Listen for end
+            AudioManager.onceEnd(audioKey, done);
+
+            // Fallback timeout (duration + buffer or fixed safe time)
+            const duration = AudioManager.getDuration(audioKey) || 2.5;
+            this.time.delayedCall((duration * 1000) + 500, done);
+        });
+
+        await waitForAudio;
+
+        this.time.delayedCall(GameConstants.SPEAK_SCENE.TIMING.DELAY_NEXT_LEVEL, async () => {
+            this.hideScoreBoard();
+            this.isSpeaking = false; // Mở khóa khi chuẩn bị sang level mới
+            await this.goToNextLevel();
+        });
+    }
+
+    private onRecordingError(error: string): void {
+        console.error('[SpeakScene] Recording error:', error);
+        this._isRecording = false;
+        this.microBtn.clearTint();
+        this.microBtn.setScale(GameConstants.SPEAK_SCENE.MICRO.SCALE);
+        AudioManager.play('sfx-wrong');
+        this.showMascot('sad');
+    }
+
+    private async submitForScoring(audioBlob: Blob, keyword: string): Promise<number> {
+
+
+        try {
+            const audioFile = new File([audioBlob], `item_${this.currentLevel + 1}.wav`, { type: 'audio/wav' });
+
+            const response = await voice.Submit({
+                sessionId: this.sessionId,
+                childId: GameConstants.BACKEND_SESSION.DEFAULT_CHILD_ID,
+                audioFile: audioFile,
+                questionIndex: this.currentLevel + 1,
+                targetText: { text: keyword },
+                durationMs: GameConstants.SPEAK_SCENE.TIMING.RECORDING_DURATION,
+                exerciseType: voice.ExerciseType.NURSERY_RHYME,
+                testmode: GameConstants.VOICE_RECORDING.TEST_MODE,
+            });
+            console.log('[SpeakScene] API Response:', response);
+
+            const score10 = Math.round((response.score ?? 0) / 10);
+            // Trả về điểm thực tế (4-10), ép MIN_SCORE theo yêu cầu
+            return Math.max(4, Math.min(10, score10));
+        } catch (err) {
+            console.error('[SpeakScene] Scoring error details:', JSON.stringify(err, Object.getOwnPropertyNames(err)));
+            // API thất bại -> Trả về 0 điểm để báo lỗi, không random
+            return 0;
+        }
+    }
+
+    private async goToNextLevel(): Promise<void> {
+        console.log(`[SpeakScene] goToNextLevel: ${this.currentLevel} -> ${this.currentLevel + 1}`);
+        this.currentLevel++;
+
+        if (this.currentLevel >= GameConstants.TET_ITEMS.TOTAL_LEVELS) {
+            await this.finishGame();
+        } else {
+            this.showMascot('idle');
+            this.updateLevelUI();
+            this.idleManager.start();
+            gameSDK.startQuestionTimer(); // Bắt đầu đếm giờ cho xe tiếp theo
+        }
+    }
+
+    private updateLevelUI(): void {
+        const currentitem = GameConstants.TET_ITEMS.ITEMS[this.currentLevel];
+        console.log(`[SpeakScene] updateLevelUI: ${currentitem?.name} (${currentitem?.imageKey})`);
+
+        this.tweens.add({
+            targets: [this.itemImage, this.itemNameImage],
+            alpha: 0,
+            duration: 200,
+            onComplete: () => {
+                this.itemImage.setTexture(currentitem.imageKey);
+                if ((currentitem as any).textKey) {
+                    this.itemNameImage.setTexture((currentitem as any).textKey);
+                }
+
+                // Cập nhật vị trí Y nếu có offset riêng
+                const h = this.scale.height;
+                const CFG = GameConstants.SPEAK_SCENE;
+                const itemOffsetY = (currentitem as any).offsetY || 0;
+
+                this.itemNameImage.setY(h * CFG.ITEM_LABEL.Y + 20 + itemOffsetY);
+                this.itemImage.setY(h * CFG.ITEM_IMAGE.Y + 20 + itemOffsetY);
+
+                // Cập nhật lại animation floating với Y mới
+                this.tweens.killTweensOf(this.itemImage);
+                this.tweens.add({
+                    targets: this.itemImage,
+                    y: (h * CFG.ITEM_IMAGE.Y + 20 + itemOffsetY) - CFG.ANIM.FLOAT_DISTANCE,
+                    duration: CFG.ANIM.FLOAT_DURATION,
+                    yoyo: true,
+                    repeat: -1,
+                    ease: 'Sine.easeInOut'
+                });
+
+                this.itemImage.setAlpha(0);
+                this.itemNameImage.setAlpha(0);
+
+                this.tweens.add({
+                    targets: [this.itemImage, this.itemNameImage],
+                    alpha: 1,
+                    duration: 200
+                });
+            }
+        });
+
+        this.isSpeaking = true;
+
+        // Chỉ ẩn Mascot khi bắt đầu level mới, Mic vẫn hiện
+        this.stopAllMascots();
+
+        // Chỉ tay vào Loa (chỉ cho xe đầu tiên)
+        if (this.currentLevel === 0) {
+            this.animateHandHintTo(this.speakerBtn.x, this.speakerBtn.y);
+        }
+
+        AudioManager.play(GameConstants.TET_ITEMS.INTRO_AUDIO);
+        const introDuration = AudioManager.getDuration(GameConstants.TET_ITEMS.INTRO_AUDIO) || 3;
+
+        this.time.delayedCall(introDuration * 1000, () => {
+            this.isSpeaking = false;
+            this._isMicActivated = false; // Luôn khóa Mic ở đầu level mới
+        });
+    }
+
+    private showMicAndMascot(): void {
+        const CFG = GameConstants.SPEAK_SCENE;
+
+        // Đảm bảo Mic hiện (vì lỡ bị mờ khi ghi âm)
+        this.microBtn.setAlpha(1).setScale(CFG.MICRO.SCALE);
+
+        // Hiện Mascot Idle
+        this.showMascot('idle');
+
+        // Hiện ngón tay chỉ vào mic (chỉ cho xe đầu tiên)
+        if (this.currentLevel === 0) {
+            this.animateHandHintTo(this.microBtn.x, this.microBtn.y);
+        }
+    }
+
+    private async finishGame(): Promise<void> {
+        const avgScore = this.levelScores.length > 0
+            ? this.levelScores.reduce((a, b) => a + b, 0) / this.levelScores.length
+            : 0;
+        const finalScore = Math.round(avgScore);
+
+        window.irukaGameState.currentScore = finalScore;
+        await this.endBackendSession(false);
+
+        // Ghi nhận tổng điểm hiện tại qua SDK
+        sdk.score(gameSDK.prepareSubmitData().finalScore);
+
+        this.time.delayedCall(1500, () => {
+            this.scene.start(SceneKeys.ConnectSixScene);
+        });
+    }
+
+    // ========================================
+    // BACKEND SESSION
+    // ========================================
+
+    private async startBackendSession(): Promise<void> {
+        console.log('[SpeakScene] Starting backend session with:', GameConstants.BACKEND_SESSION);
+
+        try {
+            const response = await voice.StartSession({
+                childId: GameConstants.BACKEND_SESSION.DEFAULT_CHILD_ID,
+                gameId: GameConstants.BACKEND_SESSION.GAME_ID,
+                lessonId: GameConstants.BACKEND_SESSION.LESSON_ID,
+                gameVersion: GameConstants.BACKEND_SESSION.GAME_VERSION,
+                gameType: voice.ExerciseType.NURSERY_RHYME,
+                ageLevel: GameConstants.BACKEND_SESSION.AGE_LEVEL,
+                testmode: GameConstants.VOICE_RECORDING.TEST_MODE,
+                // The local client uses BASE_URL from its own file which points to the proxy
+            });
+
+            if (response && response.sessionId) {
+                this.sessionId = response.sessionId;
+                this.sessionStarted = true;
+                console.log('[SpeakScene] Session started:', this.sessionId);
+            }
+        } catch (error) {
+            console.error('[SpeakScene] Start session fail:', error);
+        }
+    }
+
+    private async endBackendSession(isUserAborted: boolean = false): Promise<void> {
+        if (!this.sessionStarted) return;
+        try {
+            await voice.EndSession({
+                sessionId: this.sessionId,
+                totalQuestionsExpect: GameConstants.TET_ITEMS.TOTAL_LEVELS,
+                isUserAborted,
+                testmode: GameConstants.VOICE_RECORDING.TEST_MODE,
+                learner_id: GameConstants.BACKEND_SESSION.DEFAULT_CHILD_ID,
+                age_level: GameConstants.BACKEND_SESSION.AGE_LEVEL,
+            });
+            this.sessionStarted = false;
+            this.sessionId = '';
+            localStorage.removeItem('voice_session_id');
+        } catch (error) {
+            console.error('[SpeakScene] End session fail:', error);
+            this.sessionStarted = false;
+        }
+    }
+}
