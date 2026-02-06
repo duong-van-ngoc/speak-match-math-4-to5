@@ -1,0 +1,28 @@
+{
+  "dependencies": {
+    "@iruka-edu/game-core": "^0.3.0",
+    "@iruka-edu/mini-game-sdk": "^0.6.0",
+    "howler": "^2.2.4",
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "@types/howler": "^2.2.12",
+    "prettier": "3.6.2",
+    "vite": "^7.2.2"
+  },
+  "name": "game_coloring_geometry",
+  "description": "* Tạo cấu trúc:",
+  "homepage": ".",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "setup": "pnpm dlx dotenv-cli -- pnpm add @iruka-edu/game-core @iruka-edu/mini-game-sdk",
+    "iruka-game:validate": "pnpm dlx dotenv-cli -e .env -- iruka-game validate",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

@@ -1,0 +1,16 @@
+{
+  "teacher": {
+    "baseScale": 0.75,
+    "outlineKey": "outline",
+    "baseX_pct": 0.5,
+    "baseY_pct": 0.48,
+    "parts": [
+      {
+        "key": "1",
+        "offsetX": 0,
+        "offsetY": 0,
+        "scale": 0.75
+      }
+    ]
+  }
+}
