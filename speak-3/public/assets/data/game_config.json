@@ -1,0 +1,49 @@
+{
+    "voiceConfig": {
+        "keywords": "cái bát, cái thìa, đồng hồ, đèn ngủ",
+        "silenceTimeout": 3000,
+        "maxDuration": 30000
+    },
+    "vehicles": [
+        {
+            "id": "item_4",
+            "name": "Cái bát",
+            "imageKey": "item_bowl",
+            "imagePath": "assets/images/item/item_bowl.png",
+            "textKey": "text_bowl",
+            "textPath": "assets/text/text_bowl.png",
+            "audioKey": "audio_bowl",
+            "audioPath": "assets/audio/items/audio_bowl.mp3"
+        },
+        {
+            "id": "item_1",
+            "name": "Cái thìa",
+            "imageKey": "item_spoon",
+            "imagePath": "assets/images/item/item_spoon.png",
+            "textKey": "text_spoon",
+            "textPath": "assets/text/text_spoon.png",
+            "audioKey": "audio_spoon",
+            "audioPath": "assets/audio/items/audio_spoon.mp3"
+        },
+        {
+            "id": "item_2",
+            "name": "Cái đồng hồ",
+            "imageKey": "item_clock",
+            "imagePath": "assets/images/item/item_clock.png",
+            "textKey": "text_clock",
+            "textPath": "assets/text/text_clock.png",
+            "audioKey": "audio_clock",
+            "audioPath": "assets/audio/items/audio_clock.mp3"
+        },
+        {
+            "id": "item_3",
+            "name": "Đèn ngủ",
+            "imageKey": "item_lamp",
+            "imagePath": "assets/images/item/item_lamp.png",
+            "textKey": "text_lamp",
+            "textPath": "assets/text/text_lamp.png",
+            "audioKey": "audio_lamp",
+            "audioPath": "assets/audio/items/audio_lamp.mp3"
+        }
+    ]
+}
