@@ -1,0 +1,59 @@
+{
+    "voiceConfig": {
+        "keywords": "dưa hấu, cà rốt, quả táo, quả cam, bí ngô",
+        "silenceTimeout": 3000,
+        "maxDuration": 30000
+    },
+    "vehicles": [
+        {
+            "id": "fruit_1",
+            "name": "Dưa hấu",
+            "imageKey": "fruit_watermelon",
+            "imagePath": "assets/images/fruit/fruit_watermelon.png",
+            "textKey": "text_watermelon",
+            "textPath": "assets/text/text_watermelon.png",
+            "audioKey": "audio_watermelon",
+            "audioPath": "assets/audio/fruits/audio_watermelon.mp3"
+        },
+        {
+            "id": "fruit_2",
+            "name": "Cà rốt",
+            "imageKey": "fruit_carrot",
+            "imagePath": "assets/images/fruit/fruit_carrot.png",
+            "textKey": "text_carrot",
+            "textPath": "assets/text/text_carrot.png",
+            "audioKey": "audio_carrot",
+            "audioPath": "assets/audio/fruits/audio_carrot.mp3"
+        },
+        {
+            "id": "fruit_3",
+            "name": "Quả táo",
+            "imageKey": "fruit_apple",
+            "imagePath": "assets/images/fruit/fruit_apple.png",
+            "textKey": "text_apple",
+            "textPath": "assets/text/text_apple.png",
+            "audioKey": "audio_apple",
+            "audioPath": "assets/audio/fruits/audio_apple.mp3"
+        },
+        {
+            "id": "fruit_4",
+            "name": "Quả cam",
+            "imageKey": "fruit_orange",
+            "imagePath": "assets/images/fruit/fruit_orange.png",
+            "textKey": "text_orange",
+            "textPath": "assets/text/text_orange.png",
+            "audioKey": "audio_orange",
+            "audioPath": "assets/audio/fruits/audio_orange.mp3"
+        },
+        {
+            "id": "fruit_5",
+            "name": "Bí ngô",
+            "imageKey": "fruit_pumpkin",
+            "imagePath": "assets/images/fruit/fruit_pumpkin.png",
+            "textKey": "text_pumpkin",
+            "textPath": "assets/text/text_pumpkin.png",
+            "audioKey": "audio_pumpkin",
+            "audioPath": "assets/audio/fruits/audio_pumpkin.mp3"
+        }
+    ]
+}
