@@ -1,0 +1,21 @@
+{
+  "id": "game_coloring_geometry",
+  "name": "Game Tô Màu Hình Học",
+  "short_name": "Tô Màu Hình Học",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "thumb1.png",
+      "sizes": "308x211",
+      "type": "image/png"
+    },
+     {
+      "src": "thumb2.png",
+      "sizes": "343x170",
+      "type": "image/png"
+    }
+  ]
+}
