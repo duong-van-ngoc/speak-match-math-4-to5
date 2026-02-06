@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Speak 1</title>
+  <style>
+    * {
+      margin: 0 !important;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    body {
+      background-image: url('/assets/images/bg/background_game.jpg');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+    }
+
+    #game-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      touch-action: none;
+    }
+
+    .ui-btn {
+      position: absolute;
+      z-index: 9999;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    /* Reset: góc trên trái */
+    #btn-reset {
+      top: 2%;
+      right: 2%;
+    }
+
+    .ui-btn:hover {
+      transform: scale(1.12);
+      transition: 0.15s;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="game-container"></div>
+  <img id="btn-reset" class="ui-btn" src="/assets/images/ui/btn_reset.png" alt="Reset" />
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>

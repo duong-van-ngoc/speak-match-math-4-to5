@@ -1,0 +1,50 @@
+{
+    "voiceConfig": {
+        "keywords": "con gấu, bút màu, phiếu bé ngoan, bóng rổ",
+        "silenceTimeout": 3000,
+        "maxDuration": 30000
+    },
+    "vehicles": [
+        {
+            "id": "item_2",
+            "name": "Con gấu",
+            "imageKey": "item_bear",
+            "imagePath": "assets/images/item/item_bear.png",
+            "textKey": "text_bear",
+            "textPath": "assets/text/text_bear.png",
+            "audioKey": "audio_bear",
+            "audioPath": "assets/audio/items/audio_bear.mp3"
+        },
+        {
+            "id": "item_3",
+            "name": "Bút màu",
+            "imageKey": "item_pencil",
+            "imagePath": "assets/images/item/item_pencil.png",
+            "textKey": "text_pencil",
+            "textPath": "assets/text/text_pencil.png",
+            "audioKey": "audio_pencil",
+            "audioPath": "assets/audio/items/audio_pencil.mp3",
+            "offsetY": -40
+        },
+        {
+            "id": "item_4",
+            "name": "Phiếu bé ngoan",
+            "imageKey": "item_sticker",
+            "imagePath": "assets/images/item/item_sticker.png",
+            "textKey": "text_sticker",
+            "textPath": "assets/text/text_sticker.png",
+            "audioKey": "audio_sticker",
+            "audioPath": "assets/audio/items/audio_sticker.mp3"
+        },
+        {
+            "id": "item_1",
+            "name": "Bóng rổ",
+            "imageKey": "item_ball",
+            "imagePath": "assets/images/item/item_ball.png",
+            "textKey": "text_ball",
+            "textPath": "assets/text/text_ball.png",
+            "audioKey": "audio_ball",
+            "audioPath": "assets/audio/items/audio_ball.mp3"
+        }
+    ]
+}
