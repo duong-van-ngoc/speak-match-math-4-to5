@@ -1,0 +1,49 @@
+{
+    "voiceConfig": {
+        "keywords": "cái trống, viên bi, búp bê, con thỏ",
+        "silenceTimeout": 3000,
+        "maxDuration": 30000
+    },
+    "vehicles": [
+        {
+            "id": "item_1",
+            "name": "Cái trống",
+            "imageKey": "item_drum",
+            "imagePath": "assets/images/item/item_drum.png",
+            "textKey": "text_drum",
+            "textPath": "assets/text/text_drum.png",
+            "audioKey": "audio_drum",
+            "audioPath": "assets/audio/items/audio_drum.mp3"
+        },
+        {
+            "id": "item_2",
+            "name": "Viên bi",
+            "imageKey": "item_marble",
+            "imagePath": "assets/images/item/item_marble.png",
+            "textKey": "text_marble",
+            "textPath": "assets/text/text_marble.png",
+            "audioKey": "audio_marble",
+            "audioPath": "assets/audio/items/audio_marble.mp3"
+        },
+        {
+            "id": "item_4",
+            "name": "Búp bê",
+            "imageKey": "item_doll",
+            "imagePath": "assets/images/item/item_doll.png",
+            "textKey": "text_doll",
+            "textPath": "assets/text/text_doll.png",
+            "audioKey": "audio_doll",
+            "audioPath": "assets/audio/items/audio_doll.mp3"
+        },
+        {
+            "id": "item_3",
+            "name": "Con thỏ",
+            "imageKey": "item_rabbit",
+            "imagePath": "assets/images/item/item_rabbit.png",
+            "textKey": "text_rabbit",
+            "textPath": "assets/text/text_rabbit.png",
+            "audioKey": "audio_rabbit",
+            "audioPath": "assets/audio/items/audio_rabbit.mp3"
+        }
+    ]
+}
