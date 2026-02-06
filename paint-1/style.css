@@ -1,0 +1,94 @@
+/* style.css */
+html,
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+#game-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    touch-action: none;/* màu nền khi canvas nhỏ hơn màn hình */
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
+canvas {
+    display: block; /* loại bỏ margin tự động của canvas */
+    margin-left: 0 !important;
+    margin-top: 0 !important;
+    margin-right: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+/* 2. THÊM đoạn style mới cho layer nền */
+.bg-layer {
+    position: absolute;
+    inset: 0; /* Full màn hình */
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: 0; /* Mặc định ẩn */
+    transition: opacity 0.5s ease-in-out; /* Hiệu ứng mượt trong 0.5s */
+    pointer-events: none; /* Để không chặn click vào game */
+    z-index: 0; /* Nằm dưới cùng */
+}
+
+.bg-layer.visible {
+    opacity: 1; /* Khi có class này sẽ hiện lên */
+}
+
+/* Canvas game nằm trên 2 bg */
+#game-container > canvas {
+    position: relative;
+    z-index: 1;
+}
+
+/* --- MÀN HÌNH CẢNH BÁO (KÍNH MỜ) --- */
+#rotate-msg {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    font-size: 2em;
+    font-family: 'sv-dumlings', sans-serif;
+    font-weight: bold;
+    text-align: center;
+    padding-top: 40%;
+    z-index: 9999;
+}
+
+/* Các nút UI */
+.ui-btn {
+    position: absolute;
+    width: 5%; /*chuẩn PC
+    /* height: auto; */
+    z-index: 9999;
+    cursor: pointer;
+    user-select: none;
+    touch-action: none;
+}
+
+/* Reset: góc trên trái */
+#btn-reset {
+    top: 2%;
+    right: 2%;
+    width: 5%;
+    height: auto;
+}
+
+.ui-btn:hover {
+    transform: scale(1.12);
+    transition: 0.15s;
+}
