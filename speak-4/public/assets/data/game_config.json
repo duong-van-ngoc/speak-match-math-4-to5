@@ -1,0 +1,50 @@
+{
+    "voiceConfig": {
+        "keywords": "con chó, con mèo, con vịt, con lợn",
+        "silenceTimeout": 3000,
+        "maxDuration": 30000
+    },
+    "vehicles": [
+        {
+            "id": "animal_1",
+            "name": "Con chó",
+            "imageKey": "animal_dog",
+            "imagePath": "assets/images/animal/animal_dog.png",
+            "textKey": "text_dog",
+            "textPath": "assets/text/text_dog.png",
+            "audioKey": "audio_dog",
+            "audioPath": "assets/audio/animals/audio_dog.mp3"
+        },
+        {
+            "id": "animal_2",
+            "name": "Con mèo",
+            "imageKey": "animal_cat",
+            "imagePath": "assets/images/animal/animal_cat.png",
+            "textKey": "text_cat",
+            "textPath": "assets/text/text_cat.png",
+            "audioKey": "audio_cat",
+            "audioPath": "assets/audio/animals/audio_cat.mp3",
+            "offsetY": 3
+        },
+        {
+            "id": "animal_3",
+            "name": "Con vịt",
+            "imageKey": "animal_duck",
+            "imagePath": "assets/images/animal/animal_duck.png",
+            "textKey": "text_duck",
+            "textPath": "assets/text/text_duck.png",
+            "audioKey": "audio_duck",
+            "audioPath": "assets/audio/animals/audio_duck.mp3"
+        },
+        {
+            "id": "animal_4",
+            "name": "Con lợn",
+            "imageKey": "animal_pig",
+            "imagePath": "assets/images/animal/animal_pig.png",
+            "textKey": "text_pig",
+            "textPath": "assets/text/text_pig.png",
+            "audioKey": "audio_pig",
+            "audioPath": "assets/audio/animals/audio_pig.mp3"
+        }
+    ]
+}
