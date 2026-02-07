@@ -1,0 +1,18 @@
+{
+    "colorLevels": [
+        {
+            "label": "Bóng",
+            "totalToPaint": 2,
+            "targetColor": "ff3b30",
+            "assetType": "ball",
+            "bannerTextKey": "question1"
+        },
+        {
+            "label": "Bi",
+            "totalToPaint": 3,
+            "targetColor": "ffcc00",
+            "assetType": "marble",
+            "bannerTextKey": "question2"
+        }
+    ]
+}
