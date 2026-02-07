@@ -1,4 +1,4 @@
-    import Phaser from 'phaser';
+import Phaser from 'phaser';
 
 export type NumBox = {
   n: number;
@@ -13,6 +13,9 @@ export type NumBox = {
   numberImage?: Phaser.GameObjects.Image;
   image?: Phaser.GameObjects.Image;
   setNumberTint?: (color?: number) => void;
+  renderTexture?: Phaser.GameObjects.RenderTexture;
+  paintProgress?: number;
+  paintedPixels?: Set<string>;
 };
 
 export function makeTopBanner(scene: Phaser.Scene, text: string) {

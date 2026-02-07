@@ -28,28 +28,28 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-    private launchColor() {
-      this.scene.launch('ColorScene', { gameData: GAME_DATA });
-      this.scene.bringToTop('ColorScene');
-    }
-
-    private launchCircleMark() {
-      this.scene.stop('ColorScene');
-      this.scene.launch('CircleMarkScene', { gameData: GAME_DATA });
-      this.scene.bringToTop('CircleMarkScene');
-    }
-
-    private launchCount(data: { levels: any[] }) {
-      this.scene.stop('CircleMarkScene');
-      this.scene.launch('CountConnectScene', { gameData: GAME_DATA, ...data });
-      this.scene.bringToTop('CountConnectScene');
-    }
-
-    private launchEnd(payload: FlowEndPayload) {
-      this.scene.stop('CountConnectScene');
-
-      // mở EndGameScene của bạn, truyền payload nếu muốn show kết quả
-      this.scene.launch('EndGameScene', { payload });
-      this.scene.bringToTop('EndGameScene');
-    }
+  private launchColor() {
+    this.scene.launch('ColorScene', { gameData: GAME_DATA });
+    this.scene.bringToTop('ColorScene');
   }
+
+  private launchCircleMark() {
+    this.scene.stop('ColorScene');
+    this.scene.launch('CircleMarkScene', { gameData: GAME_DATA });
+    this.scene.bringToTop('CircleMarkScene');
+  }
+
+  private launchCount(data: { levels: any[] }) {
+    this.scene.stop('CircleMarkScene');
+    this.scene.launch('CountConnectScene', { gameData: GAME_DATA, ...data });
+    this.scene.bringToTop('CountConnectScene');
+  }
+
+  private launchEnd(payload: FlowEndPayload) {
+    this.scene.stop('CountConnectScene');
+
+    // mở EndGameScene của bạn, truyền payload nếu muốn show kết quả
+    this.scene.launch('EndGameScene', { payload });
+    this.scene.bringToTop('EndGameScene');
+  }
+}

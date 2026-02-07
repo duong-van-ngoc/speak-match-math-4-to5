@@ -1,28 +1,28 @@
 // CountConnectScene.ts
-    import Phaser from 'phaser';
-    import type { GameData } from '../data/gameData';
-    import type { NumBox } from '../ui/helpers';
-    import { FLOW_GO_COUNT } from '../flow/events';
-    import { BOARD_ASSET_KEYS, BIRD_ASSET, DUCK_ASSET, loadAssetGroups } from '../assets';
-    import AudioManager from '../AudioManager';
+import Phaser from 'phaser';
+import type { GameData } from '../data/gameData';
+import type { NumBox } from '../ui/helpers';
+import { FLOW_GO_COUNT } from '../flow/events';
+import { BOARD_ASSET_KEYS, BIRD_ASSET, DUCK_ASSET, loadAssetGroups } from '../assets';
+import AudioManager from '../AudioManager';
 
-    type SpriteOrArc =
+type SpriteOrArc =
     | Phaser.GameObjects.Arc
     | Phaser.GameObjects.Image
     | Phaser.GameObjects.Container;
 
-    // type DragState removed (unused)
+// type DragState removed (unused)
 
-    type CountLevel = {
-        label: string;
-        counts: [number, number];
-        objectTextureKeys?: (string | undefined)[];
-        objectFill: number;
-        objectStroke: number;
-        bannerTextKey: string;
-        voiceGuideKey: string;
-    };
-    export default class CircleMarkScene extends Phaser.Scene {
+type CountLevel = {
+    label: string;
+    counts: [number, number];
+    objectTextureKeys?: (string | undefined)[];
+    objectFill: number;
+    objectStroke: number;
+    bannerTextKey: string;
+    voiceGuideKey: string;
+};
+export default class CircleMarkScene extends Phaser.Scene {
     // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
     private playGuideVoiceForCurrentLevel() {
         AudioManager.stopGuideVoices();
@@ -128,13 +128,13 @@
         this.scale.on('resize', this.layoutBoard, this);
 
         this.levelLabel = this.add
-        .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
-            fontFamily: 'Baloo, Arial',
-            fontSize: '26px',
-            color: '#0b1b2a',
-        })
-        .setOrigin(0.5, 0)
-        .setDepth(6);
+            .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
+                fontFamily: 'Baloo, Arial',
+                fontSize: '26px',
+                color: '#0b1b2a',
+            })
+            .setOrigin(0.5, 0)
+            .setDepth(6);
 
         this.updateLevelLabel();
         this.levelLabel.setVisible(false);
@@ -177,13 +177,13 @@
         // Hiển thị bàn tay hướng dẫn khoanh khi vào màn chơi
         this.showGuideHand(true);
         this.input.once('pointerdown', () => {
-        this.hideGuideHand();
-        // Nếu bé chưa thao tác sau 3s thì hiện lại bàn tay
-        this.guideHandTimeout = this.time.delayedCall(3000, () => {
-            if (!this.circling) {
-            this.showGuideHand(false);
-            }
-        });
+            this.hideGuideHand();
+            // Nếu bé chưa thao tác sau 3s thì hiện lại bàn tay
+            this.guideHandTimeout = this.time.delayedCall(3000, () => {
+                if (!this.circling) {
+                    this.showGuideHand(false);
+                }
+            });
         });
 
         this.input.on('pointerdown', this.onDown, this);
@@ -191,13 +191,13 @@
         this.input.on('pointerup', this.onUp, this);
 
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-        this.scale.off('resize', this.layoutBoard, this);
-        this.hideGuideHand();
+            this.scale.off('resize', this.layoutBoard, this);
+            this.hideGuideHand();
 
-        // Reset các asset để khi chơi lại sẽ tạo mới
-        this.boardImage = undefined;
-        this.bannerBg = undefined;
-        this.bannerTextImage = undefined;
+            // Reset các asset để khi chơi lại sẽ tạo mới
+            this.boardImage = undefined;
+            this.bannerBg = undefined;
+            this.bannerTextImage = undefined;
         });
     }
 
@@ -226,7 +226,7 @@
         }
 
         // Giảm kích thước asset nhỏ lại để vừa board hơn
-        const img = this.add.image(0, 0, textureKey).setOrigin(0.5).setScale(0.58);
+        const img = this.add.image(0, 0, textureKey).setOrigin(0.5).setScale(1.0);
         const frameW = img.width;
         const frameH = img.height;
         // Để tránh lộ đường cắt ở giữa, cho overlap 2px
@@ -237,15 +237,16 @@
             img.setCrop(frameW / 2 - overlap, 0, frameW / 2 + overlap, frameH);
         }
         container.add(img);
+        (container as any).side = side;
         this.setClusterInteractive(container, true);
         return container;
     }
 
     private setClusterInteractive(container: Phaser.GameObjects.Container, enabled: boolean) {
         container.iterate((child: any) => {
-        if (!child) return;
-        if (enabled) child.setInteractive?.({ useHandCursor: true });
-        else child.disableInteractive?.();
+            if (!child) return;
+            if (enabled) child.setInteractive?.({ useHandCursor: true });
+            else child.disableInteractive?.();
         });
     }
 
@@ -317,7 +318,6 @@
         const wRaw = maxX - minX;
         const hRaw = maxY - minY;
         if (wRaw < 120 || hRaw < 120) {
-            this.cameras.main.shake(120, 0.01);
             this.playWrongSound();
             this.circling = undefined;
             return;
@@ -342,7 +342,6 @@
         const inBottomLeftCorner = cx < board.x + cornerPadX && cy > board.bottom - cornerPadY;
         const inBottomRightCorner = cx > board.right - cornerPadX && cy > board.bottom - cornerPadY;
         if (inTopLeftCorner || inTopRightCorner || inBottomLeftCorner || inBottomRightCorner) {
-            this.cameras.main.shake(120, 0.01);
             this.playWrongSound();
             this.circling = undefined;
             return;
@@ -352,7 +351,6 @@
         for (let i = 0; i < pts.length; i++) {
             const p = pts[i];
             if (p.x < minXBoard || p.x > maxXBoard || p.y < minYBoard || p.y > maxYBoard) {
-                this.cameras.main.shake(120, 0.01);
                 this.playWrongSound();
                 this.circling = undefined;
                 return;
@@ -386,8 +384,7 @@
             if (inHalf) inside++;
         });
         // Chỉ cần 30% số điểm nằm trong vùng hợp lệ là được
-            if (inside < pts.length * 0.3) {
-            this.cameras.main.shake(120, 0.01);
+        if (inside < pts.length * 0.3) {
             AudioManager.stopGuideVoices();
             AudioManager.play('sfx_wrong');
             this.circling = undefined;
@@ -450,7 +447,7 @@
             const tex = level.objectTextureKeys?.[0];
             if (tex && this.textures.exists(tex)) {
                 // Giảm scale để asset nhỏ hơn, đồng bộ với buildHalfAssetContainer
-                const img = this.add.image(0, 0, tex).setOrigin(0.5).setScale(0.58);
+                const img = this.add.image(0, 0, tex).setOrigin(0.5).setScale(1.0);
                 const frameW = img.width;
                 const frameH = img.height;
                 // Để tránh lộ đường cắt ở giữa, cho overlap 2px
@@ -509,9 +506,9 @@
 
     private advanceCountLevel() {
         if (this.currentCountLevelIndex + 1 < this.countLevels.length) {
-        this.currentCountLevelIndex++;
-        this.resetForNextCountLevel();
-        return;
+            this.currentCountLevelIndex++;
+            this.resetForNextCountLevel();
+            return;
         }
 
         // xong 2 level -> qua flow tiếp
@@ -529,19 +526,19 @@
 
         const w = this.scale.width;
         const h = this.scale.height;
-        const maxW = Math.min(1100, w * 0.92);
-        const maxH = Math.min(540, h * 0.8);
+        const maxW = Math.min(1400, w * 0.85); // board nhỏ lại
+        const maxH = Math.min(840, h * 0.85); // board nhỏ lại
 
         const ratio = this.getBoardAssetRatio();
         let boardW = maxW;
         let boardH = maxH;
 
         if (ratio) {
-        boardH = boardW / ratio;
-        if (boardH > maxH) {
-            boardH = maxH;
-            boardW = boardH * ratio;
-        }
+            boardH = boardW / ratio;
+            if (boardH > maxH) {
+                boardH = maxH;
+                boardW = boardH * ratio;
+            }
         }
 
         const boardX = (w - boardW) / 2;
@@ -561,22 +558,22 @@
         this.boardInnerRect.setTo(innerX, innerY, innerW, innerH);
         // Đã bỏ thang số
 
-        const objSpacing = Math.min(innerW * 0.5, 300);
+        const objSpacing = Math.min(innerW * 0.5, 450);
         const objY = innerY + innerH * 0.72;
 
         this.objectPositions = {
-        leftX: this.boardInnerRect.centerX - objSpacing / 2,
-        rightX: this.boardInnerRect.centerX + objSpacing / 2,
-        y: objY,
+            leftX: this.boardInnerRect.centerX - objSpacing / 2,
+            rightX: this.boardInnerRect.centerX + objSpacing / 2,
+            y: objY,
         };
 
         this.createBoardImageIfNeeded();
         if (this.boardImage) {
-        this.boardImage.setPosition(boardX + boardW / 2, boardY + boardH / 2);
-        this.boardImage.setDisplaySize(boardW, boardH);
-        this.boardFallbackGfx.clear();
+            this.boardImage.setPosition(boardX + boardW / 2, boardY + boardH / 2);
+            this.boardImage.setDisplaySize(boardW, boardH);
+            this.boardFallbackGfx.clear();
         } else {
-        this.drawBoardFrame();
+            this.drawBoardFrame();
         }
 
         // Đã bỏ thang số
@@ -593,12 +590,12 @@
 
         this.boardFallbackGfx.clear();
         this.boardFallbackGfx
-        .fillStyle(0xffffff, 1)
-        .fillRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
+            .fillStyle(0xffffff, 1)
+            .fillRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
 
         this.boardFallbackGfx
-        .lineStyle(6, 0x1d4ed8, 1)
-        .strokeRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
+            .lineStyle(6, 0x1d4ed8, 1)
+            .strokeRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
     }
 
 
@@ -622,21 +619,21 @@
         if (!this.fixedConnections.length) return;
 
         this.fixedConnections.forEach(({ bag, box }) => {
-        let bounds;
-        if (box.rect) bounds = box.rect.getBounds();
-        else if (box.image) bounds = box.image.getBounds();
-        else return;
+            let bounds;
+            if (box.rect) bounds = box.rect.getBounds();
+            else if (box.image) bounds = box.image.getBounds();
+            else return;
 
-        const startX = (bag as any).x;
-        const startY = (bag as any).y;
-        const endX = bounds.centerX;
-        const endY = bounds.centerY;
+            const startX = (bag as any).x;
+            const startY = (bag as any).y;
+            const endX = bounds.centerX;
+            const endY = bounds.centerY;
 
-        gfx.lineStyle(this.connectionLineStyle.width, this.connectionLineStyle.color, this.connectionLineStyle.alpha);
-        gfx.beginPath();
-        gfx.moveTo(startX, startY);
-        gfx.lineTo(endX, endY);
-        gfx.strokePath();
+            gfx.lineStyle(this.connectionLineStyle.width, this.connectionLineStyle.color, this.connectionLineStyle.alpha);
+            gfx.beginPath();
+            gfx.moveTo(startX, startY);
+            gfx.lineTo(endX, endY);
+            gfx.strokePath();
         });
     }
 
@@ -681,10 +678,10 @@
     private positionBannerAssets() {
         if (!this.bannerBg) return;
 
-        const maxWidth = Math.min(this.scale.width * 0.9, 720);
+        const maxWidth = Math.min(this.scale.width * 0.95, 1500);
         const bgRatio = this.getTextureRatio(this.bannerBgKey) ?? 1;
 
-        const targetWidth = Math.min(maxWidth, this.boardRect.width * 0.9);
+        const targetWidth = Math.min(maxWidth, this.boardRect.width * 0.95);
         const targetHeight = bgRatio ? targetWidth / bgRatio : this.bannerBg.displayHeight;
 
         const x = this.boardRect.centerX;
@@ -698,7 +695,9 @@
         const key = level.bannerTextKey;
         if (this.bannerTextImage && key) {
             const textRatio = this.getTextureRatio(key) ?? 1;
-            const textWidth = targetWidth * 0.8;
+            // Màn Chim dùng textWidth nhỏ hơn vì text dài hơn
+            const textWidthRatio = level.label === BIRD_ASSET.label ? 0.87 : 0.8;
+            const textWidth = targetWidth * textWidthRatio;
             const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
             this.bannerTextImage.setDisplaySize(textWidth, textHeight);
             this.bannerTextImage.setPosition(x, y);
@@ -731,47 +730,103 @@
         const bagObj = this.bags.find((b) => !this.locked.has(b));
         if (!bagObj) return;
 
-        const bag = bagObj as Phaser.GameObjects.Container;
+        const bounds = bagObj.getBounds();
+        let cx = bounds.centerX;
+        let cy = bounds.centerY;
+
+        // Mặc định bán kính toàn bộ (hơi dư)
+        let rx = Math.max(bounds.width, bounds.height) / 2 + 30;
+        let ry = rx;
+
+        // Nếu có side, điều chỉnh tâm và giảm bán kính để khoanh vùng con
+        const side = (bagObj as any).side;
+        const isDuck = this.getCurrentCountLevel().label === DUCK_ASSET.label;
+
+        if (side === 'left') {
+            if (isDuck) {
+                // Với màn Vịt, vùng trái (đầu vịt) nằm ở góc trên bên phải của nửa trái
+                // Dời tâm về phía gần giữa board và lên trên
+                cx -= bounds.width * 0.15;
+                cy -= bounds.height * 0.25;
+                rx = bounds.width * 0.15;
+                ry = bounds.width * 0.15;
+            } else {
+                cx -= bounds.width / 4;
+                rx = bounds.width / 4;
+                ry = bounds.height / 2;
+            }
+        } else if (side === 'right') {
+            cx += bounds.width / 4;
+            rx = bounds.width / 4;
+            ry = bounds.height / 2;
+        }
 
         this.guideHand = this.add
-            .image(bag.x ?? 0, bag.y ?? 0, 'guide_hand')
-            .setOrigin(0.2, 0.1)
-            .setScale(0.5)
+            .image(cx + rx, cy, 'guide_hand') // Bắt đầu từ bên phải của vòng tròn con
+            .setOrigin(0, 0)
+            .setScale(0.8) // Tăng size hand lên chút cho dễ nhìn
             .setDepth(100)
-            .setAlpha(0.92);
+            .setAlpha(1);
 
-        const r = 70;
         this.guideHandTween = this.tweens.addCounter({
             from: 0,
             to: Math.PI * 2,
-            duration: 1200,
+            duration: 1800, // Chậm lại chút cho dễ theo dõi
             repeat: -1,
             onUpdate: (tw) => {
-                const a = tw.getValue() ?? 0;
-                this.guideHand!.setPosition((bag.x ?? 0) + Math.cos(a) * r, (bag.y ?? 0) + Math.sin(a) * r);
+                const val = tw.getValue();
+                const a = (typeof val === 'number') ? val : 0;
+                if (this.guideHand) {
+                    this.guideHand.setPosition(
+                        cx + Math.cos(a) * rx,
+                        cy + Math.sin(a) * ry
+                    );
+                }
             },
         });
 
-        if (first) this.guideHandShown = true;
+        this.guideHandShown = true;
     }
+
+
 
     private hideGuideHand() {
         if (this.guideHand) {
-        this.guideHand.destroy();
-        this.guideHand = undefined;
+            this.guideHand.destroy();
+            this.guideHand = undefined;
         }
         if (this.guideHandTween) {
-        this.guideHandTween.stop();
-        this.guideHandTween = undefined;
+            this.guideHandTween.stop();
+            this.guideHandTween = undefined;
         }
         if (this.guideHandTimeout) {
-        this.guideHandTimeout.remove(false);
-        this.guideHandTimeout = undefined;
+            this.guideHandTimeout.remove(false);
+            this.guideHandTimeout = undefined;
         }
     }
 
-    // Phát âm thanh sai
+    // Phát âm thanh sai kèm animation lắc asset - reset về vị trí gốc sau khi xong
     private playWrongSound() {
+        // Lắc các bags
+        this.bags.forEach((bag) => {
+            const container = bag as Phaser.GameObjects.Container;
+            const originalX = container.x;
+            const intensity = 8;
+
+            this.tweens.killTweensOf(container);
+            this.tweens.add({
+                targets: container,
+                x: originalX + intensity,
+                duration: 40,
+                yoyo: true,
+                repeat: 5,
+                ease: 'Sine.inOut',
+                onComplete: () => {
+                    container.x = originalX; // Đảm bảo reset về vị trí gốc
+                }
+            });
+        });
+
         AudioManager.stopGuideVoices();
         AudioManager.play('sfx_wrong');
     }

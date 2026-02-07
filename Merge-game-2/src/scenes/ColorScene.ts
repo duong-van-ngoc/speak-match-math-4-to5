@@ -27,7 +27,7 @@ export class ColorScene extends Phaser.Scene {
   private boardInnerRect = new Phaser.Geom.Rectangle();
   private readonly boardAssetKey = BOARD_ASSET_KEYS.frame;
 
-  private paletteDots: Array<Phaser.GameObjects.Arc | Phaser.GameObjects.Image> = [];
+  private paletteDots: Array<Phaser.GameObjects.Arc | Phaser.GameObjects.Image | Phaser.GameObjects.Container> = [];
   private paletteCenter?: { x: number; y: number };
   private paletteSelectedIndex = 0;
   private paletteDefs: Array<{ c: number; label: string; spriteKey?: string }> = [
@@ -50,19 +50,20 @@ export class ColorScene extends Phaser.Scene {
   private bannerBg?: Phaser.GameObjects.Image;
   private bannerTextImage?: Phaser.GameObjects.Image;
   private readonly bannerBgKey = BOARD_ASSET_KEYS.bannerBg;
-  // Remove bannerTextKey, use per-level keys instead
-
-  // Add per-level banner text keys for ColorScene only (not using add-text.png)
-  // Level 1: 'question1' (Question (2).png), Level 2: 'question2' (Question (1).png)
-  // Removed bannerTextKeys, now per-level in colorLevels
-
-  // private guideHand?: Phaser.GameObjects.Image;
-  // private guideHandTween?: Phaser.Tweens.Tween;
 
   private paletteGuideHand?: Phaser.GameObjects.Image;
   private paletteGuideHandTween?: Phaser.Tweens.Tween;
   private paletteGuideHandTimeout?: Phaser.Time.TimerEvent;
   private paletteGuideHandShown = false;
+
+  private boxGuideHand?: Phaser.GameObjects.Image;
+  private boxGuideHandTween?: Phaser.Tweens.Tween;
+
+  private paintBrushRadius = 38; // Bán kính cọ vẽ
+  private totalPaintableArea = 0; // Tổng diện tích có thể tô của tất cả các ô số
+
+  private isPainting = false;
+  private currentPaintingBox?: NumBox;
 
   constructor() {
     super('ColorScene');
@@ -136,14 +137,17 @@ export class ColorScene extends Phaser.Scene {
     this.playGuideVoiceForCurrentLevel();
 
     this.boxes.forEach((b) => {
-      if (b.image) b.image.on('pointerdown', () => this.tryPaint(b));
+      if (b.image) b.image.on('pointerdown', () => this.onBoxClick(b));
     });
+
+    this.input.on('pointermove', this.onPointerMove, this);
+    this.input.on('pointerup', this.onPointerUp, this);
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off('resize', this.layoutBoard, this);
     });
 
-    this.input.once('pointerdown', () => {
+    this.input.once('pointerup', () => {
       this.hidePaletteGuideHand();
       // Nếu bé chưa chọn màu sau 3s thì hiện lại bàn tay
       this.paletteGuideHandTimeout = this.time.delayedCall(3000, () => {
@@ -185,10 +189,10 @@ export class ColorScene extends Phaser.Scene {
   private createNumberAssets() {
     this.boxes = [];
     const midX = this.boardRect.centerX;
-      const numberY = this.numberRowY ?? 100;
+    const numberY = this.numberRowY ?? 100;
     const maxNumber = this.dataGame.maxNumber;
-      const scale = 0.38;
-    const gap = 0;
+    const scale = 0.57;
+    const gap = -30;
     let totalW = 0;
     const widths: number[] = [];
     for (let i = 0; i < maxNumber; i++) {
@@ -210,10 +214,28 @@ export class ColorScene extends Phaser.Scene {
       const n = i + 1;
       const numberKey = `number_${n}`;
       let image: Phaser.GameObjects.Image | undefined = undefined;
+      let rt: Phaser.GameObjects.RenderTexture | undefined = undefined;
+
       if (this.textures.exists(numberKey)) {
-        image = this.add.image(cx, numberY, numberKey).setOrigin(0.5);
+        // Offset riêng cho số 4, 5 để không bị dính với số 3
+        const xOffset = n === 5 ? 9 : (n === 4 ? 6 : 0);
+        image = this.add.image(cx + xOffset, numberY, numberKey).setOrigin(0.5);
         image.setScale(scale, scale);
         image.setInteractive({ useHandCursor: true });
+
+        // Depth tăng dần để số bên phải đè lên viền số bên trái (tránh viền đôi)
+        const baseDepth = 10 + i * 2;
+
+        // Tạo RenderTexture để vẽ lên đó
+        rt = this.add.renderTexture(image.x, image.y, image.displayWidth, image.displayHeight);
+        rt.setOrigin(0.5);
+        rt.setDepth(baseDepth); // rt nằm dưới image số để số/viền luôn ở trên
+        rt.setVisible(true); // Đảm bảo renderTexture luôn hiển thị
+
+        // Clear tint trên image gốc
+        image.clearTint();
+        image.setDepth(baseDepth + 1); // Đảm bảo image có depth CAO HƠN RT để số và viền luôn hiện trên màu tô
+        image.setVisible(true); // Đảm bảo image luôn hiển thị
       }
       this.boxes.push({
         n,
@@ -225,10 +247,21 @@ export class ColorScene extends Phaser.Scene {
         w: 0,
         h: 0,
         painted: false,
-        setNumberTint: image ? (color?: number) => { if (color !== undefined) image.setTint(color); } : undefined,
+        setNumberTint: undefined,
+        renderTexture: rt,
+        paintProgress: 0,
+        paintedPixels: new Set<string>(),
       });
       cx += widths[i] / 2 + gap;
+
+      // Tính toán tổng diện tích có thể tô (số pixel ước tính)
+      if (image) {
+        const imageArea = (image.width * scale) * (image.height * scale);
+        const brushArea = Math.PI * this.paintBrushRadius * this.paintBrushRadius;
+        this.totalPaintableArea += Math.ceil(imageArea / (brushArea * 0.5));
+      }
     }
+    this.totalPaintableArea = 30;
   }
 
   private createPaletteElements() {
@@ -237,22 +270,22 @@ export class ColorScene extends Phaser.Scene {
       // Nếu là image thì setInteractive ở đây, còn container đã set trong createPaletteDot
       if (dot instanceof Phaser.GameObjects.Image) {
         dot.setInteractive({ useHandCursor: true });
-        dot.on('pointerdown', () => this.applyPaletteSelection(index));
+        dot.on('pointerup', () => this.applyPaletteSelection(index));
       } else {
         // container: đã chuyển pointerdown từ fill sang container trong createPaletteDot
-        dot.on('pointerdown', () => this.applyPaletteSelection(index));
+        dot.on('pointerup', () => this.applyPaletteSelection(index));
       }
       this.paletteDots.push(dot);
     });
   }
 
   // private createObjectElements() { ... } // Đã bỏ vì không dùng
-    // Đã bỏ phần thân hàm thừa ngoài class
+  // Đã bỏ phần thân hàm thừa ngoài class
   private createDuckChickenObjects() {
     // Hiển thị asset vịt/chim
     this.objects = [];
     // Creates a single placeholder object that will be textured by the current level.
-      const sprite = this.add.image(0, 0, 'icon_duck').setInteractive().setScale(0.48);
+    const sprite = this.add.image(0, 0, 'icon_duck').setInteractive().setScale(0.7);
     this.objects.push(sprite);
   }
 
@@ -262,7 +295,7 @@ export class ColorScene extends Phaser.Scene {
     this.objects.forEach((obj, i) => {
       const textureKey = level.objectTextureKeys[i] ?? level.objectTextureKeys[0]!;
       if (this.textures.exists(textureKey)) {
-          obj.setTexture(textureKey).setVisible(true).setScale(0.48);
+        obj.setTexture(textureKey).setVisible(true).setScale(0.7);
       } else {
         obj.setVisible(false);
       }
@@ -290,7 +323,12 @@ export class ColorScene extends Phaser.Scene {
       if (box.image) {
         box.image.clearTint();
       }
+      if (box.renderTexture) {
+        box.renderTexture.clear();
+      }
       box.painted = false;
+      box.paintProgress = 0;
+      box.paintedPixels?.clear();
     });
 
     this.applyCurrentColorLevel();
@@ -312,32 +350,154 @@ export class ColorScene extends Phaser.Scene {
     });
   }
 
-  private tryPaint(box: NumBox) {
-    if (box.painted || !this.selected) {
-      this.cameras.main.shake(120, 0.01);
+  private onBoxClick(box: NumBox) {
+    console.log(`[onBoxClick] box.n: ${box.n}, level.total: ${this.getCurrentColorLevel().total}, selectedColor: ${this.selected}, targetColor: ${this.getCurrentColorLevel().targetColor}`);
+
+    if (!this.selected) {
+      if (box.image) this.flashWrongEffect(box.image);
       this.playWrongSound();
-      // Không hiện lại bàn tay ở ô màu khi tô sai
+      this.showPaletteGuideHand(false);
       return;
     }
 
     const level = this.getCurrentColorLevel();
     const isCorrect = this.selected === level.targetColor && box.n === level.total;
 
-    if (!isCorrect) {
-      this.cameras.main.shake(120, 0.012);
+    if (box.painted) {
+      if (box.image) this.flashWrongEffect(box.image);
       this.playWrongSound();
-      // Không hiện lại bàn tay ở ô màu khi tô sai
+      if (this.selected) {
+        this.showBoxGuideHand();
+      } else {
+        this.showPaletteGuideHand(false);
+      }
       return;
     }
 
-    if (box.image) {
-      box.image.setTint(level.targetColor);
+    if (!isCorrect) {
+      if (box.image) this.flashWrongEffect(box.image);
+      this.playWrongSound();
+      this.hideBoxGuideHand();
+      this.showPaletteGuideHand(false);
+      return;
     }
-    box.painted = true;
-    this.playCorrectSound();
-    // Ẩn bàn tay khi tô đúng
-    this.hidePaletteGuideHand();
-    this.advanceColorLevel();
+
+    // Nếu đúng, bắt đầu tô
+    this.isPainting = true;
+    this.currentPaintingBox = box;
+    this.hideBoxGuideHand();
+    if (this.paletteGuideHandTimeout) {
+      this.paletteGuideHandTimeout.remove(false);
+      this.paletteGuideHandTimeout = undefined;
+    }
+  }
+
+  private onPointerMove(pointer: Phaser.Input.Pointer) {
+    if (!this.isPainting || !this.currentPaintingBox || !this.selected) return;
+
+    const box = this.currentPaintingBox;
+    if (!box.renderTexture || !box.image) return;
+
+    // Tính toán tọa độ tương đối trong RenderTexture
+    const relativeX = pointer.x - (box.image.x - box.image.displayWidth / 2);
+    const relativeY = pointer.y - (box.image.y - box.image.displayHeight / 2);
+
+    // Vẽ cọ lên texture (vẽ hình tròn)
+    const brush = this.add.circle(0, 0, this.paintBrushRadius, this.selected);
+    box.renderTexture.draw(brush, relativeX, relativeY);
+    brush.destroy();
+
+    // Tính toán tiến độ tô màu (đơn giản hóa bằng cách đếm số lần vẽ)
+    // Để chính xác hơn cần đọc pixel nhưng tốn hiệu năng, ở đây dùng grid checking hoặc đếm số stroke
+
+    // Check tọa độ lưới để tránh đếm trùng quá nhiều tại 1 điểm
+    const gridKey = `${Math.floor(relativeX / 20)},${Math.floor(relativeY / 20)}`;
+    if (!box.paintedPixels?.has(gridKey)) {
+      box.paintedPixels?.add(gridKey);
+      box.paintProgress = (box.paintProgress || 0) + 1;
+    }
+  }
+
+  private onPointerUp() {
+    if (!this.isPainting || !this.currentPaintingBox) return;
+
+    const box = this.currentPaintingBox;
+    this.isPainting = false;
+    this.currentPaintingBox = undefined;
+
+    const level = this.getCurrentColorLevel();
+    // Logic check hoàn thành
+    const isCorrect = this.selected === level.targetColor && box.n === level.total;
+
+    // Ngưỡng hoàn thành tô màu (ví dụ: 10% số lượng lần vẽ dự kiến)
+    const completionThreshold = 0.1;
+
+    // Kiểm tra progress
+    const paintProgressMeetsThreshold = (box.paintProgress || 0) >= (this.totalPaintableArea * completionThreshold);
+
+    if (isCorrect && paintProgressMeetsThreshold) {
+      // Autofill: tô full ô khi đạt ngưỡng
+      if (box.renderTexture && this.selected) {
+        box.renderTexture.fill(this.selected);
+      }
+      box.painted = true;
+      this.playCorrectSound();
+      this.hidePaletteGuideHand();
+      this.advanceColorLevel();
+    } else {
+      // Nếu chưa tô xong mà nhả chuột -> reset hoặc giữ nguyên?
+      // Giữ nguyên để bé tô tiếp
+    }
+  }
+
+  // Animation flash đỏ khi sai - không đổi vị trí
+  private flashWrongEffect(target: Phaser.GameObjects.Image) {
+    target.setTint(0xff3333);
+    this.time.delayedCall(120, () => {
+      target.clearTint();
+      this.time.delayedCall(80, () => {
+        target.setTint(0xff3333);
+        this.time.delayedCall(120, () => {
+          target.clearTint();
+        });
+      });
+    });
+  }
+
+  private showBoxGuideHand() {
+    // Basic implementation for showBoxGuideHand if needed, or leave empty/log
+    // In Game 1 it shows hand on the unpainted box
+    this.hideBoxGuideHand();
+    const box = this.boxes.find(b => !b.painted);
+    if (!box || !box.image) return;
+
+    if (this.textures.exists('guide_hand')) {
+      this.boxGuideHand = this.add.image(box.image.x, box.image.y + 60, 'guide_hand')
+        .setOrigin(0.2, 0.1)
+        .setScale(0.5)
+        .setDepth(100)
+        .setAlpha(0.92);
+
+      this.boxGuideHandTween = this.tweens.add({
+        targets: this.boxGuideHand,
+        y: box.image.y + 30,
+        duration: 700,
+        ease: 'Cubic.InOut',
+        yoyo: true,
+        repeat: -1,
+      });
+    }
+  }
+
+  private hideBoxGuideHand() {
+    if (this.boxGuideHand) {
+      this.boxGuideHand.destroy();
+      this.boxGuideHand = undefined;
+    }
+    if (this.boxGuideHandTween) {
+      this.boxGuideHandTween.stop();
+      this.boxGuideHandTween = undefined;
+    }
   }
 
   private getCurrentColorLevel() {
@@ -354,24 +514,43 @@ export class ColorScene extends Phaser.Scene {
 
   private createPaletteDot(def: { c: number; label: string; spriteKey?: string }) {
     if (def.spriteKey && this.textures.exists(def.spriteKey)) {
-      return this.add.image(0, 0, def.spriteKey).setOrigin(0.5).setScale(0.8);
+      return this.add.image(0, 0, def.spriteKey).setOrigin(0.5).setScale(1.2);
     }
     // Viền giống hệt CSS: border 2px solid rgba(0,55,255,1)
-    const fillRadius = 29.5;
+    const fillRadius = 44;
     const borderWidth = 2;
     const borderColor = 0x0037FF;
     const container = this.add.container(0, 0);
     // Fill
     const fill = this.add.circle(0, 0, fillRadius, def.c);
-    fill.setInteractive({ useHandCursor: true });
     // Border nét liền, dùng Arc để nét mịn
     const border = this.add.arc(0, 0, fillRadius + borderWidth / 2, 0, 360, false, borderColor, 0);
     border.setStrokeStyle(borderWidth, borderColor, 1);
     container.add([fill, border]);
-    // Chuyển sự kiện pointerdown từ fill lên container để tương thích logic cũ
-    fill.on('pointerdown', (pointer: any) => {
-      container.emit('pointerdown', pointer);
+
+    // Set interactive trên container
+    // container.setSize(fillRadius * 2, fillRadius * 2); // Bỏ setSize để hệ tọa độ input tính từ tâm (0,0) chuẩn xác
+
+    // Dùng Rectangle hit area
+    const hitW = 70;
+    const hitH = 140;
+    const offsetY = 10;
+    container.setInteractive({
+      hitArea: new Phaser.Geom.Rectangle(-hitW / 2, -hitH / 2 + offsetY, hitW, hitH),
+      hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+      useHandCursor: true
     });
+
+    // DEBUG: Visualize hit area
+    /*
+    const debugGfx = this.add.graphics();
+    debugGfx.fillStyle(0x00ff00, 0.5);
+    debugGfx.fillRect(-hitW / 2, -hitH / 2 + offsetY, hitW, hitH);
+    container.add(debugGfx);
+    */
+
+
+
     // Để tương thích code cũ, gán các hàm cần thiết
     (container as any).setAlpha = (a: number) => { fill.setAlpha(a); border.setAlpha(a); };
     (container as any).x = 0; (container as any).y = 0;
@@ -383,6 +562,7 @@ export class ColorScene extends Phaser.Scene {
   }
 
   private applyPaletteSelection(index: number) {
+    this.hidePaletteGuideHand(); // Ẩn tay hướng dẫn chọn màu khi user đã chọn
     this.paletteSelectedIndex = index;
     const def = this.paletteDefs[index];
     this.selected = def.c;
@@ -425,8 +605,8 @@ export class ColorScene extends Phaser.Scene {
 
     const w = this.scale.width;
     const h = this.scale.height;
-    const maxW = Math.min(1100, w * 0.92); // board nhỏ lại
-    const maxH = Math.min(540, h * 0.8); 
+    const maxW = Math.min(1400, w * 0.85); // board nhỏ lại
+    const maxH = Math.min(840, h * 0.85); // board nhỏ lại
     const ratio = this.getBoardAssetRatio();
     let boardW = maxW;
     let boardH = maxH;
@@ -458,7 +638,7 @@ export class ColorScene extends Phaser.Scene {
     this.numberRowY = innerY - 18 + innerH * 0.01;
 
     // Tăng khoảng cách giữa 2 bóng/bi
-    const objSpacing = Math.min(innerW * 0.5, 300);
+    const objSpacing = Math.min(innerW * 0.7, 675);
     // Đặt asset lên cao hơn (giảm 40px so với cũ)
     const objY = innerY + innerH * 0.72;
     this.objectPositions = {
@@ -470,7 +650,7 @@ export class ColorScene extends Phaser.Scene {
     // Đẩy thang màu lên trên (gần thang số hơn)
     this.paletteCenter = {
       x: innerX + innerW / 2,
-      y: this.numberRowY! + 80,
+      y: this.numberRowY! + 150,
     };
 
     this.createBoardImageIfNeeded();
@@ -514,8 +694,8 @@ export class ColorScene extends Phaser.Scene {
     if (!this.boxes.length) return;
     const midX = this.boardInnerRect.centerX;
     const maxNumber = this.dataGame.maxNumber;
-    const scale = 0.45;
-    const gap = 0;
+    const scale = 0.675;
+    const gap = -30;
     let totalW = 0;
     const widths: number[] = [];
     for (let i = 0; i < maxNumber; i++) {
@@ -536,9 +716,12 @@ export class ColorScene extends Phaser.Scene {
 
     this.boxes.forEach((box, i) => {
       cx += widths[i] / 2;
-      box.cx = cx;
+      // Offset riêng cho số 4, 5 để không bị dính với số 3
+      const xOffset = box.n === 5 ? 9 : (box.n === 4 ? 6 : 0);
+      box.cx = cx + xOffset;
       box.y = y;
-      if (box.image) box.image.setPosition(cx, y);
+      if (box.image) box.image.setPosition(cx + xOffset, y);
+      if (box.renderTexture) box.renderTexture.setPosition(cx + xOffset, y);
       cx += widths[i] / 2 + gap;
     });
   }
@@ -562,10 +745,10 @@ export class ColorScene extends Phaser.Scene {
     const y = this.paletteCenter.y;
     const paletteCount = this.paletteDots.length;
     // All dots have the same size
-    const dotWidth = 60;
-    const dotHeight = 60;
+    const dotWidth = 100;
+    const dotHeight = 100;
     const border = 2;
-    const dotSpacing = 30; // Tăng khoảng cách giữa các màu
+    const dotSpacing = 15; // Tăng khoảng cách giữa các màu
     // Center the palette horizontally within the board
     const totalWidth = paletteCount * dotWidth + (paletteCount - 1) * dotSpacing;
     const startX = this.boardInnerRect.centerX - totalWidth / 2 + dotWidth / 2;
@@ -578,6 +761,11 @@ export class ColorScene extends Phaser.Scene {
       } else if (dot instanceof Phaser.GameObjects.Arc) {
         dot.setRadius((dotWidth - border * 2) / 2);
         dot.setStrokeStyle(border, 0xffffff);
+      } else if (dot instanceof Phaser.GameObjects.Container) {
+        const originalRadius = (dot as any).radius || 44;
+        const originalDiameter = originalRadius * 2;
+        const targetDiameter = dotWidth - border * 2;
+        dot.setScale(targetDiameter / originalDiameter);
       }
       this.updatePaletteStroke(index);
     });
@@ -632,9 +820,9 @@ export class ColorScene extends Phaser.Scene {
 
   private positionBannerAssets() {
     if (!this.bannerBg) return;
-    const maxWidth = Math.min(this.scale.width * 0.9, 720);
+    const maxWidth = Math.min(this.scale.width * 0.95, 1500);
     const bgRatio = this.getTextureRatio(this.bannerBgKey) ?? 1;
-    const targetWidth = Math.min(maxWidth, this.boardRect.width * 0.9);
+    const targetWidth = Math.min(maxWidth, this.boardRect.width * 0.95);
     const targetHeight = bgRatio ? targetWidth / bgRatio : this.bannerBg.displayHeight;
     const x = this.boardRect.centerX;
     const y = Math.max(targetHeight / 2 + 8, this.boardRect.y - targetHeight / 2 - 8);
@@ -642,9 +830,11 @@ export class ColorScene extends Phaser.Scene {
     this.bannerBg.setPosition(x, y);
 
     if (this.bannerTextImage) {
-      // Tăng kích thước asset banner text lên 1.1 lần so với mặc định
+      const level = this.getCurrentColorLevel();
       const textRatio = this.getTextureRatio(this.bannerTextImage.texture.key) ?? 1;
-      const textWidth = targetWidth * 0.85; // tăng từ 0.7 lên 0.77
+      // Màn Chim dùng textWidth lớn hơn (giống CountConnectScene)
+      const textWidthRatio = level.label === 'Chim' ? 0.87 : 0.88;
+      const textWidth = targetWidth * textWidthRatio;
       const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
       this.bannerTextImage.setDisplaySize(textWidth, textHeight);
       this.bannerTextImage.setPosition(x, y);

@@ -16,6 +16,7 @@ type DragState = {
     bag: SpriteOrArc;
     startX: number;
     startY: number;
+    connectionIndex: number;
 };
 type CountLevel = {
     label: string;
@@ -28,24 +29,24 @@ type CountLevel = {
 };
 export class CountConnectScene extends Phaser.Scene {
     // Lưu offset cho từng lần nối (không phải property động)
-    private connectionOffsets: { x: number; y: number }[] = [];
+    // private connectionOffsets: { x: number; y: number }[] = []; -> UNUSED, removed
     // Vị trí xuất phát cho từng lần nối: [lần 1, lần 2]
     // Các điểm bắt đầu trên asset cho từng lần nối (tương đối so với tâm asset)
     private static connectOffsets = [
-        { x: -90, y: -20 }, // trái trên
-        { x: 120, y: -10 }     // giữa phải, dịch sang phải 60px
+        { x: -160, y: -10 }, // trái trên - dịch lên trên
+        { x: 220, y: 60 }     // giữa phải - dịch xuống dưới
     ];
 
     // Asset key cho bóng và bi
     static duckKeys = ['duck_elip'];
     static birdKeys = ['bird_elip'];
 
-        // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
+    // Phát voice hướng dẫn cho từng màn (level) CountConnect qua AudioManager
     private playGuideVoiceForCurrentLevel() {
-            AudioManager.stopGuideVoices();
-            const level = this.getCurrentCountLevel();
-            if (level.voiceGuideKey) AudioManager.playWhenReady(level.voiceGuideKey);
-        }
+        AudioManager.stopGuideVoices();
+        const level = this.getCurrentCountLevel();
+        if (level.voiceGuideKey) AudioManager.playWhenReady(level.voiceGuideKey);
+    }
     private dataGame!: GameData;
 
     private boxes: NumBox[] = [];
@@ -63,7 +64,7 @@ export class CountConnectScene extends Phaser.Scene {
     private lines!: Phaser.GameObjects.Graphics;
     private fixedLines?: Phaser.GameObjects.Graphics;
 
-    private fixedConnections: Array<{ bag: SpriteOrArc; box: NumBox }> = [];
+    private fixedConnections: Array<{ bag: SpriteOrArc; box: NumBox; connectionIndex: number }> = [];
     private dragging?: DragState;
 
     private numberRowY?: number;
@@ -73,11 +74,11 @@ export class CountConnectScene extends Phaser.Scene {
     private countLevels: CountLevel[] = [
         {
             label: 'Vịt',
-            targetNumbers: [1, 3],
+            targetNumbers: [1, 3], // Trái nối 1, Phải nối 3 (bắt buộc theo thứ tự)
             objectTextureKeys: [CountConnectScene.duckKeys[0]],
             objectFill: 0xdff6ff,
             objectStroke: 0x7cc8ff,
-            bannerTextKey: 'banner_title_5',
+            bannerTextKey: 'banner_title_5', // Đếm đến 3
             voiceGuideKey: 'voice_guide_25',
         },
         {
@@ -114,7 +115,7 @@ export class CountConnectScene extends Phaser.Scene {
     }
 
     preload() {
-        loadAssetGroups(this, 'shared', 'countConnect', 'numbers', 'countingNumbers', 'ui');
+        loadAssetGroups(this, 'shared', 'countConnect', 'numbers', 'countingNumbers', 'ui', 'colorScene');
     }
 
     create() {
@@ -122,7 +123,7 @@ export class CountConnectScene extends Phaser.Scene {
         this.currentCountLevelIndex = 0;
         this.locked = false;
         this.fixedConnections = [];
-        this.connectionOffsets = [];
+        // this.connectionOffsets = []; // Removed
         this.dragging = undefined;
         this.guideHandShown = false;
         this.hideGuideHand();
@@ -141,13 +142,13 @@ export class CountConnectScene extends Phaser.Scene {
         this.scale.on('resize', this.layoutBoard, this);
 
         this.levelLabel = this.add
-        .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
-            fontFamily: 'Baloo, Arial',
-            fontSize: '26px',
-            color: '#0b1b2a',
-        })
-        .setOrigin(0.5, 0)
-        .setDepth(6);
+            .text(this.boardRect.centerX, this.boardRect.y + 18, '', {
+                fontFamily: 'Baloo, Arial',
+                fontSize: '26px',
+                color: '#0b1b2a',
+            })
+            .setOrigin(0.5, 0)
+            .setDepth(6);
 
         this.updateLevelLabel();
         this.levelLabel.setVisible(false);
@@ -158,7 +159,7 @@ export class CountConnectScene extends Phaser.Scene {
         // Tạo dàn asset số (image) theo số lượng maxNumber, không đè lên nhau
         this.boxes = [];
         const maxNumber = this.dataGame.maxNumber;
-        const scale = 0.45; // scale nhỏ lại như hình mẫu
+        const scale = 0.6; // scale nhỏ lại như hình mẫu
         const gap = 0; // khoảng cách giữa các số như hình mẫu
         // Tính tổng width thực tế của tất cả asset số (sau khi scale)
         let totalW = 0;
@@ -267,7 +268,7 @@ export class CountConnectScene extends Phaser.Scene {
             const obj = this.add
                 .image(x, y, textureKey)
                 .setOrigin(0.5)
-                .setScale(0.4, 0.4)
+                .setScale(0.65, 0.65)
                 .setInteractive({ useHandCursor: true });
             // Không vẽ stroke cho asset
             return obj;
@@ -279,11 +280,34 @@ export class CountConnectScene extends Phaser.Scene {
     }
 
     private onDown(pointer: Phaser.Input.Pointer) {
-        if (!this.bag) return;
-        if (!this.bag.getBounds().contains(pointer.x, pointer.y)) return;
-        if (this.locked) return;
-        this.dragging = { bag: this.bag, startX: this.bag.x, startY: this.bag.y };
-        this.hideGuideHand();
+        if (!this.bag || this.locked) return;
+
+        // Check xem user click gần điểm neo nào (Trái hoặc Phải)
+        const offsets = CountConnectScene.connectOffsets;
+        let closestIdx = -1;
+        let minDist = 250; // Tăng vùng chạm điểm đầu thành 250px (rất to)
+
+        // Các index đã được nối rồi thì không cho nối nữa
+        const usedIndices = this.fixedConnections.map(c => c.connectionIndex);
+
+        offsets.forEach((off, idx) => {
+            if (usedIndices.includes(idx)) return;
+            const px = this.bag!.x + off.x;
+            const py = this.bag!.y + off.y;
+            const d = Phaser.Math.Distance.Between(pointer.x, pointer.y, px, py);
+            if (d < minDist) {
+                minDist = d;
+                closestIdx = idx;
+            }
+        });
+
+        // Nếu tìm thấy điểm neo hợp lệ
+        if (closestIdx !== -1) {
+            const startX = this.bag.x + offsets[closestIdx].x;
+            const startY = this.bag.y + offsets[closestIdx].y;
+            this.dragging = { bag: this.bag, startX, startY, connectionIndex: closestIdx };
+            this.hideGuideHand();
+        }
     }
 
     private onMove(pointer: Phaser.Input.Pointer) {
@@ -295,18 +319,9 @@ export class CountConnectScene extends Phaser.Scene {
             this.connectionLineStyle.color,
             this.connectionLineStyle.alpha
         );
-        // Xác định điểm bắt đầu theo lần nối
-        const bag = this.dragging.bag;
-        // const level = this.getCurrentCountLevel(); // Không dùng
-        const currentIndex = this.fixedConnections.length;
-        let startX = bag.x;
-        let startY = bag.y;
-        if (CountConnectScene.connectOffsets[currentIndex]) {
-            startX += CountConnectScene.connectOffsets[currentIndex].x;
-            startY += CountConnectScene.connectOffsets[currentIndex].y;
-        }
+        // Vẽ dây từ điểm bắt đầu đã xác định
         this.lines.beginPath();
-        this.lines.moveTo(startX, startY);
+        this.lines.moveTo(this.dragging.startX, this.dragging.startY);
         this.lines.lineTo(pointer.x, pointer.y);
         this.lines.strokePath();
     }
@@ -314,16 +329,18 @@ export class CountConnectScene extends Phaser.Scene {
     private onUp(pointer: Phaser.Input.Pointer) {
         if (!this.dragging) return;
 
-        const bag = this.dragging.bag;
+        const { bag, connectionIndex } = this.dragging;
         const level = this.getCurrentCountLevel();
-        const currentIndex = this.fixedConnections.length;
-        const expectedNumber = level.targetNumbers[currentIndex];
-        // Tính lại điểm bắt đầu để kiểm tra va chạm nếu cần (nếu muốn kiểm tra vùng click trên asset, có thể mở rộng logic này)
         const hit = this.findBox(pointer.x, pointer.y);
         this.lines.clear();
 
-        if (!hit || hit.n !== expectedNumber) {
-            this.cameras.main.shake(120, 0.01);
+        // Kiểm tra xem số hit có đúng là số yêu cầu cho điểm neo này không
+        const requiredNumber = level.targetNumbers[connectionIndex];
+        const isValidTarget = hit && hit.n === requiredNumber;
+
+        // Cho phép nối nếu đúng số yêu cầu
+        if (!hit || !isValidTarget) {
+            this.flashWrongEffect();
             AudioManager.stopGuideVoices();
             AudioManager.play('sfx_wrong');
             this.dragging = undefined;
@@ -331,16 +348,15 @@ export class CountConnectScene extends Phaser.Scene {
             return;
         }
 
+        // Tạo fixed connection mới
+        this.fixedConnections.push({ bag, box: hit, connectionIndex });
+
         // Đánh dấu đã nối đúng, disable tạm thời asset
         bag.disableInteractive();
-        if (!hit.image) {
-            hit.text.setColor('#0b1b2a');
-            hit.setNumberTint?.(0x0b1b2a);
-        }
-        // Lưu lại offset cho lần nối này vào mảng riêng
-        const offset = CountConnectScene.connectOffsets[currentIndex] || { x: 0, y: 0 };
-        this.connectionOffsets[this.fixedConnections.length] = offset;
-        this.fixedConnections.push({ bag, box: hit });
+        // Không disable hoàn toàn vì còn cần nối điểm khác
+        // Chỉ cần đảm bảo onDown check usedIndices là đủ
+        bag.setInteractive();
+
         this.redrawFixedLines();
         AudioManager.play('sfx_correct');
         this.playCorrectAnswerSound();
@@ -353,9 +369,7 @@ export class CountConnectScene extends Phaser.Scene {
                 this.advanceCountLevel();
             });
         } else {
-            // Nếu chưa đủ, chỉ cập nhật số đúng tiếp theo và enable lại asset
-            const idx = this.fixedConnections.length;
-            if (this.bag) this.bag.setData('count', level.targetNumbers[idx]);
+            // Nếu chưa đủ, enable lại asset để nối tiếp
             if (this.bag) this.bag.setInteractive({ useHandCursor: true });
             this.updateLevelLabel();
         }
@@ -370,8 +384,20 @@ export class CountConnectScene extends Phaser.Scene {
     }
 
     private findBox(x: number, y: number) {
-        // Tìm box theo vị trí chuột trên asset số
-        return this.boxes.find((b) => b.image && b.image.getBounds().contains(x, y));
+        // Tìm box gần nhất trong phạm vi cho phép (thay vì bắt buộc nằm trong bounds)
+        let closestBox: NumBox | undefined;
+        let minD = 100; // Bán kính nhận kẹo: 100px
+
+        this.boxes.forEach(b => {
+            if (b.image) {
+                const d = Phaser.Math.Distance.Between(x, y, b.image.x, b.image.y);
+                if (d < minD) {
+                    minD = d;
+                    closestBox = b;
+                }
+            }
+        });
+        return closestBox;
     }
 
     private getCurrentCountLevel() {
@@ -435,9 +461,9 @@ export class CountConnectScene extends Phaser.Scene {
 
     private advanceCountLevel() {
         if (this.currentCountLevelIndex + 1 < this.countLevels.length) {
-        this.currentCountLevelIndex++;
-        this.resetForNextCountLevel();
-        return;
+            this.currentCountLevelIndex++;
+            this.resetForNextCountLevel();
+            return;
         }
 
         // xong 2 level -> qua flow tiếp
@@ -476,8 +502,8 @@ export class CountConnectScene extends Phaser.Scene {
 
         const w = this.scale.width;
         const h = this.scale.height;
-        const maxW = Math.min(1100, w * 0.92);
-        const maxH = Math.min(540, h * 0.8);
+        const maxW = Math.min(1400, w * 0.85); // board nhỏ lại
+        const maxH = Math.min(840, h * 0.85); // board nhỏ lại
 
         const ratio = this.getBoardAssetRatio();
         let boardW = maxW;
@@ -539,45 +565,51 @@ export class CountConnectScene extends Phaser.Scene {
 
         this.boardFallbackGfx.clear();
         this.boardFallbackGfx
-        .fillStyle(0xffffff, 1)
-        .fillRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
+            .fillStyle(0xffffff, 1)
+            .fillRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
 
         this.boardFallbackGfx
-        .lineStyle(6, 0x1d4ed8, 1)
-        .strokeRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
+            .lineStyle(6, 0x1d4ed8, 1)
+            .strokeRoundedRect(this.boardRect.x, this.boardRect.y, this.boardRect.width, this.boardRect.height, corner);
     }
 
     private repositionNumberBoxes() {
         if (!this.boxes.length) return;
 
-        const boxW = 64;
-        const padding = Math.min(36, this.boardInnerRect.width * 0.05);
-        const availableWidth = this.boardInnerRect.width - padding * 2;
-        const minGap = 8;
-
-        const gap =
-        this.boxes.length > 1
-            ? Math.max(
-                minGap,
-                Math.min(28, (availableWidth - boxW * this.boxes.length) / (this.boxes.length - 1))
-            )
-            : minGap;
-
-        const totalW = boxW * this.boxes.length + gap * (this.boxes.length - 1);
-        const startX = this.boardInnerRect.centerX - totalW / 2 + boxW / 2;
-
+        const midX = this.boardInnerRect.centerX;
+        const maxNumber = this.dataGame.maxNumber;
+        const scale = 0.6;
+        const gap = 0;
+        let totalW = 0;
+        const widths: number[] = [];
+        for (let i = 0; i < maxNumber; i++) {
+            const n = i + 1;
+            const numberKey = `number_${n}`;
+            let w = 100;
+            if (this.textures.exists(numberKey)) {
+                const tex = this.textures.get(numberKey);
+                const src = tex.getSourceImage() as HTMLImageElement | HTMLCanvasElement | null;
+                if (src) w = (src as any).width || 100;
+            }
+            widths.push(w * scale);
+            totalW += w * scale;
+        }
+        totalW += gap * (maxNumber - 1);
+        let cx = midX - totalW / 2;
         const y = this.numberRowY ?? this.boardInnerRect.y + this.boardInnerRect.height * 0.12;
 
-        this.boxes.forEach((box, index) => {
-            const cx = startX + index * (boxW + gap);
+        this.boxes.forEach((box, i) => {
+            cx += widths[i] / 2;
             box.cx = cx;
             box.y = y;
             if (box.image) {
                 box.image.setPosition(cx, y);
+                // Ẩn text cũ nếu có asset
                 if (box.text) box.text.setVisible(false);
             } else {
                 box.text.setPosition(cx, y);
             }
+            cx += widths[i] / 2 + gap;
         });
     }
 
@@ -596,7 +628,7 @@ export class CountConnectScene extends Phaser.Scene {
             this.connectionLineStyle.color,
             this.connectionLineStyle.alpha
         );
-        this.fixedConnections.forEach(({ bag, box }, idx) => {
+        this.fixedConnections.forEach(({ bag, box, connectionIndex }) => {
             let bounds;
             if (box.rect) {
                 bounds = box.rect.getBounds();
@@ -605,18 +637,28 @@ export class CountConnectScene extends Phaser.Scene {
             } else {
                 return;
             }
-            // Lấy offset từ mảng connectionOffsets nếu có
+
             let startX = bag.x;
             let startY = bag.y;
-            if (this.connectionOffsets[idx]) {
-                startX += this.connectionOffsets[idx].x;
-                startY += this.connectionOffsets[idx].y;
-            } else if (CountConnectScene.connectOffsets[idx]) {
-                startX += CountConnectScene.connectOffsets[idx].x;
-                startY += CountConnectScene.connectOffsets[idx].y;
+
+            // Ưu tiên dùng connectionIndex nếu có (logic mới)
+            if (typeof connectionIndex === 'number' && CountConnectScene.connectOffsets[connectionIndex]) {
+                startX += CountConnectScene.connectOffsets[connectionIndex].x;
+                startY += CountConnectScene.connectOffsets[connectionIndex].y;
             }
+            // Fallback logic cũ
+            else if (CountConnectScene.connectOffsets[this.fixedConnections.indexOf({ bag, box, connectionIndex })]) {
+                // Logic cũ dựa trên index của mảng fixedConnections là không chính xác với logic mới
+                // Nhưng để an toàn type check, ta cứ để fallback
+                const idx = this.fixedConnections.indexOf({ bag, box, connectionIndex });
+                if (CountConnectScene.connectOffsets[idx]) {
+                    startX += CountConnectScene.connectOffsets[idx].x;
+                    startY += CountConnectScene.connectOffsets[idx].y;
+                }
+            }
+
             const endX = bounds.centerX;
-            const endY = bounds.centerY;
+            const endY = bounds.bottom - 3;
             gfx.beginPath();
             gfx.moveTo(startX, startY);
             gfx.lineTo(endX, endY);
@@ -629,9 +671,9 @@ export class CountConnectScene extends Phaser.Scene {
         if (!this.textures.exists(this.boardAssetKey)) return;
 
         this.boardImage = this.add
-        .image(0, 0, this.boardAssetKey)
-        .setDepth(0)
-        .setOrigin(0.5);
+            .image(0, 0, this.boardAssetKey)
+            .setDepth(0)
+            .setOrigin(0.5);
     }
 
     private getBoardAssetRatio() {
@@ -674,10 +716,10 @@ export class CountConnectScene extends Phaser.Scene {
     private positionBannerAssets() {
         if (!this.bannerBg) return;
 
-        const maxWidth = Math.min(this.scale.width * 0.9, 720);
+        const maxWidth = Math.min(this.scale.width * 1.0, 1600);
         const bgRatio = this.getTextureRatio(this.bannerBgKey) ?? 1;
 
-        const targetWidth = Math.min(maxWidth, this.boardRect.width * 0.9);
+        const targetWidth = Math.min(maxWidth, this.boardRect.width * 1.0);
         const targetHeight = bgRatio ? targetWidth / bgRatio : this.bannerBg.displayHeight;
 
         const x = this.boardRect.centerX;
@@ -691,7 +733,9 @@ export class CountConnectScene extends Phaser.Scene {
         const key = level.bannerTextKey;
         if (this.bannerTextImage && key) {
             const textRatio = this.getTextureRatio(key) ?? 1;
-            const textWidth = targetWidth * 0.8;
+            // Màn chim dùng textWidth lớn hơn
+            const textWidthRatio = level.label === 'Chim' ? 0.87 : 0.78;
+            const textWidth = targetWidth * textWidthRatio;
             const textHeight = textRatio ? textWidth / textRatio : this.bannerTextImage.displayHeight;
             this.bannerTextImage.setDisplaySize(textWidth, textHeight);
             this.bannerTextImage.setPosition(x, y);
@@ -716,16 +760,30 @@ export class CountConnectScene extends Phaser.Scene {
         if (first && this.guideHandShown) return;
         if (this.locked) return;
         if (!this.bag || !this.boxes.length) return;
-        const bag = this.bag;
-        const count = bag.getData('count') as number;
-        const box = this.boxes.find(b => b.n === count);
+
+        const level = this.getCurrentCountLevel();
+        const currentIndex = this.fixedConnections.length;
+
+        // Nếu đã nối đủ thì không hiện hand nữa
+        if (currentIndex >= level.targetNumbers.length) return;
+
+        const targetNum = level.targetNumbers[currentIndex];
+        const offset = CountConnectScene.connectOffsets[currentIndex] || { x: 0, y: 0 };
+
+        const box = this.boxes.find(b => b.n === targetNum);
         if (!box || !box.image) return;
+
         if (!this.textures.exists('guide_hand')) return;
-        this.guideHand = this.add.image(bag.x, bag.y, 'guide_hand')
+
+        const startX = this.bag.x + offset.x;
+        const startY = this.bag.y + offset.y;
+
+        this.guideHand = this.add.image(startX, startY, 'guide_hand')
             .setOrigin(0.2, 0.1)
             .setScale(0.5)
             .setDepth(100)
             .setAlpha(0.92);
+
         this.guideHandTween = this.tweens.add({
             targets: this.guideHand,
             x: box.image.x,
@@ -735,6 +793,7 @@ export class CountConnectScene extends Phaser.Scene {
             yoyo: true,
             repeat: -1,
         });
+
         if (first) this.guideHandShown = true;
     }
     private hideGuideHand() {
@@ -751,4 +810,26 @@ export class CountConnectScene extends Phaser.Scene {
             this.guideHandTimeout = undefined;
         }
     }
+
+    // Animation lắc asset khi sai - reset về vị trí gốc sau khi xong
+    private flashWrongEffect() {
+        const bag = this.bag;
+        if (!bag) return;
+
+        const originalX = bag.x;
+        const intensity = 8;
+
+        this.tweens.killTweensOf(bag);
+        this.tweens.add({
+            targets: bag,
+            x: originalX + intensity,
+            duration: 40,
+            yoyo: true,
+            repeat: 5,
+            ease: 'Sine.inOut',
+            onComplete: () => {
+                bag.x = originalX; // Đảm bảo reset về vị trí gốc
+            }
+        });
     }
+}

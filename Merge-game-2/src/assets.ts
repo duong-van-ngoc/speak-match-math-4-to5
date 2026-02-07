@@ -56,7 +56,7 @@ export const UI_ASSET_KEYS = {
 };
 
 export const SHARED_IMAGE_ASSETS: PreloadImageAsset[] = [
-  { key: BOARD_ASSET_KEYS.frame, path: assetPath('button/Rectangle 1.png') },
+  { key: BOARD_ASSET_KEYS.frame, path: assetPath('bg/board_scene_2.png') },
   { key: BOARD_ASSET_KEYS.bannerBg, path: assetPath('button/HTU.png') },
   { key: BOARD_ASSET_KEYS.bannerText, path: assetPath('text/add-text.png') },
   { key: 'bg1', path: assetPath('bg/bg1.jpg') },
