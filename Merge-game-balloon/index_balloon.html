@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&display=swap" rel="stylesheet">
+  <title>Khinh khí cầu Game</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    #game-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+      background-repeat: no-repeat;
+      background-position: center center;
+      background-size: contain;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    .top-btn {
+      position: absolute;
+      top: 2%;
+      z-index: 9999;
+      width: 11.1vmin;
+      height: 11.1vmin;
+      border: none;
+      background-color: transparent;
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: contain;
+      cursor: pointer;
+    }
+
+    #btn-replay {
+      right: 2%;
+      background-image: url('assets/button/replay.png');
+    }
+
+    #btn-next {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <button id="btn-replay" class="top-btn"></button>
+  <button id="btn-next" class="top-btn"></button>
+  <div id="game-container"></div>
+  <script>
+    (function () {
+      const replayBtn = document.getElementById('btn-replay');
+      const nextBtn = document.getElementById('btn-next');
+      (window).setGameButtonsVisible = function (visible) {
+        if (!replayBtn || !nextBtn) return;
+        const display = visible ? 'block' : 'none';
+        replayBtn.style.display = display;
+        nextBtn.style.display = display;
+      };
+      (window).setRandomGameViewportBg = function () {
+        const container = document.getElementById('game-container');
+        if (!container) return;
+        const bgs = ['url(assets/bg_1.png)', 'url(assets/bg_2.png)', 'url(assets/bg_3.png)'];
+        const idx = Math.floor(Math.random() * bgs.length);
+        container.style.backgroundImage = bgs[idx];
+        container.style.backgroundRepeat = 'no-repeat';
+        container.style.backgroundPosition = 'center center';
+        container.style.backgroundSize = 'contain';
+      };
+    })();
+  </script>
+  <script type="module" src="/src/mainBalloon.ts"></script>
+</body>
+
+</html>
