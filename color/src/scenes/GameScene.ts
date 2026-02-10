@@ -24,7 +24,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private launchColor() {
-    this.scene.stop('CountConnectScene');
     this.scene.launch('ColorScene', { gameData: GAME_DATA });
     this.scene.bringToTop('ColorScene');
   }

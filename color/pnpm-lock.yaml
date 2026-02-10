@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@iruka-edu/game-core':
-        specifier: ^0.1.2
-        version: 0.1.2(phaser@3.90.0)
+        specifier: 0.3.0
+        version: 0.3.0(phaser@3.90.0)
       '@iruka-edu/mini-game-sdk':
-        specifier: ^0.1.1
-        version: 0.1.1(phaser@3.90.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: 0.6.0
+        version: 0.6.0(phaser@3.90.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       howler:
         specifier: ^2.2.4
         version: 2.2.4
@@ -215,14 +215,14 @@ packages:
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
 
-  '@iruka-edu/game-core@0.1.2':
-    resolution: {integrity: sha512-pp4K+xVlx4Gptt6r761+3/eYmnpTVthJrLVUEnaPyy+cR2sLzYVbP22Wo1wRsS5yC9lutYpPs+GtKmls4DC7Mw==, tarball: https://npm.pkg.github.com/download/@iruka-edu/game-core/0.1.2/94c1ac27677264f4c380c60a980e7a60c4d69734}
+  '@iruka-edu/game-core@0.3.0':
+    resolution: {integrity: sha512-FBT7jfc25fiehbahDJph6/pSAjokPHq8XW/P0lH9Xc9IlyVHp8qT+9pI/e669oAl1FaEf9/G/+N3x/gD6UERBQ==, tarball: https://npm.pkg.github.com/download/@iruka-edu/game-core/0.3.0/e993d25fcf99a0c406c76754fd39032500014bf3}
     engines: {node: '>=18'}
     peerDependencies:
       phaser: ^3.80.0
 
-  '@iruka-edu/mini-game-sdk@0.1.1':
-    resolution: {integrity: sha512-lNGjMXe1sGrikC/BxBizNLQj9gNrertV3Ut/TBxC0tcdqt3GGIieaftXFO4ctIULPJMZy7tqLUxQhIme55lopQ==, tarball: https://npm.pkg.github.com/download/@iruka-edu/mini-game-sdk/0.1.1/55a7c80b08c9eb07a2b55eea54d0fae646a225f3}
+  '@iruka-edu/mini-game-sdk@0.6.0':
+    resolution: {integrity: sha512-cQmu0nWqaeI+lBmXQMOygkwaBTWibGEW2wDeIMuNSjZxbzh+WDpRGHLWYJoCLlcNydX8M/QVmUM3cABypGQwIA==, tarball: https://npm.pkg.github.com/download/@iruka-edu/mini-game-sdk/0.6.0/a051d5b5f255cb27582c4926ffa0b12ba76cf67f}
     peerDependencies:
       phaser: ^3.80.0
       react: ^18
@@ -1026,6 +1026,9 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
   zod@4.3.5:
     resolution: {integrity: sha512-k7Nwx6vuWx1IJ9Bjuf4Zt1PEllcwe7cls3VNzm4CQ1/hgtFUK2bRNG3rvnpPUhFjmqJKAKtjV576KnUkHocg/g==}
 
@@ -1216,13 +1219,14 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
-  '@iruka-edu/game-core@0.1.2(phaser@3.90.0)':
+  '@iruka-edu/game-core@0.3.0(phaser@3.90.0)':
     dependencies:
       phaser: 3.90.0
+      zod: 3.25.76
 
-  '@iruka-edu/mini-game-sdk@0.1.1(phaser@3.90.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@iruka-edu/mini-game-sdk@0.6.0(phaser@3.90.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@iruka-edu/game-core': 0.1.2(phaser@3.90.0)
+      '@iruka-edu/game-core': 0.3.0(phaser@3.90.0)
       howler: 2.2.4
       phaser: 3.90.0
       react: 19.2.3
@@ -1946,5 +1950,7 @@ snapshots:
   zod-validation-error@4.0.2(zod@4.3.5):
     dependencies:
       zod: 4.3.5
+
+  zod@3.25.76: {}
 
   zod@4.3.5: {}

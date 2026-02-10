@@ -1,12 +1,12 @@
 import Phaser from "phaser";
 //import OverlayScene from "./OverlayScene";
 import { GameScene } from "./scenes/GameScene";
-import { CountConnectScene } from "./scenes/CountConnectScene";
 import { ColorScene } from "./scenes/ColorScene";
 import EndGameScene from "./scenes/EndGameScene";
 import AudioManager from "./AudioManager";
 import { initRotateOrientation } from "./rotateOrientation";
 import PreloadScene from "./PreloadScene";
+import { installIrukaE2E } from "./e2e/installIrukaE2E";
 
 const AUDIO_UNLOCKED_KEY = "__audioUnlocked__";
 const AUDIO_UNLOCKED_EVENT = "audio-unlocked";
@@ -138,7 +138,7 @@ if (container instanceof HTMLDivElement) {
 }
 
 // Giữ tham chiếu game để tránh tạo nhiều lần (HMR, reload…)
-let game: Phaser.Game | null = null;
+let gamePhaser: Phaser.Game | null = null;
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 
@@ -158,7 +158,9 @@ export function ensureBgmStarted() {
   try {
     const startBgm = () => {
       // Chỉ bật nếu chưa phát; để BGM chạy liên tục xuyên suốt các màn
-      if (!AudioManager.isPlaying("bgm_main")) AudioManager.playWhenReady?.("bgm_main");
+      if (AudioManager.isPlaying("bgm_main")) return;
+      AudioManager.stop("bgm_main");
+      AudioManager.playWhenReady?.("bgm_main");
     };
 
     // On some mobile browsers (notably iOS), starting BGM on the first gesture can cut
@@ -233,7 +235,8 @@ const config: Phaser.Types.Core.GameConfig = {
     roundPixels: false,
   },
   // Chạy PreloadScene trước để load toàn bộ asset, rồi mới vào GameScene
-  scene: [PreloadScene, GameScene, CountConnectScene, ColorScene, EndGameScene],
+  // REMOVED CountConnectScene
+  scene: [PreloadScene, GameScene, ColorScene, EndGameScene],
 };
 
 // Phaser supports these, but the TS type in this project doesn't declare them.
@@ -245,18 +248,33 @@ function setupHtmlButtons() {
   const replayBtn = document.getElementById("btn-replay");
   if (replayBtn) {
     replayBtn.addEventListener("click", () => {
-      if (!game) return;
-
-      // Unlock audio ngay trên thao tác click DOM.
+      if (!gamePhaser) return;
+      console.log('[Main] HTML Replay Button clicked');
       unlockAudioFromUserGesture();
-
-      // Dừng toàn bộ âm thanh trước khi chơi lại để tránh lồng nhau
       AudioManager.stopAll();
 
-      // Restart lại GameScene
-      const scene = game.scene.getScene("GameScene") as GameScene | null;
-      if (!scene) return;
-      scene.scene.restart();
+      // Reset global flags used for EndGame logic
+      (window as any)._inEndGame = false;
+      (window as any)._reportSent = false;
+
+      // Reset Hub state so exit popup works after replay
+      sdk.ready({
+        capabilities: ["resize", "score", "complete", "save_load", "set_state", "stats", "hint", "quit"],
+      });
+
+      // Reset SDK state để Hub nhận diện phiên chơi mới (fix lỗi không hiện popup X)
+      sdkGameCore.retryFromStart?.();
+      resetHubProgressState();
+
+      // Dừng tất cả các scene hiện có để dọn dẹp triệt để
+      gamePhaser.scene.scenes.forEach(s => {
+        if (s.scene.key !== 'PreloadScene') {
+          gamePhaser?.scene.stop(s.scene.key);
+        }
+      });
+
+      // Restart lại từ GameScene
+      gamePhaser.scene.start('GameScene');
       ensureBgmStarted();
     });
   }
@@ -319,10 +337,10 @@ async function initGame() {
   // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
   // setupGlobalBgm();
 
-  if (!game) {
+  if (!gamePhaser) {
     // setRandomIntroViewportBg();
-    game = new Phaser.Game(config);
-    initRotateOrientation(game);
+    gamePhaser = new Phaser.Game(config);
+    initRotateOrientation(gamePhaser);
     setupHtmlButtons();
   }
 
@@ -341,7 +359,7 @@ async function initGame() {
 
 
 // ========== IRUKA MINI GAME SDK INTEGRATION ==========
-import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
+import { game as sdkGameCore } from "@iruka-edu/mini-game-sdk";
 
 function applyResize(width: number, height: number) {
   const gameDiv = document.getElementById('game-container');
@@ -349,55 +367,167 @@ function applyResize(width: number, height: number) {
     gameDiv.style.width = `${width}px`;
     gameDiv.style.height = `${height}px`;
   }
-  game?.scale.resize(width, height);
+  // Phaser Scale FIT: gọi resize để canvas update
+  gamePhaser?.scale.resize(width, height);
 }
 
+
 function broadcastSetState(payload: any) {
-  const scene = game?.scene.getScenes(true)[0] as any;
+  // chuyển xuống scene đang chạy để bạn route helper (audio/score/timer/result...)
+  const scene = gamePhaser?.scene.getScenes(true)[0] as any;
   scene?.applyHubState?.(payload);
 }
 
+
+// lấy hubOrigin: tốt nhất từ query param, fallback document.referrer
 function getHubOrigin(): string {
   const qs = new URLSearchParams(window.location.search);
   const o = qs.get("hubOrigin");
   if (o) return o;
+
+
+  // fallback: origin của referrer (hub)
   try {
     const ref = document.referrer;
     if (ref) return new URL(ref).origin;
   } catch { }
-  return "*";
+  return "*"; // nếu protocol của bạn bắt buộc origin cụ thể thì KHÔNG dùng "*"
 }
 
-export const sdk = irukaGame.createGameSdk({
+
+const HUB_TOTAL_QUESTIONS = 4;
+const hubProgress = {
+  total: HUB_TOTAL_QUESTIONS,
+  completed: 0,
+  score: 0,
+};
+
+function setHubWindowState(score: number) {
+  const win = (window as any).irukaGameState || {
+    startTime: Date.now(),
+    currentScore: 0,
+  };
+  win.currentScore = score;
+  (window as any).irukaGameState = win;
+}
+
+function pushHubProgress(scoreDelta: number) {
+  hubProgress.score += scoreDelta;
+  hubProgress.completed = Math.min(hubProgress.completed + 1, hubProgress.total);
+  setHubWindowState(hubProgress.score);
+  sdk.score(hubProgress.score, scoreDelta);
+  sdk.progress({
+    levelIndex: hubProgress.completed,
+    total: hubProgress.total,
+    score: hubProgress.score,
+  });
+  sdk.requestSave({
+    score: hubProgress.score,
+    levelIndex: hubProgress.completed,
+  });
+}
+
+function resetHubProgressState() {
+  hubProgress.completed = 0;
+  hubProgress.score = 0;
+  const now = Date.now();
+  (window as any).irukaGameState = {
+    startTime: now,
+    currentScore: 0,
+  };
+  sdk.score(0, 0);
+  sdk.progress({
+    levelIndex: 0,
+    total: hubProgress.total,
+    score: 0,
+  });
+}
+
+function initHubState() {
+  hubProgress.total = HUB_TOTAL_QUESTIONS;
+  sdkGameCore.setTotal?.(hubProgress.total);
+  resetHubProgressState();
+}
+
+export const sdk = sdkGameCore.createGameSdk({
   hubOrigin: getHubOrigin(),
-  onInit() {
+
+
+  onInit(_ctx: any) {
+    // reset stats session nếu bạn muốn
+    // sdkGameCore.resetAll(); hoặc statsCore.resetAll()
+
+
+    // báo READY sau INIT
     sdk.ready({
-      capabilities: ["resize", "score", "complete", "save_load", "set_state"],
+      capabilities: ["resize", "score", "complete", "save_load", "set_state", "stats", "hint", "quit"],
     });
+    initHubState();
   },
+
+
   onStart() {
-    game?.scene.resume("GameScene");
-    game?.scene.resume("EndGameScene");
+    gamePhaser?.scene.resume("ColorScene");
+    gamePhaser?.scene.resume("EndGameScene");
   },
+
+
   onPause() {
-    game?.scene.pause("GameScene");
+    gamePhaser?.scene.pause("ColorScene");
   },
+
+
   onResume() {
-    game?.scene.resume("GameScene");
+    gamePhaser?.scene.resume("ColorScene");
   },
+
+
   onResize(size: { width: number; height: number }) {
     applyResize(size.width, size.height);
   },
-  onSetState(state: unknown) {
+
+
+  onSetState(state: any) {
     broadcastSetState(state);
   },
+
+
   onQuit() {
-    irukaGame.finalizeAttempt("quit");
+    // QUIT: chốt attempt là quit + gửi complete
+    sdkGameCore.finalizeAttempt("quit");
     sdk.complete({
       timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
-      extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+      extras: { reason: "hub_quit", stats: sdkGameCore.prepareSubmitData() },
     });
   },
 });
 
 document.addEventListener("DOMContentLoaded", initGame);
+installIrukaE2E(sdk);
+
+// Helper functions for scenes
+export function resetHubProgress() {
+  resetHubProgressState();
+}
+
+export function startHubQuestion() {
+  sdkGameCore.startQuestionTimer();
+}
+
+export function finishHubQuestion() {
+  sdkGameCore.finishQuestionTimer();
+}
+
+export function recordHubCorrect(scoreDelta = 1) {
+  sdkGameCore.recordCorrect({ scoreDelta });
+  pushHubProgress(scoreDelta);
+}
+
+export function recordHubWrong() {
+  sdkGameCore.recordWrong();
+}
+
+export function recordHubHint() {
+  sdkGameCore.addHint();
+}
+

@@ -4,6 +4,9 @@ import { COLORS } from '../data/gameData';
 import { FLOW_GO_END, type FlowEndPayload } from '../flow/events';
 import { BOARD_ASSET_KEYS, COLOR_LEVEL_ASSETS, COLOR_SCENE_ASSETS, loadAssetGroups } from '../assets';
 import AudioManager from '../AudioManager';
+import { sdk, startHubQuestion, finishHubQuestion, recordHubCorrect, recordHubWrong, recordHubHint } from '../main';
+import { game as sdkGameCore } from "@iruka-edu/mini-game-sdk";
+import guidePositions from '../data/guidePositions.json';
 
 type ColorLevel = {
   label: string;
@@ -18,15 +21,20 @@ type ColorLevel = {
   backgroundKey?: string; // Key for the background image
   backgroundTint?: number; // Tint cho background để thể hiện thời gian (fallback/extra effect)
   useBitmapMask?: boolean; // Whether to mask the paint RT with the object texture. Default true.
+  customHitAreas?: { [objectIndex: number]: { x?: number; y?: number; w?: number; h?: number; shape?: 'rect' | 'ellipse' | 'polygon'; points?: { x: number; y: number }[] } };
+  exclusionAreas?: { [objectIndex: number]: Array<{ x?: number; y?: number; w?: number; h?: number; shape?: 'rect' | 'ellipse' | 'polygon'; points?: { x: number; y: number }[] }> };
+  overlayObjects?: boolean; // If true, all objects are positioned at the center (stacked), instead of side-by-side.
 };
 
 type PaintState = {
   rt: Phaser.GameObjects.RenderTexture;
-  maskSprite: Phaser.GameObjects.Image;
+  maskSprite: Phaser.GameObjects.Image; // Used for BitmapMask (or placeholder if Poly)
   targetSize: { w: number; h: number };
   cellHits: Set<string>;
   maskCells: Set<string>;
   colorCounts: Map<number, number>;
+  maskGraphics?: Phaser.GameObjects.Graphics;
+  polygonPoints?: { x: number; y: number }[];
 };
 
 export class ColorScene extends Phaser.Scene {
@@ -51,14 +59,17 @@ export class ColorScene extends Phaser.Scene {
   private paintBrush?: Phaser.GameObjects.Image;
   private paintGrid = { cols: 50, rows: 50 };
   // Completion thresholds per level:
-  // Level 1, 2, 3, 4: all 10% (0.10)
-  private readonly completionRatios = [0.08, 0.05, 0.12, 0.06];
+  // Ratio 3: Level 4 (Index 3). { 0: Shirt(0.65), 1: Blanket(0.05) }
+  private completionRatios: (number | Record<number, number>)[] = [0.042, 0.04, 0.062, { 0: 0.65, 1: 0.05 }];
+  private maskData = new Map<Phaser.GameObjects.Image, { graphics: Phaser.GameObjects.Graphics, backing: Phaser.GameObjects.Graphics, outlineImage: Phaser.GameObjects.Image, outlineMask: Phaser.GameObjects.Graphics, points: { x: number, y: number }[] }>();
   private paintStates = new Map<number, PaintState>();
   private activePaintObjectIndex?: number;
   // Targets that are already correct and locked.
   private solvedPaintTargets = new Set<number>();
   private evaluatingPaintTargets = new Set<number>();
   private suppressNextLevelSuccessSound = false;
+  private score = 0;
+  private totalQuestions = 0;
 
   private boardFallbackGfx?: Phaser.GameObjects.Graphics;
   private boardImage?: Phaser.GameObjects.Image;
@@ -141,10 +152,10 @@ export class ColorScene extends Phaser.Scene {
         backgroundTint: undefined,
         useBitmapMask: true,
         colorTargets: [
-          { objectIndex: 0, color: COLORS.yellow },
+          { objectIndex: 0, color: 0xFDF2B0 },
         ],
         objectTextureKeys: [
-          COLOR_LEVEL_ASSETS.level1,
+          COLOR_LEVEL_ASSETS.level2,
         ],
       },
       {
@@ -153,12 +164,21 @@ export class ColorScene extends Phaser.Scene {
         targetObjectIndex: 0,
         backgroundTint: undefined,
         useBitmapMask: true,
+        overlayObjects: true, // Stack objects (Umbrella & Dress are parts of same image)
         colorTargets: [
-          { objectIndex: 0, color: 0xFDF2B0 },
+          { objectIndex: 0, color: COLORS.yellow }, // Umbrella (Top)
+          { objectIndex: 1, color: COLORS.yellow }, // Dress (Bottom)
         ],
         objectTextureKeys: [
-          COLOR_LEVEL_ASSETS.level2,
+          COLOR_LEVEL_ASSETS.level1,
+          COLOR_LEVEL_ASSETS.level1,
         ],
+        customHitAreas: {
+          // Umbrella: Bigger
+          0: { x: 428, y: 132, w: 550, h: 245, shape: 'ellipse' },
+          // Dress: Bigger
+          1: { x: 582, y: 509, w: 433, h: 364, shape: 'ellipse' },
+        },
       },
       {
         label: 'CHIỀU',
@@ -179,24 +199,87 @@ export class ColorScene extends Phaser.Scene {
         targetObjectIndex: 0,
         backgroundTint: undefined,
         useBitmapMask: true,
+        overlayObjects: true,
         colorTargets: [
-          { objectIndex: 0, color: 0x6e8ec4 },
+          { objectIndex: 0, color: 0x1d7fc7 }, // Shirt (Blue)
+          { objectIndex: 1, color: 0x1d7fc7 }, // Blanket (Blue)
         ],
         objectTextureKeys: [
           COLOR_LEVEL_ASSETS.level4,
+          COLOR_LEVEL_ASSETS.level4,
         ],
+        customHitAreas: {
+          // Shirt: Polygon Trace (Refined)
+          0: {
+            x: 0, y: 0, w: 0, h: 0,
+            shape: 'polygon',
+            points: [
+              { x: 408, y: 583 }, { x: 402, y: 587 }, { x: 390, y: 594 }, { x: 375, y: 599 }, { x: 370, y: 608 },
+              { x: 361, y: 615 }, { x: 356, y: 626 }, { x: 347, y: 640 }, { x: 340, y: 651 }, { x: 334, y: 665 },
+              { x: 334, y: 678 }, { x: 331, y: 689 }, { x: 327, y: 707 }, { x: 323, y: 724 }, { x: 318, y: 753 },
+              { x: 318, y: 785 }, { x: 300, y: 796 }, { x: 327, y: 812 }, { x: 340, y: 830 }, { x: 352, y: 839 },
+              { x: 366, y: 846 }, { x: 388, y: 855 }, { x: 411, y: 855 }, { x: 420, y: 860 }, { x: 449, y: 850 },
+              { x: 459, y: 837 }, { x: 461, y: 825 }, { x: 483, y: 830 }, { x: 504, y: 837 }, { x: 520, y: 835 },
+              { x: 538, y: 828 }, { x: 543, y: 823 }, { x: 561, y: 798 }, { x: 560, y: 783 }, { x: 534, y: 773 },
+              { x: 534, y: 766 }, { x: 533, y: 757 }, { x: 508, y: 760 }, { x: 488, y: 769 }, { x: 472, y: 778 },
+              { x: 449, y: 780 }, { x: 415, y: 764 }, { x: 418, y: 771 }, { x: 405, y: 770 }, { x: 409, y: 762 }, { x: 422, y: 758 }, { x: 431, y: 752 }, { x: 427, y: 752 }, { x: 458, y: 733 },
+              { x: 472, y: 724 }, { x: 501, y: 705 }, { x: 526, y: 687 }, { x: 551, y: 676 }, { x: 588, y: 662 },
+              { x: 608, y: 655 }, { x: 619, y: 646 }, { x: 611, y: 662 }, { x: 604, y: 676 }, { x: 604, y: 682 },
+              { x: 599, y: 696 }, { x: 572, y: 751 }, { x: 590, y: 769 }, { x: 620, y: 769 }, { x: 645, y: 762 },
+              { x: 647, y: 737 }, { x: 658, y: 721 }, { x: 663, y: 724 }, { x: 667, y: 717 }, { x: 672, y: 714 }, { x: 669, y: 707 }, { x: 679, y: 691 }, { x: 686, y: 669 },
+              { x: 686, y: 651 }, { x: 690, y: 637 }, { x: 683, y: 621 }, { x: 674, y: 608 }, { x: 660, y: 598 },
+              { x: 642, y: 592 }, { x: 620, y: 587 }, { x: 602, y: 572 }, { x: 585, y: 574 }, { x: 560, y: 562 },
+              { x: 536, y: 562 }, { x: 509, y: 556 }, { x: 488, y: 558 }, { x: 470, y: 560 }, { x: 450, y: 565 },
+              { x: 443, y: 569 }
+            ]
+          },
+        },
+        exclusionAreas: {
+          // Blanket excludes Shirt area EXACTLY
+          1: [{
+            x: 0, y: 0, w: 0, h: 0,
+            shape: 'polygon',
+            points: [
+              { x: 408, y: 583 }, { x: 402, y: 587 }, { x: 390, y: 594 }, { x: 375, y: 599 }, { x: 370, y: 608 },
+              { x: 361, y: 615 }, { x: 356, y: 626 }, { x: 347, y: 640 }, { x: 340, y: 651 }, { x: 334, y: 665 },
+              { x: 334, y: 678 }, { x: 331, y: 689 }, { x: 327, y: 707 }, { x: 323, y: 724 }, { x: 318, y: 753 },
+              { x: 318, y: 785 }, { x: 300, y: 796 }, { x: 327, y: 812 }, { x: 340, y: 830 }, { x: 352, y: 839 },
+              { x: 366, y: 846 }, { x: 388, y: 855 }, { x: 411, y: 855 }, { x: 420, y: 860 }, { x: 449, y: 850 },
+              { x: 459, y: 837 }, { x: 461, y: 825 }, { x: 483, y: 830 }, { x: 504, y: 837 }, { x: 520, y: 835 },
+              { x: 538, y: 828 }, { x: 543, y: 823 }, { x: 561, y: 798 }, { x: 560, y: 783 }, { x: 534, y: 773 },
+              { x: 534, y: 766 }, { x: 533, y: 757 }, { x: 508, y: 760 }, { x: 488, y: 769 }, { x: 472, y: 778 },
+              { x: 449, y: 780 }, { x: 415, y: 764 }, { x: 418, y: 771 }, { x: 405, y: 770 }, { x: 409, y: 762 }, { x: 422, y: 758 }, { x: 431, y: 752 }, { x: 427, y: 752 }, { x: 458, y: 733 },
+              { x: 472, y: 724 }, { x: 501, y: 705 }, { x: 526, y: 687 }, { x: 551, y: 676 }, { x: 588, y: 662 },
+              { x: 608, y: 655 }, { x: 619, y: 646 }, { x: 611, y: 662 }, { x: 604, y: 676 }, { x: 604, y: 682 },
+              { x: 599, y: 696 }, { x: 572, y: 751 }, { x: 590, y: 769 }, { x: 620, y: 769 }, { x: 645, y: 762 },
+              { x: 647, y: 737 }, { x: 658, y: 721 }, { x: 663, y: 724 }, { x: 667, y: 717 }, { x: 672, y: 714 }, { x: 669, y: 707 }, { x: 679, y: 691 }, { x: 686, y: 669 },
+              { x: 686, y: 651 }, { x: 690, y: 637 }, { x: 683, y: 621 }, { x: 674, y: 608 }, { x: 660, y: 598 },
+              { x: 642, y: 592 }, { x: 620, y: 587 }, { x: 602, y: 572 }, { x: 585, y: 574 }, { x: 560, y: 562 },
+              { x: 536, y: 562 }, { x: 509, y: 556 }, { x: 488, y: 558 }, { x: 470, y: 560 }, { x: 450, y: 565 },
+              { x: 443, y: 569 }
+            ]
+          }],
+        },
       },
     ];
   }
 
   preload() {
-    loadAssetGroups(this, 'shared', 'colorScene', 'numbers', 'ui', 'countConnect');
+    loadAssetGroups(this, 'shared', 'colorScene', 'ui');
     // Không load audio hướng dẫn ở đây, AudioManager sẽ quản lý và load bằng howler
   }
 
   create() {
     // Avoid pixel-snapping artifacts on scaled UI assets (palette dots).
     this.cameras.main.setRoundPixels(false);
+
+    // Reset global flags for EndGame logic and Hub state
+    console.log('[ColorScene] Resetting EndGame flags and Hub state');
+    (window as any)._inEndGame = false;
+    (window as any)._reportSent = false;
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state", "stats", "hint", "quit"],
+    });
 
     // Reset toàn bộ trạng thái logic khi vào lại scene (chơi lại)
     this.currentColorLevelIndex = 0;
@@ -242,13 +325,49 @@ export class ColorScene extends Phaser.Scene {
     this.layoutBoard();
 
     this.applyCurrentColorLevel();
+    startHubQuestion();
     // Đảm bảo bàn tay hiện ngay khi vào màn đầu tiên
     this.initialPaletteGuideHandTimeout?.remove(false);
     this.initialPaletteGuideHandTimeout = this.time.delayedCall(0, () => {
       this.showPaletteGuideHand(true);
     });
     // Phát voice hướng dẫn cho màn đầu tiên (không ảnh hưởng bàn tay)
-    this.playGuideVoiceForCurrentLevel();
+    // applyCurrentColorLevel đã gọi playGuideVoiceForCurrentLevel rồi nên không cần gọi lại ở đây.
+
+    // Đảm bảo BGM phát khi vào phiên chơi (cả lần đầu và chơi lại từ EndGame)
+    // Delay 200ms để Howler xử lý xong stopAll trước khi phát lại
+    this.time.delayedCall(200, () => {
+      if (this.scene.isActive()) {
+        (window as any).ensureBgmStarted?.();
+      }
+    });
+
+    // SDK Init
+    const targetsPerLevel = this.colorLevels.map(l => l.colorTargets ? l.colorTargets.length : 1);
+    this.totalQuestions = targetsPerLevel.reduce((a, b) => a + b, 0);
+    sdkGameCore.setTotal(this.totalQuestions);
+
+    (window as any).irukaGameState = {
+      startTime: Date.now(),
+      currentScore: 0,
+    };
+    this.score = 0;
+    sdk.score(this.score, 0);
+    sdk.progress({ levelIndex: 0, total: this.colorLevels.length, score: this.score });
+
+    startHubQuestion();
+    this.input.once('pointerdown', () => {
+      if ((this.sound as any).context?.state === 'suspended') {
+        (this.sound as any).context?.resume();
+      }
+      // Re-trigger guide voice on first interaction ONLY if not already playing
+      if (!AudioManager.isPlaying('voice_guide_color_1')) {
+        this.playGuideVoiceForCurrentLevel();
+      }
+
+      // Ensure BGM is playing (if managed globally or locally)
+      // AudioManager.playBGM(); // If you have a specific BGM key
+    });
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off('resize', this.layoutBoard, this);
@@ -266,6 +385,79 @@ export class ColorScene extends Phaser.Scene {
     this.input.on('pointerup', this.onPointerUp, this);
 
     this.resetInactivityTimer();
+
+    // Debug: visualize hit areas if requested logic implies it, or just for dev
+    this.debugGfx = this.add.graphics().setDepth(1000);
+    this.layoutBoard();
+
+    // TRACE MODE: Toggle this to true to help user find polygon points
+    const DEBUG_TRACE_MODE = false;
+    if (DEBUG_TRACE_MODE) {
+      this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+        // Find which object we are over (using simple bounds)
+        this.objects.forEach((obj, idx) => {
+          if (!obj.visible) return;
+          const b = obj.getBounds();
+          if (b.contains(pointer.x, pointer.y)) {
+            // Calculate texture space coord
+            const texX = (pointer.x - obj.x) / obj.scaleX + obj.originX * obj.width;
+            const texY = (pointer.y - obj.y) / obj.scaleY + obj.originY * obj.height;
+            console.log(`TRACE [Obj ${idx}]: { x: ${Math.round(texX)}, y: ${Math.round(texY)} },`);
+          }
+        });
+      });
+    }
+  }
+
+  private updateObjectMasks() {
+    for (const [obj, data] of this.maskData.entries()) {
+      if (!obj.active) continue;
+
+      const points = data.points.map(p => ({
+        x: (p.x - obj.originX * obj.width) * obj.scaleX + obj.x,
+        y: (p.y - obj.originY * obj.height) * obj.scaleY + obj.y
+      }));
+
+      // Update Mask Graphics
+      const g = data.graphics;
+      g.clear();
+      g.fillStyle(0xffffff);
+      g.fillPoints(points, true, true);
+
+      // Update Backing Graphics (White blocker)
+      const b = data.backing;
+      b.clear();
+      b.setVisible(true);
+      b.setDepth(30); // Depth 30: Below Shirt Paint (39), Above Blanket (10)
+      b.fillStyle(0xFFFFFF, 1);
+      b.fillPoints(points, true, true);
+
+      b.setDepth(30); // Depth 30: Below Shirt Paint (39), Above Blanket (10)
+      b.fillStyle(0xFFFFFF, 1);
+      b.fillPoints(points, true, true);
+
+      // Update Image Outline (Image masked by Stroke)
+      const oi = data.outlineImage;
+      oi.setPosition(obj.x, obj.y);
+      oi.setScale(obj.scaleX, obj.scaleY);
+      oi.setOrigin(obj.originX, obj.originY);
+      oi.setDisplaySize(obj.displayWidth, obj.displayHeight);
+      oi.setVisible(true);
+      oi.setDepth(200); // Super-High Depth to prevent Paint Overlap
+
+      const om = data.outlineMask;
+      om.clear();
+      om.lineStyle(4, 0xffffff, 1); // Reduced from 8px to 4px for a thinner outline
+      om.strokePoints(points, true, true);
+    }
+  }
+
+  private debugGfx?: Phaser.GameObjects.Graphics;
+
+  private drawDebugHitAreas() {
+    if (!this.debugGfx) return;
+    this.debugGfx.clear();
+    // Debug visualization disabled
   }
   // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager (howler)
   // Phát voice hướng dẫn cho từng màn (level) ColorScene qua AudioManager
@@ -275,7 +467,6 @@ export class ColorScene extends Phaser.Scene {
     // Stop any potential playing voices
     // Stop any potential playing voices
     AudioManager.stop('voice_guide_color_1');
-    AudioManager.stop('voice_guide_color_2');
 
     // Luôn dùng voice hướng dẫn tô màu (color.mp3) cho tất cả các màn tô màu
     AudioManager.playWhenReady('voice_guide_color_1');
@@ -296,6 +487,20 @@ export class ColorScene extends Phaser.Scene {
   private playCorrectSound() {
     AudioManager.play('sfx_correct');
     this.playCorrectAnswerSound();
+
+    const updateState = () => {
+      this.score += 1;
+      recordHubCorrect(1);
+      (window as any).irukaGameState.currentScore = this.score;
+      sdk.score(this.score, 1);
+      sdk.progress({
+        levelIndex: this.currentColorLevelIndex,
+        score: this.score,
+      });
+    };
+
+    // Update state immediately to ensure score is recorded regardless of audio status
+    updateState();
   }
 
   // Phát âm thanh sai
@@ -303,6 +508,7 @@ export class ColorScene extends Phaser.Scene {
     // Ngắt tất cả voice hướng dẫn trước khi phát âm thanh sai
     ['voice_guide_color_1', 'voice_guide_color_2'].forEach((k) => AudioManager.stop(k));
     AudioManager.play('sfx_wrong');
+    recordHubWrong();
   }
 
   private shakeAsset(target?: Phaser.GameObjects.GameObject) {
@@ -364,12 +570,6 @@ export class ColorScene extends Phaser.Scene {
 
 
 
-
-
-
-
-
-
   private createPaletteElements() {
     this.paletteDefs.forEach((def, index) => {
       const dot = this.createPaletteDot(def);
@@ -386,13 +586,25 @@ export class ColorScene extends Phaser.Scene {
   }
 
   private createObjectElements() {
-    // Reset lại mảng objects để tránh giữ lại object cũ đã bị destroy khi restart scene
+    this.maskData.forEach(d => d.graphics.destroy());
+    this.maskData.clear();
+    // Clean up old objects if any
+    this.objects.forEach(obj => obj.destroy());
     this.objects = [];
+
+    // Clean up old masks
+    this.maskData.forEach(d => {
+      d.graphics.destroy();
+      d.backing.destroy();
+      d.outlineImage.destroy();
+      d.outlineMask.destroy();
+    });
+    this.maskData.clear();
+
     const level = this.getCurrentColorLevel();
-    // Tính vị trí x dựa vào objectPositions, y sẽ đặt sát đáy boardInnerRect
     const pos = this.objectPositions ?? { leftX: 0, rightX: 0, y: 0 };
-    // Tạm thời tạo object ở y=0, sau đó sẽ reposition đúng ở positionObjects
     const desiredCount = Math.max(0, level.objectTextureKeys.length);
+
     for (let i = 0; i < desiredCount; i++) {
       const textureKey = this.resolveTextureKey(level, i);
       const x = i === 0 ? pos.leftX : pos.rightX;
@@ -401,7 +613,35 @@ export class ColorScene extends Phaser.Scene {
       obj.on('pointerover', () => this.updatePaintHoverCursor(i, true));
       obj.on('pointerout', () => this.updatePaintHoverCursor(i, false));
       this.objects.push(obj);
-      // Không tạo label số trên object
+
+      // Masking Logic for Polygon Overlays (Shirt)
+      if (level.customHitAreas && level.customHitAreas[i]) {
+        const area = level.customHitAreas[i];
+        if (area.shape === 'polygon' && area.points) {
+          const g = this.make.graphics();
+          obj.setMask(g.createGeometryMask());
+
+          // White backing to block underlying paint
+          const backing = this.add.graphics();
+          backing.setDepth(30);
+
+          // Image Outline (Original pixels on top)
+          const outlineImage = this.add.image(x, 0, textureKey).setScale(0.4, 0.4);
+          outlineImage.disableInteractive(); // Ensure it doesn't catch clicks
+          const outlineMask = this.make.graphics();
+          outlineImage.setMask(outlineMask.createGeometryMask());
+          outlineImage.setDepth(200);
+
+          this.maskData.set(obj, { graphics: g, backing, outlineImage, outlineMask, points: area.points });
+          obj.setDepth(40); // Shirt (40) > Paint (39) > Backing (30) > Blanket (10)
+        } else {
+          // Standard objects (Blanket)
+          obj.setDepth(10);
+        }
+      } else {
+        // No custom area (Blanket)
+        obj.setDepth(10);
+      }
     }
   }
 
@@ -432,7 +672,44 @@ export class ColorScene extends Phaser.Scene {
     // Prefer top-most objects (higher depth).
     const candidates = Array.from(targetMap.keys())
       .map((idx) => ({ idx, obj: this.objects[idx] }))
-      .filter(({ obj }) => !!obj && obj.visible && obj.getBounds().contains(pointer.x, pointer.y))
+      .filter(({ obj, idx }) => {
+        if (!obj || !obj.visible) return false;
+        // Basic bounding box check (world space)
+        if (!obj.getBounds().contains(pointer.x, pointer.y)) return false;
+
+        // Custom Hit Area Check (Texture Space)
+        if (level.customHitAreas && level.customHitAreas[idx]) {
+          const area = level.customHitAreas[idx];
+          // Convert pointer world -> local (texture)
+          // localX = (worldX - (obj.x - (obj.originX * obj.displayWidth))) / obj.scaleX
+          // But safer:
+          const localX = (pointer.x - obj.x) / obj.scaleX + obj.originX * obj.width;
+          const localY = (pointer.y - obj.y) / obj.scaleY + obj.originY * obj.height;
+
+          if (area.shape === 'ellipse') {
+            const rx = area.w! / 2;
+            const ry = area.h! / 2;
+            const cx = area.x! + rx;
+            const cy = area.y! + ry;
+            const val = Math.pow(localX - cx, 2) / Math.pow(rx, 2) + Math.pow(localY - cy, 2) / Math.pow(ry, 2);
+            if (val > 1) return false;
+          } else if (area.shape === 'polygon' && area.points) {
+            const poly = new Phaser.Geom.Polygon(area.points);
+            if (!poly.contains(localX, localY)) return false;
+          } else {
+            // Default rect
+            if (
+              localX < area.x! ||
+              localX > area.x! + area.w! ||
+              localY < area.y! ||
+              localY > area.y! + area.h!
+            ) {
+              return false;
+            }
+          }
+        }
+        return true;
+      })
       .sort((a, b) => (b.obj?.depth ?? 0) - (a.obj?.depth ?? 0));
     return candidates[0]?.idx;
   }
@@ -516,14 +793,20 @@ export class ColorScene extends Phaser.Scene {
     } else if (level.mode === 'circle') {
       this.time.delayedCall(250, () => this.showCircleGuideHand(true));
     }
+
+    this.drawDebugHitAreas();
+    startHubQuestion();
   }
 
   private resetForNextColorLevel() {
-    this.objects.forEach((obj) => obj.clearTint());
+    // Don't just clear tint, recreate objects because object count might change (e.g. 2->1)
+    // this.objects.forEach((obj) => obj.clearTint());
+
     this.clearCircle();
     this.clearUserDrawing();
     this.clearPaint();
 
+    this.createObjectElements();
     this.applyCurrentColorLevel();
     // Hiển thị lại bàn tay hướng dẫn ở ô màu lần đầu tiên (nếu là màn tô màu)
     const level = this.getCurrentColorLevel();
@@ -536,19 +819,29 @@ export class ColorScene extends Phaser.Scene {
 
   private advanceColorLevel() {
     if (this.currentColorLevelIndex + 1 < this.colorLevels.length) {
+      sdk.requestSave({
+        score: this.score,
+        levelIndex: this.currentColorLevelIndex,
+      });
+
       this.currentColorLevelIndex++;
+      sdk.progress({
+        levelIndex: this.currentColorLevelIndex,
+        total: this.colorLevels.length,
+        score: this.score,
+      });
+
       this.resetForNextColorLevel();
       return;
     }
 
-    this.time.delayedCall(500, () => {
-      this.game.events.emit(FLOW_GO_END, {
-        scene: this.scene.key,
-        isVictory: true,
-        marblesTotal: 0,
-        ballsTotal: 0
-      } as FlowEndPayload);
-    });
+    // Delay moved to onLevelSuccess for consistency
+    this.game.events.emit(FLOW_GO_END, {
+      scene: this.scene.key,
+      isVictory: true,
+      marblesTotal: 0,
+      ballsTotal: 0
+    } as FlowEndPayload);
   }
 
   private onLevelSuccess() {
@@ -559,7 +852,12 @@ export class ColorScene extends Phaser.Scene {
     this.suppressNextLevelSuccessSound = false;
     this.hidePaletteGuideHand();
     this.hideActionGuideHand();
-    this.advanceColorLevel();
+    finishHubQuestion();
+
+    // Delay to allow fill animation and sound to complete before advancing
+    this.time.delayedCall(1500, () => {
+      this.advanceColorLevel();
+    });
   }
 
   private clearCircle() {
@@ -650,21 +948,54 @@ export class ColorScene extends Phaser.Scene {
         .setDepth(-1000)
         .setAlpha(1);
 
-      if (level.useBitmapMask !== false) {
+      let maskGraphics: Phaser.GameObjects.Graphics | undefined;
+      let polygonPoints: { x: number; y: number }[] | undefined;
+
+      // Check for Polygon Hit Area first
+      let usedPolygonMask = false;
+      if (level.customHitAreas && level.customHitAreas[objectIndex]) {
+        const area = level.customHitAreas[objectIndex];
+        if (area.shape === 'polygon' && area.points) {
+          usedPolygonMask = true;
+          polygonPoints = area.points;
+          maskGraphics = this.make.graphics();
+          rt.setMask(maskGraphics.createGeometryMask());
+
+          // Draw initial mask
+          maskGraphics.clear();
+          maskGraphics.fillStyle(0xffffff);
+          const points = polygonPoints.map(p => ({
+            x: (p.x - target.originX * target.width) * target.scaleX + target.x,
+            y: (p.y - target.originY * target.height) * target.scaleY + target.y
+          }));
+          maskGraphics.fillPoints(points, true, true);
+          // Widen the Paint Mask to bleed under the outline
+          // Reduced to 4px to match the thinner outline
+          maskGraphics.lineStyle(4, 0xffffff, 1);
+          maskGraphics.strokePoints(points, true, true);
+        }
+      }
+
+      if (!usedPolygonMask && level.useBitmapMask !== false) {
         const mask = new Phaser.Display.Masks.BitmapMask(this, maskSprite);
         mask.invertAlpha = true;
         rt.setMask(mask);
       }
 
-      const maskCells = this.computeMaskCellsForTarget(target, target.texture.key);
+      let maskCells = this.computeMaskCellsForTarget(target, target.texture.key);
+      if (level.customHitAreas && level.customHitAreas[objectIndex]) {
+        maskCells = this.filterMaskCells(maskCells, target.width, target.height, level.customHitAreas[objectIndex] as any);
+      }
 
       this.paintStates.set(objectIndex, {
         rt,
         maskSprite,
         targetSize: { w, h },
         cellHits: new Set<string>(),
-        maskCells,
         colorCounts: new Map<number, number>(),
+        maskGraphics,
+        polygonPoints,
+        maskCells,
       });
       return;
     }
@@ -678,7 +1009,20 @@ export class ColorScene extends Phaser.Scene {
     state.maskSprite.setDisplaySize(target.displayWidth, target.displayHeight);
     state.maskSprite.setTexture(target.texture.key);
 
-    if (state.rt.mask instanceof Phaser.Display.Masks.BitmapMask) {
+    // Update Geometry Mask if present
+    if (state.maskGraphics && state.polygonPoints) {
+      state.maskGraphics.clear();
+      state.maskGraphics.fillStyle(0xffffff);
+      const points = state.polygonPoints.map(p => ({
+        x: (p.x - target.originX * target.width) * target.scaleX + target.x,
+        y: (p.y - target.originY * target.height) * target.scaleY + target.y
+      }));
+      state.maskGraphics.fillPoints(points, true, true);
+      // Widen the Paint Mask to bleed under the outline
+      // Reduced to 4px to match the thinner outline
+      state.maskGraphics.lineStyle(4, 0xffffff, 1);
+      state.maskGraphics.strokePoints(points, true, true);
+    } else if (state.rt.mask instanceof Phaser.Display.Masks.BitmapMask) {
       state.rt.mask.invertAlpha = true;
     }
   }
@@ -912,12 +1256,15 @@ export class ColorScene extends Phaser.Scene {
     this.updatePalettePositions();
     this.positionGirl();
     this.positionObjects();
+    this.updateObjectMasks();
     this.ensurePaintBrush();
     for (const idx of Array.from(this.paintStates.keys())) this.ensurePaintForObject(idx);
     this.redrawCircle();
     this.ensureBannerAssets();
     this.updateColorLevelLabel();
     this.repositionGuideHands();
+
+    this.drawDebugHitAreas();
   }
 
   private drawBoardFrame() {
@@ -1106,7 +1453,9 @@ export class ColorScene extends Phaser.Scene {
     // Fallback positioning when the girl asset is missing.
     this.objects.forEach((obj, index) => {
       // Logic mới: Nếu chỉ có 1 object (Coloring), phóng to và căn giữa.
-      if (this.objects.length === 1) {
+      const level = this.getCurrentColorLevel();
+      const isOverlay = level.overlayObjects;
+      if (this.objects.length === 1 || isOverlay) {
         const inner = this.boardInnerRect;
         obj.setPosition(inner.centerX, inner.centerY - 15);
 
@@ -1122,8 +1471,10 @@ export class ColorScene extends Phaser.Scene {
           h = maxW / ratio;
         }
         obj.setDisplaySize(w, h);
-        return;
+        if (!isOverlay) return; // if single object, we are done. If overlay, proceed to next object
       }
+
+      if (level.overlayObjects) return; // Handled above
 
       const targetX = xs[index] ?? xs[0];
       obj.setPosition(targetX, y);
@@ -1134,6 +1485,7 @@ export class ColorScene extends Phaser.Scene {
     });
 
     // Không reposition label số trên object
+    this.updateObjectMasks();
   }
 
   private positionGirl() {
@@ -1283,8 +1635,9 @@ export class ColorScene extends Phaser.Scene {
     return width / height;
   }
   private showPaletteGuideHand(first: boolean) {
-    // Limit guidance to Level 1 only
-    if (this.currentColorLevelIndex > 0) return;
+    // Only restrict INITIAL auto-guidance to Level 1.
+    // Inactivity hints (!first) should show on all levels.
+    if (first && this.currentColorLevelIndex > 0) return;
 
     // Chỉ hiện lần đầu hoặc khi timeout
     if (first && this.paletteGuideHandShown) return;
@@ -1327,6 +1680,7 @@ export class ColorScene extends Phaser.Scene {
         repeat: -1,
       });
       if (first) this.paletteGuideHandShown = true;
+      if (!first) recordHubHint();
     }
   }
   private hidePaletteGuideHand() {
@@ -1378,14 +1732,8 @@ export class ColorScene extends Phaser.Scene {
   private isCurrentColorValid() {
     const level = this.getCurrentColorLevel();
     if (level.mode !== 'color') return false;
-    if (this.selectedTool !== 'color' || this.selected === undefined) return false;
-
-    const targetMap = this.getColorTargetMap(level);
-    for (const [idx, color] of targetMap.entries()) {
-      if (!this.solvedPaintTargets.has(idx) && color === this.selected) {
-        return true;
-      }
-    }
+    // Chỉ cần đã chọn công cụ tô màu và chọn 1 màu bất kỳ là được phép tô
+    if (this.selectedTool === 'color' && this.selected !== undefined) return true;
     return false;
   }
 
@@ -1417,23 +1765,33 @@ export class ColorScene extends Phaser.Scene {
     const candidates = Array.from(targetMap.entries())
       .filter(([idx]) => !this.solvedPaintTargets.has(idx))
       .sort((a, b) => a[0] - b[0]);
-    const pick =
-      preferredColor !== undefined ? candidates.find(([, c]) => c === preferredColor)?.[0] : candidates[0]?.[0];
+    let pick: number | undefined;
+    if (preferredColor !== undefined) {
+      pick = candidates.find(([, c]) => c === preferredColor)?.[0];
+    }
+    if (pick == null) {
+      pick = candidates[0]?.[0];
+    }
     const target = pick != null ? this.objects[pick] : undefined;
     if (!target || !target.visible) return;
     const b = target.getBounds();
-    // Start near the cat so the sweep animation can show "paint the whole cat".
-    // Point straight at the center of the animal, shifted down a bit.
-    const pointX = b.centerX + 35;
-    const pointY = b.centerY + 80; // Shift down 20px
+
+    // Use offsets from JSON configuration
+    const levelOffsets = (guidePositions as any)[this.currentColorLevelIndex];
+    const offsets = (levelOffsets && pick != null) ? levelOffsets[pick] : { x: -120, y: 70 };
+
+    const pointX = b.centerX + (offsets.x ?? -120);
+    const pointY = b.centerY + (offsets.y ?? 70);
+
     hand.setPosition(pointX, pointY);
     hand.setRotation(0);
     hand.setScale(0.5);
   }
 
   private showPaintGuideHand(first: boolean) {
-    // Limit guidance to Level 1 only
-    if (this.currentColorLevelIndex > 0) return;
+    // Only restrict INITIAL auto-guidance to Level 1.
+    // Inactivity hints (!first) should show on all levels.
+    if (first && this.currentColorLevelIndex > 0) return;
 
     const level = this.getCurrentColorLevel();
     if (level.mode !== 'color') return;
@@ -1466,6 +1824,7 @@ export class ColorScene extends Phaser.Scene {
 
     this.actionGuideHandTimeout?.remove(false);
     // Removed auto-hide: Hand persists until user interaction starts.
+    if (!first) recordHubHint();
   }
 
   private showCircleGuideHand(first: boolean) {
@@ -1507,6 +1866,7 @@ export class ColorScene extends Phaser.Scene {
 
     this.actionGuideHandTimeout?.remove(false);
     // Removed auto-hide: Hand persists until user interaction starts.
+    if (!first) recordHubHint();
   }
 
   private repositionGuideHands() {
@@ -1631,6 +1991,7 @@ export class ColorScene extends Phaser.Scene {
     const ok = this.isValidCircleOnTarget();
     if (!ok) {
       this.shakeAsset(this.objects[level.targetObjectIndex]);
+      recordHubWrong();
       this.playWrongSound();
       this.time.delayedCall(250, () => this.clearUserDrawing());
       this.time.delayedCall(900, () => this.showCircleGuideHand(false));
@@ -1729,6 +2090,59 @@ export class ColorScene extends Phaser.Scene {
 
     if (localX < 0 || localY < 0 || localX > target.displayWidth || localY > target.displayHeight) return;
 
+    // Enforce custom hit area for painting
+    if (level.customHitAreas && level.customHitAreas[objectIndex]) {
+      // localX calculated above is relative to displaySize (scaled).
+      // customHitAreas are in texture coords (unscaled).
+      // We must scale the texture-coord area to match display size, OR de-scale localX.
+      // Simpler: convert localX/Y (display pixels) to texture pixels.
+      const texX = localX / target.scaleX;
+      const texY = localY / target.scaleY;
+      const area = level.customHitAreas[objectIndex];
+      // Allow a small margin (e.g. brush radius) so edges aren't impossible to paint?
+      // Strict for now.
+      if (area.shape === 'ellipse') {
+        const rx = area.w! / 2;
+        const ry = area.h! / 2;
+        const cx = area.x! + rx;
+        const cy = area.y! + ry;
+        const val = Math.pow(texX - cx, 2) / Math.pow(rx, 2) + Math.pow(texY - cy, 2) / Math.pow(ry, 2);
+        // Allow tiny margin? Strict <= 1
+        if (val > 1) return;
+      } else if (area.shape === 'polygon' && area.points) {
+        const poly = new Phaser.Geom.Polygon(area.points);
+        if (!poly.contains(texX, texY)) return;
+      } else {
+        if (texX < area.x! || texX > area.x! + area.w! || texY < area.y! || texY > area.y! + area.h!) {
+          return;
+        }
+      }
+    }
+
+    // Check exclusion areas
+    if (level.exclusionAreas && level.exclusionAreas[objectIndex]) {
+      const texX = localX / target.scaleX;
+      const texY = localY / target.scaleY;
+      for (const ex of level.exclusionAreas[objectIndex]) {
+        if (ex.shape === 'ellipse') {
+          const rx = ex.w! / 2;
+          const ry = ex.h! / 2;
+          const cx = ex.x! + rx;
+          const cy = ex.y! + ry;
+          const val = Math.pow(texX - cx, 2) / Math.pow(rx, 2) + Math.pow(texY - cy, 2) / Math.pow(ry, 2);
+          if (val <= 1) return; // Inside hole -> stop
+        } else if (ex.shape === 'polygon' && ex.points) {
+          const poly = new Phaser.Geom.Polygon(ex.points);
+          if (poly.contains(texX, texY)) return;
+        } else {
+          if (texX >= ex.x! && texX <= ex.x! + ex.w! && texY >= ex.y! && texY <= ex.y! + ex.h!) {
+            // Inside a hole -> don't paint
+            return;
+          }
+        }
+      }
+    }
+
     const brushScale = Math.max(0.6, Math.min(1.3, target.displayWidth / 300));
     const brushRadiusPx = 30 * brushScale; // brush texture is 60px (r=30)
 
@@ -1753,7 +2167,7 @@ export class ColorScene extends Phaser.Scene {
           const dy = cellCenterY - localY;
           if (dx * dx + dy * dy > brushRadiusPx * brushRadiusPx) continue;
           const key = `${cc},${rr}`;
-          if (state.maskCells.size && !state.maskCells.has(key)) continue;
+          if (state.maskCells && state.maskCells.size && !state.maskCells.has(key)) continue;
           if (add) state.cellHits.add(key);
           else state.cellHits.delete(key);
         }
@@ -1773,13 +2187,33 @@ export class ColorScene extends Phaser.Scene {
     this.paintBrush.setScale(brushScale);
 
     state.rt.draw(this.paintBrush, localX, localY);
+
+    // Apply exclusions (holes) immediately to clip the brush stroke
+    if (level.exclusionAreas && level.exclusionAreas[objectIndex]) {
+      const sx = target.scaleX;
+      const sy = target.scaleY;
+      const g = this.make.graphics({ x: 0, y: 0 });
+      g.fillStyle(0x000000, 1);
+      for (const ex of level.exclusionAreas[objectIndex]) {
+        if (ex.shape === 'polygon' && ex.points) {
+          const scaledPoints = ex.points.map(p => ({ x: p.x * sx, y: p.y * sy }));
+          g.fillPoints(scaledPoints, true, true);
+          // Widen the hole to prevent edge bleeding (match visual outline)
+          g.lineStyle(3, 0xffffff, 1);
+          g.strokePoints(scaledPoints, true, true);
+        } else if (ex.shape === 'ellipse') {
+          g.fillEllipse((ex.x! + ex.w! / 2) * sx, (ex.y! + ex.h! / 2) * sy, ex.w! * sx, ex.h! * sy);
+        } else {
+          g.fillRect(ex.x! * sx, ex.y! * sy, ex.w! * sx, ex.h! * sy);
+        }
+      }
+      state.rt.erase(g, 0, 0);
+      g.destroy();
+    }
     state.colorCounts.set(selectedColor, (state.colorCounts.get(selectedColor) ?? 0) + 1);
 
     // Track rough coverage on a grid so we can decide when painting is "done".
-    updateCoverageCells(true);
-
-    // If child has painted enough, evaluate immediately (no need to wait for pointer up).
-    this.tryEvaluatePaintTarget(objectIndex);
+    updateCoverageCells(true); // Only update cells, do not evaluate
   }
 
   private getDominantPaintColor(colorCounts: Map<number, number>) {
@@ -1794,6 +2228,79 @@ export class ColorScene extends Phaser.Scene {
     return bestColor;
   }
 
+  private fillTargetToFull(targetIndex: number, color: number) {
+    const state = this.paintStates.get(targetIndex);
+    const target = this.objects[targetIndex];
+    if (!state || !target) return;
+
+    const level = this.getCurrentColorLevel();
+    const area = level.customHitAreas?.[targetIndex];
+
+    // RT is sized to displayWidth/Height.
+    // Area is in Texture coordinates.
+    // We must scale area to RT coordinates.
+    // Note: Use calculated scale to be safe (displayWidth / width) if scale property is unreliable? 
+    // Usually scaleX is fine.
+    const sx = target.scaleX;
+    const sy = target.scaleY;
+
+    if (area) {
+      if (area.shape === 'ellipse') {
+        // Draw ellipse to RT
+        const g = this.make.graphics({ x: 0, y: 0 });
+        g.fillStyle(color, 1);
+        g.fillEllipse(
+          (area.x! + area.w! / 2) * sx,
+          (area.y! + area.h! / 2) * sy,
+          area.w! * sx,
+          area.h! * sy
+        );
+        state.rt.draw(g, 0, 0); // draw OVER existing
+        g.destroy();
+      } else if (area.shape === 'polygon' && area.points) {
+        const g = this.make.graphics({ x: 0, y: 0 });
+        g.fillStyle(color, 1);
+        const scaledPoints = area.points.map(p => ({ x: p.x * sx, y: p.y * sy }));
+        g.fillPoints(scaledPoints, true, true);
+        state.rt.draw(g, 0, 0);
+        g.destroy();
+      } else {
+        // Only fill the specific area rect
+        state.rt.fill(color, 1, area.x! * sx, area.y! * sy, area.w! * sx, area.h! * sy);
+      }
+    } else {
+      state.rt.fill(color);
+    }
+
+    // Apply exclusions (holes)
+    if (level.exclusionAreas && level.exclusionAreas[targetIndex]) {
+      // Use a temporary Graphics to erase the hole
+      const g = this.make.graphics({ x: 0, y: 0 });
+      g.fillStyle(0x000000, 1);
+      for (const ex of level.exclusionAreas[targetIndex]) {
+        // Exclusions are in texture coords. Scale them too.
+        if (ex.shape === 'ellipse') {
+          g.fillEllipse(
+            (ex.x! + ex.w! / 2) * sx,
+            (ex.y! + ex.h! / 2) * sy,
+            ex.w! * sx,
+            ex.h! * sy
+          );
+        } else if (ex.shape === 'polygon' && ex.points) {
+          const scaledPoints = ex.points.map(p => ({ x: p.x * sx, y: p.y * sy }));
+          g.fillPoints(scaledPoints, true, true);
+          // Widen the hole by stroking the border
+          g.lineStyle(3, 0xffffff, 1);
+          g.strokePoints(scaledPoints, true, true);
+        } else {
+          g.fillRect(ex.x! * sx, ex.y! * sy, ex.w! * sx, ex.h! * sy);
+        }
+      }
+      state.rt.erase(g, 0, 0);
+      g.destroy();
+    }
+  }
+
   private tryEvaluatePaintTarget(targetIndex: number) {
     const level = this.getCurrentColorLevel();
     if (level.mode !== 'color') return;
@@ -1804,11 +2311,23 @@ export class ColorScene extends Phaser.Scene {
     const state = this.paintStates.get(targetIndex);
     if (!state) return;
 
-    const totalCells = state.maskCells.size || (this.paintGrid.cols * this.paintGrid.rows);
+    const totalCells = state.maskCells?.size || (this.paintGrid.cols * this.paintGrid.rows);
     if (totalCells <= 0) return;
 
-    const requiredRatio = this.completionRatios[this.currentColorLevelIndex] ?? 0.10;
+    const ratioDef = this.completionRatios[this.currentColorLevelIndex] ?? 0.10;
+    let requiredRatio = 0.10;
+    if (typeof ratioDef === 'number') {
+      requiredRatio = ratioDef;
+    } else {
+      requiredRatio = ratioDef[targetIndex] ?? 0.10;
+    }
+
     const requiredCells = Math.min(totalCells, Math.ceil(totalCells * requiredRatio));
+
+    // Debug: Log completion ratio
+    const currentRatio = state.cellHits.size / totalCells;
+    console.log(`[Target ${targetIndex}] Completion: ${(currentRatio * 100).toFixed(2)}% (Required: ${(requiredRatio * 100).toFixed(2)}%)`);
+
     if (state.cellHits.size < requiredCells) return;
 
     const targetMap = this.getColorTargetMap(level);
@@ -1823,8 +2342,15 @@ export class ColorScene extends Phaser.Scene {
     this.painting = false;
     if (this.activePaintObjectIndex === targetIndex) this.activePaintObjectIndex = undefined;
 
-    // Khi xét đúng/sai, không fill kín nữa để giữ nguyên nét vẽ loang lổ/nhiều màu của bé.
-    // this.fillTargetToFull(targetIndex, dominant);
+
+    // Logic mới: Nếu bé chỉ tô 1 màu (đơn sắc) thì auto-fill cho đẹp hoàn hảo.
+    // Nếu bé tô từ 2 màu trở lên (sáng tạo/ngẫu hứng) thì giữ nguyên nét vẽ loang lổ.
+    // Allow eraser (-1) to count as "no color" regarding the single-color check.
+    const usedColors = Array.from(state.colorCounts.keys()).filter(c => c !== -1);
+    if (usedColors.length === 1) {
+      this.fillTargetToFull(targetIndex, dominant);
+    }
+
 
     // Always accept the color the user painted (dominant)
     this.solvedPaintTargets.add(targetIndex);
@@ -1893,12 +2419,71 @@ export class ColorScene extends Phaser.Scene {
         if (any) maskCells.add(`${col},${row}`);
       }
     }
+    // Perform filtering if object has customHitArea
+    // Need object index context here?
+    // computeMaskCellsForTarget is currently generic.
+    // However, maskCells uses grid referencing the whole texture size (implicitly, via % of w/h).
+    // The grid is 50x50.
+    // We should filter grid cells that fall outside the custom area.
+    // Since this function doesn't know the index, let's call a filter later OR pass bounds here.
+    // Simpler: filter in `ensurePaintForObject` or just tolerate slight inaccuracy in % calc for split objects.
+    // But % calc is CRITICAL for completion.
+    // So we must filter.
+    // Let's rely on cellHits being adding only when inside bounds (stampPaint ensures this).
+    // AND maskCells should only contain cells inside bounds.
     return maskCells;
+  }
+
+  private filterMaskCells(cells: Set<string>, w: number, h: number, area?: { x: number, y: number, w: number, h: number, shape?: 'rect' | 'ellipse' | 'polygon', points?: { x: number, y: number }[] }) {
+    if (!area) return cells;
+    const filtered = new Set<string>();
+    const cellW = w / this.paintGrid.cols;
+    const cellH = h / this.paintGrid.rows;
+
+    const rx = area.w! / 2;
+    const ry = area.h! / 2;
+    const cx = area.x! + rx;
+    const cy = area.y! + ry;
+
+    for (const key of cells) {
+      const [c, r] = key.split(',').map(Number);
+      const cellCenterX = (c + 0.5) * cellW;
+      const cellCenterY = (r + 0.5) * cellH;
+
+      let inside = false;
+      if (area.shape === 'ellipse') {
+        const val = Math.pow(cellCenterX - cx, 2) / Math.pow(rx, 2) + Math.pow(cellCenterY - cy, 2) / Math.pow(ry, 2);
+        inside = val <= 1;
+      } else if (area.shape === 'polygon' && area.points) {
+        const poly = new Phaser.Geom.Polygon(area.points);
+        inside = poly.contains(cellCenterX, cellCenterY);
+      } else {
+        inside = (cellCenterX >= area.x! && cellCenterX <= area.x! + area.w! && cellCenterY >= area.y! && cellCenterY <= area.y! + area.h!);
+      }
+
+      // TODO: Also filter exclusions? For now assume mask (texture alpha) handles most, 
+      // but if we want to be strict about completion % in the non-hole area, we should subtract exclusion cells.
+      // For now, simple inclusion filter is enough.
+
+      if (inside) {
+        filtered.add(key);
+      }
+    }
+    return filtered;
   }
 
   private playTargetCorrectAnimation(targetIndex: number) {
     const obj = this.objects[targetIndex];
     if (!obj || !obj.scene) return undefined;
+
+    this.score += 1;
+    recordHubCorrect(1);
+    (window as any).irukaGameState.currentScore = this.score;
+    sdk.score(this.score, 1);
+    sdk.progress({
+      levelIndex: this.currentColorLevelIndex,
+      score: this.score,
+    });
 
     AudioManager.play('sfx_correct');
     return this.playCorrectAnswerSound();
