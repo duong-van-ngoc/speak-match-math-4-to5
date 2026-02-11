@@ -22,16 +22,7 @@ export function drawBlackLine(scene: Phaser.Scene, x1: number, y1: number, x2: n
 
 // Nếu có logic nào trong class GameScene dùng image để vẽ line, hãy thay bằng drawBlackLine như trên.
 import AudioManager from './AudioManager';
-import {
-  sdk,
-  setHubTotal,
-  startHubQuestion,
-  finishHubQuestion,
-  recordHubWrong,
-  recordHubHint,
-  resetHubProgress
-} from './main';
-import { irukaGame } from './main';
+import { irukaGame, sdk, resetHubProgress } from './main';
 import { game as irukaSdkGame } from "@iruka-edu/mini-game-sdk";
 
 // Helper to log SDK exports and provide fallback
@@ -206,6 +197,10 @@ export default class GameScene extends Phaser.Scene {
 
   // hint chờ để gắn vào attempt kế tiếp
   private pendingHint = 0;
+  // Flag logic replay
+  private isReplay = false;
+  // Flag để đánh dấu lần hiện tay hướng dẫn đầu tiên (không tính hint)
+
 
   private gameState: GameState = 'INTRO';
   private hasPlayedInstructionVoice = false;
@@ -275,6 +270,7 @@ export default class GameScene extends Phaser.Scene {
 
   init(data: { score?: number }) {
     this.score = data.score ?? 0;
+    this.isReplay = !!(data as any).regenLevels;
     this.promptImage = undefined;
     this.hasPlayedInstructionVoice = false;
     this.matchedObjects.clear();
@@ -290,7 +286,13 @@ export default class GameScene extends Phaser.Scene {
     this.cancelGuideHandSchedule();
     this.destroyGuideHand();
 
-    setHubTotal(OBJECT_IDS.length);
+    this.destroyGuideHand();
+
+    // Reset sequence counters to prevent payload accumulation
+    this.itemSeq = 0;
+    this.runSeq = 1;
+
+    irukaGame.setTotal?.(OBJECT_IDS.length);
     resetHubProgress();
 
     this.lastInteractionAtMs = 0;
@@ -346,8 +348,14 @@ export default class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       try {
         if ((window as any).playInstructionVoice) delete (window as any).playInstructionVoice;
+        this.matchTracker = null;
+        this.gameState = 'INTRO';
       } catch { }
     });
+
+    if (this.isReplay) {
+      try { irukaGame.retryFromStart?.(); } catch { }
+    }
 
     this.questionBanner = this.add
       .image(width / 2, BANNER_Y, 'btn_primary_pressed')
@@ -389,10 +397,13 @@ export default class GameScene extends Phaser.Scene {
     this.buildConnectBoard();
     this.layoutScene();
 
+    const now = Date.now();
     (window as any).irukaGameState = {
-      startTime: Date.now(),
+      startTime: now,
       currentScore: 0,
     };
+    (irukaGame as any).startTime = (window as any).irukaGameState.startTime;
+
     sdk.score(0, 0);
     sdk.progress({ levelIndex: 0, total: OBJECT_IDS.length });
 
@@ -828,12 +839,16 @@ export default class GameScene extends Phaser.Scene {
       to: this.shapeIdFromMatchKey(OBJECT_MATCH_KEY[objId]),
     }));
 
+    if (this.matchTracker && typeof this.matchTracker.finalize === 'function') {
+      try { this.matchTracker.finalize(); } catch { }
+    }
+
     this.matchTracker = createMatchTracker({
       meta: {
         item_id: `CONNECT_PAIRS_${this.itemSeq}`,
         item_type: "match",
         seq: this.itemSeq,
-        run_seq: this.runSeq,
+        run_seq: this.isReplay ? this.runSeq + 1 : this.runSeq,
         difficulty: 1,
         scene_id: "SCN_MATCH_01",
         scene_seq: this.itemSeq,
@@ -847,16 +862,19 @@ export default class GameScene extends Phaser.Scene {
       errorOnWrong: "WRONG_PAIR",
     });
 
-    startHubQuestion();
+    if (this.isReplay) this.runSeq++;
+
+    irukaGame.startQuestionTimer?.();
     this.playInstructionVoice();
     this.gameState = 'INTRO';
     this.lastInteractionAtMs = this.time.now;
+
     this.cancelGuideHandSchedule();
-    // Hiển thị bàn tay hướng dẫn ngay khi vào game
+    // Hiển thị bàn tay hướng dẫn ngay khi vào game (Lần đầu: KHÔNG tính hint)
     // Delay nhẹ để tránh bị tắt ngay do click unlock audio hoặc input thừa
     this.time.delayedCall(500, () => {
       if (this.gameState === 'INTRO') {
-        this.startGuideHand();
+        this.startGuideHand(true); // true = isInitial (không tính hint)
       }
     });
     // Sau đó lặp lại theo chu kỳ không thao tác
@@ -865,6 +883,7 @@ export default class GameScene extends Phaser.Scene {
 
   private noteInteraction() {
     this.lastInteractionAtMs = this.time.now;
+
     this.cancelGuideHandSchedule();
     this.destroyGuideHand();
     this.scheduleGuideHand(GUIDE_HAND_INACTIVITY_MS);
@@ -880,11 +899,11 @@ export default class GameScene extends Phaser.Scene {
       if (delayMs >= GUIDE_HAND_INACTIVITY_MS && this.time.now - this.lastInteractionAtMs < GUIDE_HAND_INACTIVITY_MS) return;
       if (this.gameState !== 'INTRO') return;
       if (this.draggingKey) return;
-      this.startGuideHand();
+      this.startGuideHand(false); // Inactivity -> Tính hint
     });
   }
 
-  private startGuideHand() {
+  private startGuideHand(isInitial = false) {
     if (!this.textures.exists(GUIDE_HAND_KEY)) return;
 
     const objectImg = [...this.leftObjects, ...this.rightObjects].find((i) => {
@@ -900,9 +919,12 @@ export default class GameScene extends Phaser.Scene {
     const shapeImg = this.shapeItems.find((i) => i.getData('matchKey') === matchKey);
     if (!shapeImg) return;
 
-    recordHubHint();
-    // Hint xuất hiện -> chưa mở attempt ngay, nên tăng pendingHint
-    this.pendingHint += 1;
+    // Chỉ tính hint nếu KHÔNG phải lần đầu tiên (isInitial = false)
+    if (!isInitial) {
+      irukaGame.addHint?.();
+      // Hint xuất hiện -> chưa mở attempt ngay, nên tăng pendingHint
+      this.pendingHint += 1;
+    }
 
     this.guideHandObjectId = objectId;
 
@@ -1174,7 +1196,16 @@ export default class GameScene extends Phaser.Scene {
 
       this.matchedObjects.add(objectId);
       this.score = this.matchedObjects.size;
-      finishHubQuestion(true, 1);
+
+      irukaGame.finishQuestionTimer?.();
+      irukaGame.recordCorrect?.({ scoreDelta: 1 });
+
+      (window as any).irukaGameState.currentScore = this.score;
+      sdk.score(this.score, 1);
+      sdk.progress({
+        levelIndex: this.matchedObjects.size,
+        score: this.score,
+      });
 
       objectImg.disableInteractive().setAlpha(0.9);
 
@@ -1227,6 +1258,7 @@ export default class GameScene extends Phaser.Scene {
             lessonId: '',
             score: this.score,
             total: OBJECT_IDS.length,
+            startTime: (window as any).irukaGameState?.startTime,
           });
         });
         return;
@@ -1235,6 +1267,7 @@ export default class GameScene extends Phaser.Scene {
       this.time.delayedCall(450, () => {
         if (!this.scene.isActive()) return;
         this.gameState = 'INTRO';
+        irukaGame.startQuestionTimer?.(); // Bắt đầu timer cho cặp tiếp theo
       });
       return;
     }
@@ -1242,7 +1275,7 @@ export default class GameScene extends Phaser.Scene {
     // Phát âm thanh sai và voice sai
     AudioManager.play('sfx_wrong');
     AudioManager.playWhenReady?.('voice_wrong');
-    recordHubWrong();
+    irukaGame.recordWrong?.();
 
     // SDK: Match Wrong
     const ts = Date.now();
@@ -1294,6 +1327,10 @@ export default class GameScene extends Phaser.Scene {
       this.wrongLineSeg = undefined;
       this.gameState = 'INTRO';
       this.redrawConnections();
+
+      // Sai -> Hiện tay hướng dẫn luôn (tính là hint)
+      this.startGuideHand(false);
+      this.scheduleGuideHand(GUIDE_HAND_INACTIVITY_MS);
     });
   }
 

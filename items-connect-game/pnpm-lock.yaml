@@ -12,8 +12,8 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0(phaser@3.90.0)
       '@iruka-edu/mini-game-sdk':
-        specifier: ^0.6.0
-        version: 0.6.0(phaser@3.90.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: ^0.7.0
+        version: 0.7.0(phaser@3.90.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       howler:
         specifier: ^2.2.4
         version: 2.2.4
@@ -221,8 +221,8 @@ packages:
     peerDependencies:
       phaser: ^3.80.0
 
-  '@iruka-edu/mini-game-sdk@0.6.0':
-    resolution: {integrity: sha512-cQmu0nWqaeI+lBmXQMOygkwaBTWibGEW2wDeIMuNSjZxbzh+WDpRGHLWYJoCLlcNydX8M/QVmUM3cABypGQwIA==, tarball: https://npm.pkg.github.com/download/@iruka-edu/mini-game-sdk/0.6.0/a051d5b5f255cb27582c4926ffa0b12ba76cf67f}
+  '@iruka-edu/mini-game-sdk@0.7.0':
+    resolution: {integrity: sha512-1q476NRtacTczon57macbLvr9j9VtUkkHCv/e09xlYahnznjCoNV3maehjio7f9MJPcWrh+pkDEfBqgp6jJLbw==, tarball: https://npm.pkg.github.com/download/@iruka-edu/mini-game-sdk/0.7.0/08911ae75d883d00b876543cb2974aae4902f8ca}
     peerDependencies:
       phaser: ^3.80.0
       react: ^18
@@ -1224,7 +1224,7 @@ snapshots:
       phaser: 3.90.0
       zod: 3.25.76
 
-  '@iruka-edu/mini-game-sdk@0.6.0(phaser@3.90.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@iruka-edu/mini-game-sdk@0.7.0(phaser@3.90.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@iruka-edu/game-core': 0.3.0(phaser@3.90.0)
       howler: 2.2.4

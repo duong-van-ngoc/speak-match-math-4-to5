@@ -1,8 +1,9 @@
-import { sdk, resetHubProgress } from './main';
-import { phaser, game as irukaGame } from '@iruka-edu/mini-game-sdk';
+import { sdk, resetHubProgress, irukaGame } from './main';
+import { phaser } from '@iruka-edu/mini-game-sdk';
 import AudioManager from './AudioManager';
 
 const { createEndGameScene } = phaser;
+(irukaGame as any).prepareSubmitData?.();
 
 export default createEndGameScene({
     sceneKey: 'EndGameScene',
@@ -29,12 +30,11 @@ export default createEndGameScene({
     onEnter: () => {
         (window as any).setGameButtonsVisible?.(false);
         (window as any).__replayFromEndGame__ = true;
-        irukaGame.finalizeAttempt();
     },
     onReplay: function (this: any, scene: any) {
         (window as any).__replayFromEndGame__ = true;
         AudioManager.stopAll();
-        irukaGame.retryFromStart?.();
+        (irukaGame as any).retryFromStart?.();
         resetHubProgress?.();
         // Force stop scenes to ensure a clean state
         scene.scene.stop('BalanceScene');
@@ -49,7 +49,7 @@ export default createEndGameScene({
     onRetry: function (this: any, scene: any) {
         (window as any).__replayFromEndGame__ = true;
         AudioManager.stopAll();
-        irukaGame.retryFromStart?.();
+        (irukaGame as any).retryFromStart?.();
         resetHubProgress?.();
         scene.scene.stop('GameScene');
         scene.scene.start('GameScene', {
@@ -60,25 +60,7 @@ export default createEndGameScene({
         (window as any).ensureBgmStarted?.();
     },
     reportComplete: (payload: any) => {
-        const stats = irukaGame.prepareSubmitData() as any;
-        const retries = stats.retries ?? stats.retryCount ?? 0;
-        const attempts = Math.max(stats.attempts ?? 0, retries + 1);
-
-        const computedPayload = {
-            ...stats,
-            ...payload,
-            hintsUsedTotal: stats.hints ?? stats.hintCount ?? 0,
-            retriesTotal: retries,
-            retries: retries,
-            attemptsTotal: attempts,
-            attempts: attempts,
-            coreScoreFinal: payload.score ?? stats.score ?? stats.finalScore ?? 0,
-            mistakesTotal: stats.mistakes ?? stats.mistakeCount ?? 0,
-            accuracyFinal: stats.accuracy ?? 0,
-            timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
-        };
-
-        console.log('[EndGame] Final Report Payload:', computedPayload);
-        sdk.complete(computedPayload);
+        sdk.complete(payload);
     },
 } as any);
+
