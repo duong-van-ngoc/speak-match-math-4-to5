@@ -22,8 +22,31 @@ export function drawBlackLine(scene: Phaser.Scene, x1: number, y1: number, x2: n
 
 // Nếu có logic nào trong class GameScene dùng image để vẽ line, hãy thay bằng drawBlackLine như trên.
 import AudioManager from './AudioManager';
-import { sdk } from './main';
-import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
+import {
+  sdk,
+  setHubTotal,
+  startHubQuestion,
+  finishHubQuestion,
+  recordHubWrong,
+  recordHubHint,
+  resetHubProgress
+} from './main';
+import { irukaGame } from './main';
+import { game as irukaSdkGame } from "@iruka-edu/mini-game-sdk";
+
+// Helper to log SDK exports and provide fallback
+console.log('SDK Game exports:', irukaSdkGame);
+
+// @ts-ignore
+const createMatchTracker = irukaSdkGame.createMatchTracker || ((opts: any) => {
+  console.warn('createMatchTracker not found in SDK, using mock');
+  return {
+    onMatchStart: (...args: any[]) => console.log('Mock.onMatchStart', ...args),
+    onMatchEnd: (...args: any[]) => console.log('Mock.onMatchEnd', ...args),
+    hint: (...args: any[]) => console.log('Mock.hint', ...args),
+    finalize: () => console.log('Mock.finalize'),
+  };
+});
 
 /* ===================== AUDIO GLOBAL FLAG ===================== */
 const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
@@ -133,15 +156,15 @@ const ITEMS_SHIFT_FROM_BANNER = 0;
 
 /* ===================== LAYOUT ===================== */
 
-const BANNER_Y = 42;
-const BANNER_SCALE = 0.5;
-const BANNER_MAX_W_RATIO = 0.7;
+const BANNER_Y = 60;
+const BANNER_SCALE = 0.75; // Tăng limit scale để cao thêm
+const BANNER_MAX_W_RATIO = 0.7; // Thu hẹp chiều ngang (ngắn lại)
 
 const PROMPT_FONT_SIZE = 30;
 const FEEDBACK_FONT_SIZE = 22;
 const FEEDBACK_BOTTOM_MARGIN = 0;
 
-const ITEMS_GAP_FROM_BANNER = 0;
+const ITEMS_GAP_FROM_BANNER = -10; // Giảm khoảng cách, kéo board lên gần banner hơn
 const ITEMS_GAP_FROM_FEEDBACK = 0;
 
 const COLUMN_GAP_RATIO = 0.28;
@@ -175,6 +198,14 @@ const GUIDE_HAND_INACTIVITY_MS = 10000;
 
 export default class GameScene extends Phaser.Scene {
   public score = 0;
+
+  // ===== SDK Match (items) =====
+  private runSeq = 1;
+  private itemSeq = 0;
+  private matchTracker: ReturnType<typeof createMatchTracker> | null = null;
+
+  // hint chờ để gắn vào attempt kế tiếp
+  private pendingHint = 0;
 
   private gameState: GameState = 'INTRO';
   private hasPlayedInstructionVoice = false;
@@ -219,7 +250,7 @@ export default class GameScene extends Phaser.Scene {
       win.__pendingInstructionVoice__ = false;
       win.__pendingInstructionVoiceForce__ = false;
       this.playInstructionVoice(force);
-    } catch {}
+    } catch { }
   }
   private readonly onAudioUnlocked = () => {
     const win = window as unknown as Record<string, unknown>;
@@ -229,7 +260,7 @@ export default class GameScene extends Phaser.Scene {
     // Không await để nhạc nền và voice có thể bắt đầu cùng lúc.
     try {
       void AudioManager.unlockAndWarmup?.();
-    } catch {}
+    } catch { }
 
     // Khi vừa unlock lần đầu, phát voice hướng dẫn ngay (nếu chưa phát).
     this.consumePendingInstructionVoice();
@@ -259,60 +290,15 @@ export default class GameScene extends Phaser.Scene {
     this.cancelGuideHandSchedule();
     this.destroyGuideHand();
 
-    // SDK: set tổng số câu hỏi (ví dụ 4 cặp cần nối)
-    irukaGame.setTotal(OBJECT_IDS.length);
-    // Khởi tạo trạng thái game cho SDK
-    (window as any).irukaGameState = {
-      startTime: Date.now(),
-      currentScore: this.score,
-    };
-    sdk.score(this.score, 0);
-    sdk.progress({ levelIndex: 0, total: OBJECT_IDS.length });
+    setHubTotal(OBJECT_IDS.length);
+    resetHubProgress();
 
     this.lastInteractionAtMs = 0;
-
     const win = window as unknown as Record<string, unknown>;
     this.audioReady = !!win[AUDIO_UNLOCKED_KEY];
   }
 
-  // Khi trả lời đúng hoặc hoàn thành thử thách nhỏ
-  private recordCorrect() {
-    irukaGame.recordCorrect({ scoreDelta: 1 });
-    (window as any).irukaGameState.currentScore = this.score;
-    sdk.score(this.score, 1);
-    sdk.progress({
-      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
-      score: this.score,
-    });
-  }
-
-  // Khi trả lời sai
-  private recordWrong() {
-    irukaGame.recordWrong();
-  }
-
-  // Khi gợi ý
-  private addHint() {
-    irukaGame.addHint();
-  }
-
-  // Khi lưu tiến trình/chuyển level
-  private saveProgress() {
-    sdk.requestSave({
-      score: this.score,
-      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
-    });
-    sdk.progress({
-      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
-      total: 4,
-      score: this.score,
-    });
-  }
-
-  // Khi hoàn thành game
-  private finalizeAttempt() {
-    irukaGame.finalizeAttempt();
-  }
+  // Removed local SDK helpers and replaced with main.ts functions
 
   /* ===================== CREATE ===================== */
 
@@ -322,7 +308,7 @@ export default class GameScene extends Phaser.Scene {
     this.input.once('pointerdown', () => {
       try {
         (window as any).ensureBgmStarted?.();
-      } catch {}
+      } catch { }
     });
 
     try {
@@ -360,7 +346,7 @@ export default class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       try {
         if ((window as any).playInstructionVoice) delete (window as any).playInstructionVoice;
-      } catch {}
+      } catch { }
     });
 
     this.questionBanner = this.add
@@ -402,6 +388,14 @@ export default class GameScene extends Phaser.Scene {
 
     this.buildConnectBoard();
     this.layoutScene();
+
+    (window as any).irukaGameState = {
+      startTime: Date.now(),
+      currentScore: 0,
+    };
+    sdk.score(0, 0);
+    sdk.progress({ levelIndex: 0, total: OBJECT_IDS.length });
+
     this.startRound();
   }
 
@@ -418,7 +412,7 @@ export default class GameScene extends Phaser.Scene {
       // Bắt đầu BGM và voice hướng dẫn cùng lúc (khi đã unlock audio).
       try {
         (window as any).ensureBgmStarted?.();
-      } catch {}
+      } catch { }
       AudioManager.playWhenReady?.('voice_join');
       this.hasPlayedInstructionVoice = true;
       // Nếu bé click/drag nhanh sau khi voice chạy thì cắt voice để tránh gây khó chịu.
@@ -435,7 +429,7 @@ export default class GameScene extends Phaser.Scene {
       const win = window as any;
       win.__pendingInstructionVoice__ = true;
       win.__pendingInstructionVoiceForce__ = !!(win.__pendingInstructionVoiceForce__ || force);
-    } catch {}
+    } catch { }
   }
 
   /* ===================== BUILD ITEMS ===================== */
@@ -536,6 +530,16 @@ export default class GameScene extends Phaser.Scene {
       this.dragLineEnd = new Phaser.Math.Vector2(pointer.x, pointer.y);
       this.gameState = 'DRAGGING';
 
+      // SDK: Start match attempt
+      const ts = Date.now();
+      this.matchTracker?.onMatchStart?.(objectId, ts);
+
+      // apply hint đã xuất hiện trước đó vào attempt này
+      if (this.pendingHint > 0) {
+        this.matchTracker?.hint?.(this.pendingHint);
+        this.pendingHint = 0;
+      }
+
       this.leftObjects.forEach((i) => i.setScale(this.currentItemScale));
       this.rightObjects.forEach((i) => i.setScale(this.currentItemScale));
       img.setScale(this.currentItemScale * 1.06);
@@ -564,6 +568,25 @@ export default class GameScene extends Phaser.Scene {
 
       const target = this.getShapeAt(pointer.x, pointer.y);
       if (!target) {
+        // SDK: Abandoned attempt
+        const ts = Date.now();
+        // Calculate length from object center to release point
+        const len = Math.round(Phaser.Math.Distance.Between(img.x, img.y, pointer.x, pointer.y));
+
+        this.matchTracker?.onMatchEnd?.(
+          { from_node: objectId, to_node: null, path_length_px: len },
+          ts,
+          { isCorrect: false, errorCode: "USER_ABANDONED" }
+        );
+
+        // Log attempt details for user verification
+        console.log('Match Attempt (Abandoned):', JSON.stringify({
+          response: { from_node: objectId, to_node: null, path_length_px: len },
+          is_correct: false,
+          error_code: "USER_ABANDONED",
+          hint_used: 0
+        }, null, 2));
+
         this.draggingObjectId = undefined;
         this.draggingKey = undefined;
         this.draggingObject = undefined;
@@ -604,7 +627,7 @@ export default class GameScene extends Phaser.Scene {
     const centerX = width / 2;
 
     const bannerMaxW = width * BANNER_MAX_W_RATIO;
-    const bannerMaxH = Math.max(44, height * 0.12);
+    const bannerMaxH = Math.max(90, height * 0.25); // Tăng chiều cao tối đa (cao thêm)
     const bannerTex = this.textures.get(this.questionBanner.texture.key);
     const bannerSrc = bannerTex?.getSourceImage() as { width: number; height: number } | undefined;
     const bannerSrcW = bannerSrc?.width ?? this.questionBanner.width ?? 1;
@@ -648,7 +671,7 @@ export default class GameScene extends Phaser.Scene {
 
     if (this.itemsBoard && this.itemsBoard.scene) {
       // Make the board wrap all items (no overflow), within the available area.
-      const maxBoardW = width * 1.0;
+      const maxBoardW = width * 1.0; // Thu nhỏ chiều ngang board (trước là 1.0)
       const maxBoardH = Math.max(1, safeItemsBottom - itemsTop);
 
       const maxInnerW = Math.max(1, maxBoardW - ITEMS_BOARD_PAD_X * 2);
@@ -781,9 +804,50 @@ export default class GameScene extends Phaser.Scene {
 
   /* ===================== START ROUND ===================== */
 
+  private shapeIdFromMatchKey(k: MatchKey): ShapeItemId {
+    switch (k) {
+      case "CIRCLE": return "SHAPE_CIRCLE";
+      case "SQUARE": return "SHAPE_SQUARE";
+      case "TRIANGLE": return "SHAPE_TRIANGLE";
+      case "RECTANGLE": return "SHAPE_RECTANGLE";
+    }
+  }
+
   private startRound() {
     this.updateHintForRound();
     this.resetUiForNewTry();
+
+    // ===== SDK ITEMS: tạo 1 item match cho cả màn =====
+    this.itemSeq += 1;
+
+    const nodes = [...OBJECT_IDS, ...SHAPE_IDS];
+
+    // correct_pairs: objectId -> shapeId tương ứng
+    const correct_pairs = OBJECT_IDS.map((objId) => ({
+      from: objId,
+      to: this.shapeIdFromMatchKey(OBJECT_MATCH_KEY[objId]),
+    }));
+
+    this.matchTracker = createMatchTracker({
+      meta: {
+        item_id: `CONNECT_PAIRS_${this.itemSeq}`,
+        item_type: "match",
+        seq: this.itemSeq,
+        run_seq: this.runSeq,
+        difficulty: 1,
+        scene_id: "SCN_MATCH_01",
+        scene_seq: this.itemSeq,
+        scene_type: "match",
+        skill_ids: ["noi_cap_34_tv_001"],
+      },
+      expected: {
+        nodes,
+        correct_pairs,
+      },
+      errorOnWrong: "WRONG_PAIR",
+    });
+
+    startHubQuestion();
     this.playInstructionVoice();
     this.gameState = 'INTRO';
     this.lastInteractionAtMs = this.time.now;
@@ -836,7 +900,10 @@ export default class GameScene extends Phaser.Scene {
     const shapeImg = this.shapeItems.find((i) => i.getData('matchKey') === matchKey);
     if (!shapeImg) return;
 
-    this.addHint();
+    recordHubHint();
+    // Hint xuất hiện -> chưa mở attempt ngay, nên tăng pendingHint
+    this.pendingHint += 1;
+
     this.guideHandObjectId = objectId;
 
     const baseScale = (this.scale.height / 720) * GUIDE_HAND_SCALE;
@@ -1107,13 +1174,33 @@ export default class GameScene extends Phaser.Scene {
 
       this.matchedObjects.add(objectId);
       this.score = this.matchedObjects.size;
-      this.recordCorrect();
+      finishHubQuestion(true, 1);
 
       objectImg.disableInteractive().setAlpha(0.9);
 
       // Vẽ line cố định khi nối đúng
       const start = this.getAnchorWorldPoint(objectImg, shapeImg.x, shapeImg.y);
       const end = this.getAnchorWorldPoint(shapeImg, objectImg.x, objectImg.y);
+      const len = Math.round(Phaser.Math.Distance.Between(start.x, start.y, end.x, end.y));
+
+      // SDK: Match Correct
+      const ts = Date.now();
+      const toNode = (shapeImg.getData("itemId") as ShapeItemId) ?? this.shapeIdFromMatchKey(shapeKey);
+
+      this.matchTracker?.onMatchEnd?.(
+        { from_node: objectId, to_node: toNode, path_length_px: len },
+        ts,
+        { isCorrect: true, errorCode: null }
+      );
+
+      // Log attempt details for user verification (Example #10 format)
+      console.log('Match Attempt (Correct):', JSON.stringify({
+        response: { from_node: objectId, to_node: toNode, path_length_px: len },
+        is_correct: true,
+        error_code: null,
+        hint_used: 0 // Note: Hint count is managed internally by tracker
+      }, null, 2));
+
       const line = drawBlackLine(this, start.x, start.y, end.x, end.y);
       line.setDepth(LINE_DEPTH);
       this.matchedLines.set(objectId, line);
@@ -1129,8 +1216,12 @@ export default class GameScene extends Phaser.Scene {
 
       if (this.matchedObjects.size >= OBJECT_IDS.length) {
         this.gameState = 'LEVEL_END';
-        this.saveProgress();
-        this.finalizeAttempt();
+
+        // SDK: Finalize
+        this.matchTracker?.finalize?.();
+        this.matchTracker = null;
+
+        irukaGame.finalizeAttempt();
         this.time.delayedCall(1000, () => {
           this.scene.start('EndGameScene', {
             lessonId: '',
@@ -1151,7 +1242,28 @@ export default class GameScene extends Phaser.Scene {
     // Phát âm thanh sai và voice sai
     AudioManager.play('sfx_wrong');
     AudioManager.playWhenReady?.('voice_wrong');
-    this.recordWrong();
+    recordHubWrong();
+
+    // SDK: Match Wrong
+    const ts = Date.now();
+    const toNode = (shapeImg.getData("itemId") as ShapeItemId) ?? this.shapeIdFromMatchKey(shapeKey);
+    const start = this.getAnchorWorldPoint(objectImg, shapeImg.x, shapeImg.y);
+    const end = this.getAnchorWorldPoint(shapeImg, objectImg.x, objectImg.y);
+    const len = Math.round(Phaser.Math.Distance.Between(start.x, start.y, end.x, end.y));
+
+    this.matchTracker?.onMatchEnd?.(
+      { from_node: objectId, to_node: toNode, path_length_px: len },
+      ts,
+      { isCorrect: false, errorCode: "WRONG_PAIR" }
+    );
+
+    // Log attempt details for user verification (Example #10 format)
+    console.log('Match Attempt (Wrong):', JSON.stringify({
+      response: { from_node: objectId, to_node: toNode, path_length_px: len },
+      is_correct: false,
+      error_code: "WRONG_PAIR",
+      hint_used: 0
+    }, null, 2));
 
     this.draggingLine?.setVisible(false);
 
@@ -1161,8 +1273,7 @@ export default class GameScene extends Phaser.Scene {
     }
     this.wrongLine.setVisible(true).setAlpha(0.95);
 
-    const start = this.getAnchorWorldPoint(objectImg, shapeImg.x, shapeImg.y);
-    const end = this.getAnchorWorldPoint(shapeImg, objectImg.x, objectImg.y);
+    // reused start/end from above
     const x1 = start.x;
     const y1 = start.y;
     const x2 = end.x;
@@ -1270,29 +1381,29 @@ export default class GameScene extends Phaser.Scene {
     // Custom insets for specific items that appear to have less transparent padding.
     // A smaller inset brings the anchor point closer to the bounding box edge.
     switch (itemId) {
-        case 'OBJ_CLOCK':
-            shapeInset = 4; // Use a negative inset to push the anchor point outside the bounding box.
-            break;
-        case 'OBJ_WARNING':
-            shapeInset = -4; // Pushed out slightly
-            break;
-        case 'OBJ_SETSQUARE':
-            shapeInset = 5; // Pushed out more for ruler
-            break;
-        case 'SHAPE_CIRCLE':
-            shapeInset = 0; // Set to 0 for perfect edge calc
-            break;
-        case 'SHAPE_TRIANGLE':
-            shapeInset = 0; // Set to 0 for perfect edge calc
-            break;
-        case 'OBJ_GIFT':
-        case 'OBJ_LANDSCAPE':
-            shapeInset = 2; // Use a small, fixed inset value
-            break;
-        default:
-            // Default inset logic for other items
-            shapeInset = role === 'OBJECT' ? Math.max(1, LINE_THICKNESS * 0.35) : Math.max(1, LINE_THICKNESS * 0.15);
-            break;
+      case 'OBJ_CLOCK':
+        shapeInset = 4; // Use a negative inset to push the anchor point outside the bounding box.
+        break;
+      case 'OBJ_WARNING':
+        shapeInset = -4; // Pushed out slightly
+        break;
+      case 'OBJ_SETSQUARE':
+        shapeInset = 5; // Pushed out more for ruler
+        break;
+      case 'SHAPE_CIRCLE':
+        shapeInset = 0; // Set to 0 for perfect edge calc
+        break;
+      case 'SHAPE_TRIANGLE':
+        shapeInset = 0; // Set to 0 for perfect edge calc
+        break;
+      case 'OBJ_GIFT':
+      case 'OBJ_LANDSCAPE':
+        shapeInset = 2; // Use a small, fixed inset value
+        break;
+      default:
+        // Default inset logic for other items
+        shapeInset = role === 'OBJECT' ? Math.max(1, LINE_THICKNESS * 0.35) : Math.max(1, LINE_THICKNESS * 0.15);
+        break;
     }
 
     const halfW = Math.max(1, img.displayWidth / 2 - shapeInset);

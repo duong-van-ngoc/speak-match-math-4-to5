@@ -10,11 +10,8 @@ export default class PreloadScene extends Phaser.Scene {
     this.load.image('bg1', 'assets/bg/bg1.jpg');
 
     // ===== UI & Banner (CŨ) =====
-    this.load.image('banner_question', 'assets/button/Rectangle 1.png');
-    this.load.image('answer_correct', 'assets/button/V.png');
-    this.load.image('answer_wrong', 'assets/button/X.png');
+    this.load.image('banner_question', 'assets/button/board_scene_2.png');
     this.load.image('btn_next', 'assets/button/next.png');
-    this.load.image('answer_default', 'assets/button/Ellipse 17.png');
     this.load.image('btn_primary_pressed', 'assets/button/HTU.png');
     this.load.image('btn_replay', 'assets/button/replay.png');
     this.load.image('next_end', 'assets/button/next_end.png');
@@ -34,23 +31,11 @@ export default class PreloadScene extends Phaser.Scene {
     this.load.image('ic_7', 'assets/bg_end/ic_7.png');
     this.load.image('ic_8', 'assets/bg_end/ic_8.png');
 
-    // =========================================================
-    // ✅ NEW: GAME "SNAIL / AQUARIUM"
-    // =========================================================
-
-    // --- Corner character (góc dưới-trái GameScene) ---
-    // GameScene dùng key: corner_character
-    this.load.image('corner_character', 'assets/char/char.png'); 
-
     // --- Pick X + result badges (UI mới GameScene) ---
     // GameScene dùng key: pick_x, result_correct, result_wrong
-    this.load.image('pick_x', 'assets/button/X.png');                   
-    this.load.image('result_correct', 'assets/button/image 86.png');   
-    this.load.image('result_wrong', 'assets/button/image 77.png');       
-
-    // --- BalanceScene corner char (góc dưới-trái BalanceScene) ---
-    // BalanceScene dùng key: 'char'
-    this.load.image('char', 'assets/char/char.png'); 
+    // Removed missing pick_x to fix 404
+    this.load.image('result_correct', 'assets/button/image 86.png');
+    this.load.image('result_wrong', 'assets/button/image 77.png');
 
 
     // =========================================================

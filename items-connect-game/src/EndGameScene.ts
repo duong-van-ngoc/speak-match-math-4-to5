@@ -1,224 +1,84 @@
-import Phaser from "phaser";
-import AudioManager from "./AudioManager";
-import { ensureBgmStarted, sdk } from "./main";
-import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
+import { sdk, resetHubProgress } from './main';
+import { phaser, game as irukaGame } from '@iruka-edu/mini-game-sdk';
+import AudioManager from './AudioManager';
 
-function hideGameButtons() {
-  (window as any).setGameButtonsVisible?.(false);
-}
+const { createEndGameScene } = phaser;
 
-
-type DifficultyLevel = 1 | 2 | 3;
-
-export default class EndGameScene extends Phaser.Scene {
-    private lessonId!: string;
-    private difficulty: DifficultyLevel = 3;
-    private containerEl: HTMLElement | null = null;
-    private confettiEvent?: Phaser.Time.TimerEvent;
-
-    constructor() {
-        super('EndGameScene');
-    }
-
-    private clearDimBackground() {
-        if (this.containerEl) {
-            this.containerEl.classList.remove('dim-overlay');
-            this.containerEl.classList.remove('dim-filter');
-        }
-    }
-
-    init(data: {
-        lessonId?: string;
-        score: number;
-        total: number;
-        difficulty?: DifficultyLevel;
-    }) {
-        this.lessonId = data.lessonId ?? '';
-        this.difficulty = data.difficulty ?? 3;
-    }
-
-    create() {
-        const w = this.scale.width;
-        const h = this.scale.height;
-
-        try {
-            const compare = this.scene.get('CompareScene') as any;
-            compare?.stopAllVoices?.();
-        } catch {
-            // Scene may not exist in this build.
-        }
-
-        AudioManager.play("complete");
-
-        this.containerEl = document.getElementById('game-container');
-        if (this.containerEl) {
-            this.containerEl.classList.add('dim-overlay');
-        }
-
-        this.time.delayedCall(2000, () => {
-            AudioManager.play("fireworks");
-            AudioManager.play("applause");
+export default createEndGameScene({
+    sceneKey: 'EndGameScene',
+    assets: {
+        banner: {
+            key: 'banner_congrat',
+            url: 'assets/bg_end/banner_congrat.png',
+        },
+        icon: { key: 'icon_end', url: 'assets/bg_end/icon.png' },
+        replayBtn: { key: 'btn_reset', url: 'assets/bg_end/btn_reset.png' },
+        exitBtn: { key: 'btn_exit', url: 'assets/bg_end/btn_exit.png' },
+    },
+    audio: {
+        play: (k: string) => AudioManager.play(k),
+        stopAll: () => AudioManager.stopAll(),
+    },
+    sounds: {
+        enter: 'complete',
+        fireworks: 'fireworks',
+        applause: 'applause',
+        click: 'sfx_click',
+    },
+    replaySceneKey: 'GameScene',
+    onEnter: () => {
+        (window as any).setGameButtonsVisible?.(false);
+        (window as any).__replayFromEndGame__ = true;
+        irukaGame.finalizeAttempt();
+    },
+    onReplay: function (this: any, scene: any) {
+        (window as any).__replayFromEndGame__ = true;
+        AudioManager.stopAll();
+        irukaGame.retryFromStart?.();
+        resetHubProgress?.();
+        // Force stop scenes to ensure a clean state
+        scene.scene.stop('BalanceScene');
+        scene.scene.stop('GameScene');
+        scene.scene.start('GameScene', {
+            levelIndex: 0,
+            score: 0,
+            regenLevels: true,
         });
-
-        this.add
-            .image(w / 2, h / 2 - h * 0.12, 'banner_congrat')
-            .setOrigin(0.5)
-            .setDepth(100)
-            .setDisplaySize(w * 0.9, h * 0.9);
-
-        if (this.textures.exists('icon_end')) {
-            const icon = this.add.image(w / 2, h / 2 - 150, 'icon_end');
-            icon.setScale(0.5);
-            icon.setDepth(1005);
-            this.tweens.add({
-                targets: icon,
-                y: icon.y - 10,
-                duration: 800,
-                yoyo: true,
-                repeat: -1,
-                ease: 'Sine.easeInOut',
-            });
-            this.tweens.add({
-                targets: icon,
-                angle: { from: -5, to: 5 },
-                duration: 600,
-                yoyo: true,
-                repeat: -1,
-                ease: 'Sine.easeInOut',
-            });
-        }
-
-        const btnScale = Math.min(w, h) / 1280;
-        const spacing = 250 * btnScale;
-
-        const replayBtn = this.add
-            .image(w / 2 - spacing, h / 2 + h * 0.2, 'btn_reset')
-            .setOrigin(0.5)
-            .setScale(btnScale)
-            .setDepth(101)
-            .setInteractive({ useHandCursor: true });
-
-        replayBtn.on('pointerdown', () => {
-            // Dừng toàn bộ âm thanh đang chạy trước khi chơi lại
-            AudioManager.stopAll();
-            AudioManager.play("sfx_click");
-            this.clearDimBackground();
-            this.stopConfetti();
-            // SDK: tính số lần chơi lại
-            irukaGame.retryFromStart();
-            this.scene.stop('EndGameScene');
-            this.scene.start('GameScene', {
-                lessonId: this.lessonId,
-                difficulty: this.difficulty,
-            });
-            // Bật lại BGM sau khi chơi lại
-            ensureBgmStarted();
+        (window as any).ensureBgmStarted?.();
+    },
+    onRetry: function (this: any, scene: any) {
+        (window as any).__replayFromEndGame__ = true;
+        AudioManager.stopAll();
+        irukaGame.retryFromStart?.();
+        resetHubProgress?.();
+        scene.scene.stop('GameScene');
+        scene.scene.start('GameScene', {
+            levelIndex: 0,
+            score: 0,
+            regenLevels: true,
         });
+        (window as any).ensureBgmStarted?.();
+    },
+    reportComplete: (payload: any) => {
+        const stats = irukaGame.prepareSubmitData() as any;
+        const retries = stats.retries ?? stats.retryCount ?? 0;
+        const attempts = Math.max(stats.attempts ?? 0, retries + 1);
 
-        const exitBtn = this.add
-            .image(w / 2 + spacing, h / 2 + h * 0.2, 'btn_exit')
-            .setOrigin(0.5)
-            .setScale(btnScale)
-            .setDepth(101)
-            .setInteractive({ useHandCursor: true });
+        const computedPayload = {
+            ...stats,
+            ...payload,
+            hintsUsedTotal: stats.hints ?? stats.hintCount ?? 0,
+            retriesTotal: retries,
+            retries: retries,
+            attemptsTotal: attempts,
+            attempts: attempts,
+            coreScoreFinal: payload.score ?? stats.score ?? stats.finalScore ?? 0,
+            mistakesTotal: stats.mistakes ?? stats.mistakeCount ?? 0,
+            accuracyFinal: stats.accuracy ?? 0,
+            timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+        };
 
-        exitBtn.on('pointerdown', () => {
-            // Dừng toàn bộ âm thanh (kể cả BGM) khi thoát
-            AudioManager.stopAll();
-            AudioManager.play("sfx_click");
-            this.clearDimBackground();
-            this.stopConfetti();
-            // SDK: gửi hoàn thành khi thoát
-            sdk.complete({
-                timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
-                extras: { reason: "user_exit", stats: irukaGame.prepareSubmitData() },
-            });
-            this.scene.start('LessonSelectScene');
-        });
-
-        [replayBtn, exitBtn].forEach((btn) => {
-            btn.on('pointerover', () => btn.setScale(btnScale * 1.1));
-            btn.on('pointerout', () => btn.setScale(btnScale));
-        });
-
-        hideGameButtons();
-        this.createConfettiEffect();
-    }
-
-    private createConfettiEffect(): void {
-        const width = this.cameras.main.width;
-        const colors = [
-            0xff6b6b, 0x4ecdc4, 0xffe66d, 0x95e1d3, 0xf38181, 0xaa96da,
-        ];
-        const shapes: Array<'circle' | 'rect'> = ['circle', 'rect'];
-        this.confettiEvent = this.time.addEvent({
-            delay: 100,
-            callback: () => {
-                if (!this.scene.isActive()) return;
-                for (let i = 0; i < 3; i++) {
-                    this.createConfettiPiece(
-                        Phaser.Math.Between(0, width),
-                        -20,
-                        Phaser.Utils.Array.GetRandom(colors),
-                        Phaser.Utils.Array.GetRandom(shapes)
-                    );
-                }
-            },
-            loop: true,
-        });
-    }
-
-    private createConfettiPiece(
-        x: number,
-        y: number,
-        color: number,
-        shape: 'circle' | 'rect'
-    ): void {
-        let confetti: Phaser.GameObjects.Arc | Phaser.GameObjects.Rectangle;
-        if (shape === 'circle') {
-            confetti = this.add.circle(
-                x,
-                y,
-                Phaser.Math.Between(4, 8),
-                color,
-                1
-            );
-        } else {
-            confetti = this.add.rectangle(
-                x,
-                y,
-                Phaser.Math.Between(6, 12),
-                Phaser.Math.Between(10, 20),
-                color,
-                1
-            );
-        }
-        confetti.setDepth(999);
-        confetti.setRotation((Phaser.Math.Between(0, 360) * Math.PI) / 180);
-        const duration = Phaser.Math.Between(3000, 5000);
-        const targetY = this.cameras.main.height + 50;
-        const drift = Phaser.Math.Between(-100, 100);
-        this.tweens.add({
-            targets: confetti,
-            y: targetY,
-            x: x + drift,
-            rotation: confetti.rotation + Phaser.Math.Between(2, 4) * Math.PI,
-            duration,
-            ease: 'Linear',
-            onComplete: () => confetti.destroy(),
-        });
-        this.tweens.add({
-            targets: confetti,
-            alpha: { from: 1, to: 0.3 },
-            duration,
-            ease: 'Cubic.easeIn',
-        });
-    }
-
-    private stopConfetti(): void {
-        if (this.confettiEvent) {
-            this.confettiEvent.remove(false);
-            this.confettiEvent = undefined;
-        }
-    }
-}
+        console.log('[EndGame] Final Report Payload:', computedPayload);
+        sdk.complete(computedPayload);
+    },
+} as any);
