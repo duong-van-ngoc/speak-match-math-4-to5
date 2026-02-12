@@ -5,6 +5,7 @@ import EndGameScene from "./EndGameScene";
 import AudioManager from "./AudioManager";
 import { initRotateOrientation } from "./rotateOrientation";
 import PreloadScene from "./PreloadScene";
+import { installIrukaE2E } from "./e2e/installIrukaE2E";
 
 const AUDIO_UNLOCKED_KEY = "__audioUnlocked__";
 const AUDIO_UNLOCKED_EVENT = "audio-unlocked";
@@ -108,7 +109,7 @@ export function setRandomEndViewportBg() {
 }
 
 // ========== HIỆN / ẨN NÚT VIEWPORT ==========
-function setGameButtonsVisible(visible: boolean) {
+export function setGameButtonsVisible(visible: boolean) {
   const replayBtn = document.getElementById("btn-replay") as
     | HTMLButtonElement
     | null;
@@ -136,7 +137,7 @@ if (container instanceof HTMLDivElement) {
 }
 
 // Giữ tham chiếu game để tránh tạo nhiều lần (HMR, reload…)
-let game: Phaser.Game | null = null;
+let gamePhaser: Phaser.Game | null = null;
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 // ========== GLOBAL BGM (CHẠY XUYÊN SUỐT GAME) ==========
 
@@ -146,12 +147,12 @@ export function ensureBgmStarted() {
   // so it's safe to mark audio as unlocked here even when rotate overlay blocks propagation.
   try {
     markAudioUnlocked();
-  } catch {}
+  } catch { }
 
   // Kick off audio unlock immediately on the gesture (don’t block starting BGM on awaiting).
   try {
     void AudioManager.unlockAndWarmup?.();
-  } catch {}
+  } catch { }
 
   try {
     const startBgm = () => {
@@ -176,30 +177,10 @@ export function ensureBgmStarted() {
     } else {
       startBgm();
     }
-  } catch {}
+  } catch { }
 }
 
 
-
-// function setupGlobalBgm() {
-//   const startBgm = () => {
-//     ensureBgmStarted();
-//   };
-
-//   ["pointerdown", "touchstart", "mousedown"].forEach((ev) => {
-//     document.addEventListener(ev, startBgm, { once: true });
-//   });
-// }
-
-
-// Cố gắng resume AudioContext khi overlay bật/tắt
-// function resumeSoundContext(scene: Phaser.Scene) {
-//   const sm = scene.sound as any;
-//   const ctx: AudioContext | undefined = sm.context || sm.audioContext;
-//   if (ctx && ctx.state === "suspended" && typeof ctx.resume === "function") {
-//     ctx.resume();
-//   }
-// }
 // Cho các Scene gọi qua window
 (Object.assign(window as any, {
   setRandomIntroViewportBg,
@@ -242,7 +223,7 @@ function setupHtmlButtons() {
   const replayBtn = document.getElementById("btn-replay");
   if (replayBtn) {
     replayBtn.addEventListener("click", () => {
-      if (!game) return;
+      if (!gamePhaser) return;
 
       // Unlock audio ngay trên thao tác click DOM.
       unlockAudioFromUserGesture();
@@ -251,7 +232,7 @@ function setupHtmlButtons() {
       AudioManager.stopAll();
 
       // Restart lại GameScene
-      const scene = game.scene.getScene("GameScene") as GameScene | null;
+      const scene = gamePhaser.scene.getScene("GameScene") as GameScene | null;
       if (!scene) return;
       scene.scene.restart({
         score: scene.score,
@@ -311,15 +292,11 @@ async function initGame() {
   try {
     const win = window as unknown as Record<string, unknown>;
     if (win[AUDIO_UNLOCKED_KEY]) ensureBgmStarted();
-  } catch {}
+  } catch { }
 
-  // Bật nhạc nền 1 lần, loop xuyên suốt game (sau user gesture)
-  // setupGlobalBgm();
-
-  if (!game) {
-    // setRandomIntroViewportBg();
-    game = new Phaser.Game(config);
-    initRotateOrientation(game); 
+  if (!gamePhaser) {
+    gamePhaser = new Phaser.Game(config);
+    initRotateOrientation(gamePhaser);
     setupHtmlButtons();
   }
 
@@ -337,64 +314,156 @@ async function initGame() {
 }
 
 
-  // ========== IRUKA MINI GAME SDK INTEGRATION ==========
-  import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
+// ========== IRUKA MINI GAME SDK INTEGRATION ==========
+import { game as irukaGame } from "@iruka-edu/mini-game-sdk";
 
-  function applyResize(width: number, height: number) {
-      const gameDiv = document.getElementById('game-container');
-      if (gameDiv) {
-          gameDiv.style.width = `${width}px`;
-          gameDiv.style.height = `${height}px`;
-      }
-      game?.scale.resize(width, height);
+function applyResize(width: number, height: number) {
+  const gameDiv = document.getElementById('game-container');
+  if (gameDiv) {
+    gameDiv.style.width = `${width}px`;
+    gameDiv.style.height = `${height}px`;
   }
+  gamePhaser?.scale.resize(width, height);
+}
 
-  function broadcastSetState(payload: any) {
-      const scene = game?.scene.getScenes(true)[0] as any;
-      scene?.applyHubState?.(payload);
-  }
+function broadcastSetState(payload: any) {
+  const scene = gamePhaser?.scene.getScenes(true)[0] as any;
+  scene?.applyHubState?.(payload);
+}
 
-  function getHubOrigin(): string {
-    const qs = new URLSearchParams(window.location.search);
-    const o = qs.get("hubOrigin");
-    if (o) return o;
-    try {
-      const ref = document.referrer;
-      if (ref) return new URL(ref).origin;
-    } catch {}
-    return "*";
-  }
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch { }
+  return "*";
+}
 
-  export const sdk = irukaGame.createGameSdk({
-    hubOrigin: getHubOrigin(),
-    onInit() {
-      sdk.ready({
-        capabilities: ["resize", "score", "complete", "save_load", "set_state"],
-      });
-    },
-    onStart() {
-      game?.scene.resume("GameScene");
-      game?.scene.resume("EndGameScene");
-    },
-    onPause() {
-      game?.scene.pause("GameScene");
-    },
-    onResume() {
-      game?.scene.resume("GameScene");
-    },
-    onResize(size) {
-      applyResize(size.width, size.height);
-    },
-    onSetState(state) {
-      broadcastSetState(state);
-    },
-    onQuit() {
-      irukaGame.finalizeAttempt("quit");
-      sdk.complete({
-        timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
-        extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
-      });
-    },
+const HUB_TOTAL_QUESTIONS = 10;
+const hubProgress = {
+  total: HUB_TOTAL_QUESTIONS,
+  completed: 0,
+  score: 0,
+};
+
+function setHubWindowState(score: number) {
+  const win = (window as any).irukaGameState || {
+    startTime: Date.now(),
+    currentScore: 0,
+  };
+  win.currentScore = score;
+  (window as any).irukaGameState = win;
+}
+
+function pushHubProgress(scoreDelta: number) {
+  hubProgress.score += scoreDelta;
+  hubProgress.completed = Math.min(hubProgress.completed + 1, hubProgress.total);
+  setHubWindowState(hubProgress.score);
+  sdk.score(hubProgress.score, scoreDelta);
+  sdk.progress({
+    levelIndex: hubProgress.completed,
+    total: hubProgress.total,
+    score: hubProgress.score,
   });
+  sdk.requestSave({
+    score: hubProgress.score,
+    levelIndex: hubProgress.completed,
+  });
+}
 
-  document.addEventListener("DOMContentLoaded", initGame);
+function resetHubProgressState() {
+  hubProgress.completed = 0;
+  hubProgress.score = 0;
+  const now = Date.now();
+  (window as any).irukaGameState = {
+    startTime: now,
+    currentScore: 0,
+  };
+  sdk.score(0, 0);
+  sdk.progress({
+    levelIndex: 0,
+    total: hubProgress.total,
+    score: 0,
+  });
+}
+
+function initHubState() {
+  irukaGame.setTotal?.(hubProgress.total);
+  resetHubProgressState();
+}
+
+export const sdk = irukaGame.createGameSdk({
+  hubOrigin: getHubOrigin(),
+  onInit() {
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state", "stats", "hint"],
+    });
+    initHubState();
+  },
+  onStart() {
+    gamePhaser?.scene.resume("GameScene");
+    gamePhaser?.scene.resume("EndGameScene");
+  },
+  onPause() {
+    gamePhaser?.scene.pause("GameScene");
+  },
+  onResume() {
+    gamePhaser?.scene.resume("GameScene");
+  },
+  onResize(size) {
+    applyResize(size.width, size.height);
+  },
+  onSetState(state) {
+    broadcastSetState(state);
+  },
+  onQuit() {
+    irukaGame.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: irukaGame.prepareSubmitData() },
+    });
+  },
+});
+
+export { irukaGame };
+
+export function resetHubProgress() {
+  resetHubProgressState();
+}
+
+export function setHubTotal(total: number) {
+  if (!Number.isFinite(total) || total <= 0) return;
+  hubProgress.total = total;
+  irukaGame.setTotal?.(hubProgress.total);
+  sdk.progress({
+    levelIndex: hubProgress.completed,
+    total: hubProgress.total,
+    score: hubProgress.score,
+  });
+}
+
+export function startHubQuestion() {
+  (irukaGame as any).startQuestionTimer?.();
+}
+
+export function finishHubQuestion(success = true, scoreDelta = 1) {
+  (irukaGame as any).finishQuestionTimer?.();
+  if (!success) return;
+  irukaGame.recordCorrect?.({ scoreDelta });
+  pushHubProgress(scoreDelta);
+}
+
+export function recordHubWrong() {
+  irukaGame.recordWrong?.();
+}
+
+export function recordHubHint() {
+  irukaGame.addHint?.();
+}
+
+installIrukaE2E(sdk);
+
+document.addEventListener("DOMContentLoaded", initGame);

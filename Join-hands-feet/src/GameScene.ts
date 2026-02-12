@@ -1,7 +1,18 @@
 import Phaser from 'phaser';
 import AudioManager from './AudioManager';
-import { sdk } from './main';
-import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
+import {
+  sdk,
+  setHubTotal,
+  startHubQuestion,
+  finishHubQuestion,
+  recordHubWrong,
+  recordHubHint,
+  resetHubProgress
+} from './main';
+import { irukaGame } from './main';
+import { game as irukaSdkGame } from "@iruka-edu/mini-game-sdk";
+
+const createMatchTracker = irukaSdkGame.createMatchTracker;
 
 /* ===================== AUDIO GLOBAL FLAG ===================== */
 const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
@@ -119,6 +130,9 @@ const GUIDE_HAND_RETURN_MS = 700;
 export default class GameScene extends Phaser.Scene {
   public score = 0;
 
+  private consecutiveWrong = 0;
+  private inactivityTimer?: Phaser.Time.TimerEvent;
+
   private gameState: GameState = 'INTRO';
   private hasPlayedInstructionVoice = false;
   private currentItemScale = ITEM_SCALE;
@@ -155,6 +169,13 @@ export default class GameScene extends Phaser.Scene {
   private guideHandShownOnce = false;
   private guideHandTimer?: Phaser.Time.TimerEvent;
   private roundInteracted = false;
+
+  // ===== SDK Match (items) =====
+  private runSeq = 1;
+  private itemSeq = 0;
+  private matchTracker: ReturnType<typeof createMatchTracker> | null = null;
+  private pendingHint = 0;
+
   private consumePendingInstructionVoice() {
     try {
       const win = window as any;
@@ -164,7 +185,7 @@ export default class GameScene extends Phaser.Scene {
       win.__pendingInstructionVoice__ = false;
       win.__pendingInstructionVoiceForce__ = false;
       this.playInstructionVoice(force);
-    } catch {}
+    } catch { }
   }
   private readonly onAudioUnlocked = () => {
     const win = window as unknown as Record<string, unknown>;
@@ -174,7 +195,7 @@ export default class GameScene extends Phaser.Scene {
     // Không await để nhạc nền và voice có thể bắt đầu cùng lúc.
     try {
       void AudioManager.unlockAndWarmup?.();
-    } catch {}
+    } catch { }
 
     // Khi vừa unlock lần đầu, phát voice hướng dẫn ngay (nếu chưa phát).
     this.consumePendingInstructionVoice();
@@ -200,15 +221,9 @@ export default class GameScene extends Phaser.Scene {
     this.cancelGuideHandSchedule();
     this.destroyGuideHand();
 
-    // SDK: set tổng số câu hỏi (ví dụ 4 cặp cần nối)
-    irukaGame.setTotal(4);
-    // Khởi tạo trạng thái game cho SDK
-    (window as any).irukaGameState = {
-      startTime: Date.now(),
-      currentScore: this.score,
-    };
-    sdk.score(this.score, 0);
-    sdk.progress({ levelIndex: 0, total: 4 });
+    setHubTotal(LEFT_IDS.length);
+    resetHubProgress();
+    sdk.progress({ levelIndex: 0, total: LEFT_IDS.length });
 
     this.guideHandShownOnce = false;
     this.roundInteracted = false;
@@ -217,44 +232,7 @@ export default class GameScene extends Phaser.Scene {
     this.audioReady = !!win[AUDIO_UNLOCKED_KEY];
   }
 
-  // Khi trả lời đúng hoặc hoàn thành thử thách nhỏ
-  private recordCorrect() {
-    irukaGame.recordCorrect({ scoreDelta: 1 });
-    (window as any).irukaGameState.currentScore = this.score;
-    sdk.score(this.score, 1);
-    sdk.progress({
-      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
-      score: this.score,
-    });
-  }
-
-  // Khi trả lời sai
-  private recordWrong() {
-    irukaGame.recordWrong();
-  }
-
-  // Khi gợi ý
-  private addHint() {
-    irukaGame.addHint();
-  }
-
-  // Khi lưu tiến trình/chuyển level
-  private saveProgress() {
-    sdk.requestSave({
-      score: this.score,
-      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
-    });
-    sdk.progress({
-      levelIndex: 0, // hoặc index level hiện tại nếu có nhiều level
-      total: 4,
-      score: this.score,
-    });
-  }
-
-  // Khi hoàn thành game
-  private finalizeAttempt() {
-    irukaGame.finalizeAttempt();
-  }
+  // Removed local SDK helpers and replaced with main.ts functions
 
   /* ===================== CREATE ===================== */
 
@@ -264,7 +242,7 @@ export default class GameScene extends Phaser.Scene {
     this.input.once('pointerdown', () => {
       try {
         (window as any).ensureBgmStarted?.();
-      } catch {}
+      } catch { }
     });
 
     try {
@@ -302,7 +280,7 @@ export default class GameScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       try {
         if ((window as any).playInstructionVoice) delete (window as any).playInstructionVoice;
-      } catch {}
+      } catch { }
     });
 
     this.questionBanner = this.add
@@ -350,6 +328,14 @@ export default class GameScene extends Phaser.Scene {
 
     this.buildConnectBoard();
     this.layoutScene();
+
+    (window as any).irukaGameState = {
+      startTime: Date.now(),
+      currentScore: 0,
+    };
+    sdk.score(0, 0);
+    sdk.progress({ levelIndex: 0, total: LEFT_IDS.length });
+
     this.startRound();
   }
 
@@ -366,7 +352,7 @@ export default class GameScene extends Phaser.Scene {
       // Bắt đầu BGM và voice hướng dẫn cùng lúc (khi đã unlock audio).
       try {
         (window as any).ensureBgmStarted?.();
-      } catch {}
+      } catch { }
       AudioManager.playWhenReady?.('voice_join');
       this.hasPlayedInstructionVoice = true;
       // Nếu bé click/drag nhanh sau khi voice chạy thì cắt voice để tránh gây khó chịu.
@@ -383,7 +369,7 @@ export default class GameScene extends Phaser.Scene {
       const win = window as any;
       win.__pendingInstructionVoice__ = true;
       win.__pendingInstructionVoiceForce__ = !!(win.__pendingInstructionVoiceForce__ || force);
-    } catch {}
+    } catch { }
   }
 
   /* ===================== BUILD ITEMS ===================== */
@@ -442,6 +428,7 @@ export default class GameScene extends Phaser.Scene {
     this.input.removeAllListeners('dragend');
 
     this.input.on('dragstart', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+      this.inactivityTimer?.remove();
       AudioManager.stop('voice_join');
       this.roundInteracted = true;
       this.cancelGuideHandSchedule();
@@ -455,6 +442,17 @@ export default class GameScene extends Phaser.Scene {
       this.draggingSide = (img.getData('holeSide') as 'LEFT' | 'RIGHT' | undefined) ?? 'LEFT';
       this.dragLineEnd = new Phaser.Math.Vector2(pointer.x, pointer.y);
       this.gameState = 'DRAGGING';
+
+      // SDK: Start attempt
+      const objectId = img.getData('itemId');
+      const ts = Date.now();
+      this.matchTracker?.onMatchStart?.(objectId, ts);
+
+      // apply hint đã xuất hiện trước đó vào attempt này
+      if (this.pendingHint > 0) {
+        this.matchTracker?.hint?.(this.pendingHint);
+        this.pendingHint = 0;
+      }
 
       this.leftItems.forEach((i) => i.setScale(this.currentItemScale));
       this.rightItems.forEach((i) => i.setScale(this.currentItemScale));
@@ -475,6 +473,7 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.input.on('dragend', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
+      this.resetInactivityTimer();
       const img = gameObject as Phaser.GameObjects.Image;
       const matchKey = img.getData('matchKey') as MatchKey | undefined;
       if (!matchKey || matchKey !== this.draggingKey) return;
@@ -485,6 +484,19 @@ export default class GameScene extends Phaser.Scene {
       const side = (img.getData('holeSide') as 'LEFT' | 'RIGHT' | undefined) ?? this.draggingSide ?? 'LEFT';
       const target = side === 'LEFT' ? this.getRightItemAt(pointer.x, pointer.y) : this.getLeftItemAt(pointer.x, pointer.y);
       if (!target) {
+        // SDK: Abandoned attempt
+        const fromId = img.getData("itemId");
+        const ts = Date.now();
+        // Calculate length roughly
+        const startHole = this.getHoleWorldPoint(img);
+        const len = Phaser.Math.Distance.Between(startHole.x, startHole.y, pointer.x, pointer.y);
+
+        this.matchTracker?.onMatchEnd?.(
+          { from_node: fromId, to_node: null, path_length_px: Math.round(len) },
+          ts,
+          { isCorrect: false, errorCode: "USER_ABANDONED" }
+        );
+
         this.draggingKey = undefined;
         this.draggingSide = undefined;
         this.dragLineEnd = undefined;
@@ -725,6 +737,47 @@ export default class GameScene extends Phaser.Scene {
   /* ===================== START ROUND ===================== */
 
   private startRound() {
+    this.consecutiveWrong = 0
+    this.resetInactivityTimer()
+    startHubQuestion();
+
+    // ===== SDK ITEMS: tạo 1 item match cho cả màn =====
+    this.itemSeq += 1;
+    this.pendingHint = 0;
+
+    const nodes = [...LEFT_IDS, ...RIGHT_IDS];
+
+    // correct_pairs: from (Key/RightMatchKey) -> to (Value/RightId)
+    // RIGHT_MATCH_KEY: { GLOVE_SMALL: 'HAND_SMALL' } -> mapping is Right -> Left logic
+    // But correct_pairs usually implies From -> To. 
+    // In this game we usually drag Left -> Right, but drag Right -> Left is also possible.
+    // The tracker expects a canonical "from -> to" pair for validation.
+    // Let's assume HAND (Left) is FROM, GLOVE (Right) is TO.
+
+    // correct_pairs = [{from: HAND_SMALL, to: GLOVE_SMALL}, ...]
+    const correct_pairs = RIGHT_IDS.map((rightId) => ({
+      from: RIGHT_MATCH_KEY[rightId], // e.g. HAND_SMALL
+      to: rightId,                    // e.g. GLOVE_SMALL
+    }));
+
+    this.matchTracker = createMatchTracker({
+      meta: {
+        item_id: `CONNECT_HANDS_FEET_${this.itemSeq}`,
+        item_type: "match",
+        seq: this.itemSeq,
+        run_seq: this.runSeq,
+        difficulty: 1,
+        scene_id: "SCN_MATCH_01",
+        scene_seq: this.itemSeq,
+        scene_type: "match",
+        skill_ids: ["noi_cap_34_tv_001"],
+      },
+      expected: {
+        nodes,
+        correct_pairs,
+      },
+      errorOnWrong: "WRONG_PAIR",
+    });
     this.updateHintForRound();
     this.resetUiForNewTry();
     this.playInstructionVoice();
@@ -750,12 +803,27 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  private startGuideHand() {
-    if (this.guideHandShownOnce) return;
+  private startGuideHand(isPenalty = false, preferredMatchKey?: MatchKey) {
+    if (!isPenalty && this.guideHandShownOnce) return;
     if (!this.textures.exists(GUIDE_HAND_KEY)) return;
-    if (this.roundInteracted) return;
+    if (!isPenalty && this.roundInteracted) return;
 
-    const matchKey = this.leftOrder[0] ?? (this.leftItems[0]?.getData('matchKey') as MatchKey | undefined);
+    let matchKey: MatchKey | undefined;
+
+    // If we have a preferred key (from consecutive wrongs), try to use it if it's not matched yet.
+    if (preferredMatchKey && !this.matched.has(preferredMatchKey)) {
+      matchKey = preferredMatchKey;
+    } else {
+      // Find first unmatched item
+      for (const item of this.leftItems) {
+        const key = item.getData('matchKey') as MatchKey;
+        if (!this.matched.has(key)) {
+          matchKey = key;
+          break;
+        }
+      }
+    }
+
     if (!matchKey) return;
 
     const leftImg = this.leftItems.find((i) => i.getData('matchKey') === matchKey);
@@ -763,7 +831,10 @@ export default class GameScene extends Phaser.Scene {
     if (!leftImg || !rightImg) return;
 
     this.guideHandShownOnce = true;
-    this.addHint();
+    if (isPenalty) {
+      recordHubHint();
+      this.pendingHint += 1; // SDK Hint tracking
+    }
     this.guideHandMatchKey = matchKey;
 
     const baseScale = (this.scale.height / 720) * GUIDE_HAND_SCALE;
@@ -1008,6 +1079,15 @@ export default class GameScene extends Phaser.Scene {
 
   /* ===================== MATCH ===================== */
 
+  private resetInactivityTimer() {
+    this.inactivityTimer?.remove();
+    this.inactivityTimer = this.time.delayedCall(10000, () => {
+      if (this.gameState === 'INTRO' || (!this.draggingKey && this.scene.isActive())) {
+        this.startGuideHand(true);
+      }
+    });
+  }
+
   private checkMatch(left: MatchKey, right: MatchKey) {
     if (this.gameState === 'LEVEL_END') return;
     this.gameState = 'CHECKING';
@@ -1016,13 +1096,30 @@ export default class GameScene extends Phaser.Scene {
     const leftImg = this.leftItems.find((i) => i.getData('matchKey') === left);
     const rightImg = this.rightItems.find((i) => i.getData('matchKey') === right);
 
+    // SDK Logging Data Prep
+    const fromNode = leftImg?.getData("itemId");
+    const toNode = rightImg?.getData("itemId");
+    const start = leftImg ? this.getHoleWorldPoint(leftImg) : { x: 0, y: 0 };
+    const end = rightImg ? this.getHoleWorldPoint(rightImg) : { x: 0, y: 0 };
+    const len = Math.round(Phaser.Math.Distance.Between(start.x, start.y, end.x, end.y));
+    const ts = Date.now();
+
     if (left === right) {
+      this.consecutiveWrong = 0;
+      this.resetInactivityTimer();
       AudioManager.play('sfx_correct');
       AudioManager.playCorrectAnswer();
 
+      // SDK: Correct
+      this.matchTracker?.onMatchEnd?.(
+        { from_node: fromNode, to_node: toNode, path_length_px: len },
+        ts,
+        { isCorrect: true, errorCode: null }
+      );
+
       this.matched.add(left);
       this.score = this.matched.size;
-      this.recordCorrect();
+      finishHubQuestion(true, 1);
 
       leftImg?.disableInteractive().setAlpha(0.9);
       rightImg?.disableInteractive().setAlpha(0.9);
@@ -1043,8 +1140,12 @@ export default class GameScene extends Phaser.Scene {
 
       if (this.matched.size >= LEFT_IDS.length) {
         this.gameState = 'LEVEL_END';
-        this.saveProgress();
-        this.finalizeAttempt();
+
+        // SDK Finalize
+        this.matchTracker?.finalize?.();
+        this.matchTracker = null;
+
+        irukaGame.finalizeAttempt();
         this.time.delayedCall(1000, () => {
           this.scene.start('EndGameScene', {
             lessonId: '',
@@ -1062,8 +1163,21 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    this.consecutiveWrong++;
+    if (this.consecutiveWrong >= 2) {
+      this.time.delayedCall(500, () => this.startGuideHand(true, left));
+    }
+    this.resetInactivityTimer();
+
     AudioManager.play('sfx_wrong');
-    this.recordWrong();
+    recordHubWrong();
+
+    // SDK: Wrong
+    this.matchTracker?.onMatchEnd?.(
+      { from_node: fromNode, to_node: toNode, path_length_px: len },
+      ts,
+      { isCorrect: false, errorCode: "WRONG_PAIR" }
+    );
 
     this.draggingLine?.setVisible(false);
 
