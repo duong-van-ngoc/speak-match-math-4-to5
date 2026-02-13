@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { game } from "@iruka-edu/mini-game-sdk";
-import { __testSpy } from "@iruka-edu/mini-game-sdk";
+import * as MiniGameSDK from '@iruka-edu/mini-game-sdk';
+const { game, __testSpy } = MiniGameSDK as any;
 
 
 declare global {
@@ -50,39 +50,39 @@ export function installIrukaE2E(sdk: {
 
 
   window.__irukaTest = {
-    setTotal(n: number) { game.setTotal(n); },
-    startQ(n = 1) { for (let i=0;i<n;i++) game.startQuestionTimer(); },
-    finishQ(n = 1) { for (let i=0;i<n;i++) game.finishQuestionTimer(); },
+    setTotal(n: number) { (game as any).setTotal?.(n); },
+    startQ(n = 1) { for (let i=0;i<n;i++) (game as any).startQuestionTimer?.(); },
+    finishQ(n = 1) { for (let i=0;i<n;i++) (game as any).finishQuestionTimer?.(); },
     makeWrong(n = 1) {
       n = clampInt(n, 1);
-      for (let i = 0; i < n; i++) game.recordWrong();
+      for (let i = 0; i < n; i++) (game as any).recordWrong?.();
     },
 
 
     makeCorrect(n = 1) {
       n = clampInt(n, 1);
-      for (let i = 0; i < n; i++) game.recordCorrect({ scoreDelta: 1 });
+      for (let i = 0; i < n; i++) (game as any).recordCorrect?.({ scoreDelta: 1 });
 
 
-      const snap = game.getStatsSnapshot();
-      sdk.score(snap.finalScore);
+      const snap = (game as any).getStatsSnapshot?.();
+      sdk.score(snap.finalScore || 0);
     },
 
 
     useHint(n = 1) {
       n = clampInt(n, 1);
-      for (let i = 0; i < n; i++) game.addHint();
+      for (let i = 0; i < n; i++) (game as any).addHint?.();
     },
 
 
     finish() {
-      game.finalizeAttempt();
-      const submit = game.prepareSubmitData();
+      (game as any).finalizeAttempt?.();
+      const submit = (game as any).prepareSubmitData?.();
       const timeMs = Math.round(performance.now() - t0);
 
 
       sdk.complete({
-        score: submit.finalScore,
+        score: submit.finalScore || 0,
         timeMs,
         extras: submit,
       });
@@ -91,10 +91,11 @@ export function installIrukaE2E(sdk: {
 
     snapshot() {
       return {
-        stats: game.getStatsSnapshot(),
-        submit: game.prepareSubmitData(),
+        stats: (game as any).getStatsSnapshot?.(),
+        submit: (game as any).prepareSubmitData?.(),
         spySummary: spy?.getSummary?.(),
       };
     },
   };
 }
+

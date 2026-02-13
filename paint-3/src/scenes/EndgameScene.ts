@@ -37,6 +37,43 @@ export default class EndGameScene extends Phaser.Scene {
             AudioManager.play('applause');
         });
 
+        // Report Complete Immediately on Enter
+        if (!(window as any)._endGameReportSent) {
+            (window as any)._endGameReportSent = true;
+
+            const stats = (game as any).prepareSubmitData?.() || {};
+            const items = (window as any).irukaGameState?.items || [];
+
+            // Calculate simple summary
+            const itemsSummary = {
+                paint: {
+                    item_type: "paint",
+                    itemsCount: items.length,
+                    passCount: items.filter((i: any) => i.history.some((h: any) => h.is_correct)).length,
+                    failCount: 0,
+                    attemptsTotal: items.reduce((acc: number, i: any) => acc + i.history.length, 0),
+                    // Add other metrics if needed
+                }
+            };
+
+            sdk.complete({
+                ...stats,
+                items: items, // Add items to root
+                items_summary_by_type: itemsSummary,
+                items_errors_histogram: {},
+                timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+                extras: {
+                    reason: "complete",
+                    stats: {
+                        ...stats,
+                        items: items,
+                        items_summary_by_type: itemsSummary,
+                        items_errors_histogram: {}
+                    }
+                }
+            });
+        }
+
 
         // Banner
         this.add
@@ -90,7 +127,7 @@ export default class EndGameScene extends Phaser.Scene {
             this.stopConfetti(); //
             showGameButtons();
             // SDK: Reset attempt
-            // game.retryFromStart(); // Handled in Scene1.init
+            (game as any).retryFromStart?.(); (window as any)._endGameReportSent = false;
             this.scene.start('Scene1', { isRestart: true });
         });
 
@@ -108,27 +145,13 @@ export default class EndGameScene extends Phaser.Scene {
             this.stopConfetti(); //
 
             // ✅ Gửi COMPLETE cho Game Hub
-            const state = (window as any).irukaGameState || {};
-            // game.finalizeAttempt(); 
-            // const extraData = game.prepareSubmitData();
-
-            this.game.registry.set('isGameFinished', true);
-
-            const stats = game.prepareSubmitData();
-            const payload = {
-                ...stats,
-                hintsUsedTotal: stats.hintCount,
+            sdk.complete({
                 timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
                 extras: {
                     reason: "user_exit",
-                    stats: stats
+                    stats: (game as any).prepareSubmitData?.()
                 }
-            };
-            sdk.complete(payload as any);
-
-            // Xóa tương tác để tránh click nhiều lần
-            // exitBtn.disableInteractive();
-            // replayBtn.disableInteractive();
+            });
         });
 
         // === optional: hover effect ===

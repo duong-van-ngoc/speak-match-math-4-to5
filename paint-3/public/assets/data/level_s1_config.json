@@ -1,4 +1,6 @@
 {
+  "min_region_coverage": 0.9,
+  "max_spill_ratio": 0,
   "teacher": {
     "baseScale": 0.75,
     "outlineKey": "outline",
@@ -9,7 +11,18 @@
         "key": "1",
         "offsetX": 0,
         "offsetY": 0,
-        "scale": 0.75
+        "scale": 0.75,
+        "area_px": 25000,
+        "allowed_colors": [
+          "0xE05136",
+          "0xFFE007",
+          "0x499343",
+          "0x539BD7",
+          "0xFDAB12",
+          "0xE97090",
+          "0x000000"
+        ],
+        "correct_color": null
       }
     ]
   }

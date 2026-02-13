@@ -3,12 +3,12 @@ import { GameConstants } from '../consts/GameConstants';
 
 export class PaintManager {
     private scene: Phaser.Scene;
-    
+
     // Config
     private brushColor: number = GameConstants.PAINT.DEFAULT_COLOR;
     private brushSize: number = GameConstants.PAINT.BRUSH_SIZE;
     private brushTexture: string = 'brush_circle';
-    
+
     // State
     private isErasing: boolean = false;
     private activeRenderTexture: Phaser.GameObjects.RenderTexture | null = null;
@@ -28,25 +28,32 @@ export class PaintManager {
     private partUncheckedMetrics: Map<string, number> = new Map();
     // ✅ OPTIMIZATION: Cache mask data to avoid redundant draw calls and readback
     private maskCache: Map<string, Uint8ClampedArray> = new Map();
-    
+
     private readonly CHECK_THRESHOLD: number = 300; // Check progress every ~300px of painting
 
     // ✅ TỐI ƯU RAM: Tạo sẵn Canvas tạm để tái sử dụng, không new mới liên tục
     private helperCanvasPaint: HTMLCanvasElement;
     private helperCanvasMask: HTMLCanvasElement;
 
+    // Callback trả về khi bé nhấc tay (mỗi lần tô)
+    private onAttempt: (id: string, coverage: number, total_px: number, match_px: number, usedColors: Set<number>) => void;
     // Callback trả về cả Set màu thay vì 1 màu lẻ
     private onPartComplete: (id: string, rt: Phaser.GameObjects.RenderTexture, usedColors: Set<number>) => void;
 
-    constructor(scene: Phaser.Scene, onComplete: (id: string, rt: Phaser.GameObjects.RenderTexture, usedColors: Set<number>) => void) {
+    constructor(
+        scene: Phaser.Scene,
+        onComplete: (id: string, rt: Phaser.GameObjects.RenderTexture, usedColors: Set<number>) => void,
+        onAttempt: (id: string, coverage: number, total_px: number, match_px: number, usedColors: Set<number>) => void
+    ) {
         this.scene = scene;
         this.onPartComplete = onComplete;
+        this.onAttempt = onAttempt;
         this.scene.input.topOnly = false;
-        
+
         // Khởi tạo Canvas tạm 1 lần duy nhất
         this.helperCanvasPaint = document.createElement('canvas');
         this.helperCanvasMask = document.createElement('canvas');
-        
+
         this.createBrushTexture();
     }
 
@@ -55,7 +62,7 @@ export class PaintManager {
             const canvas = this.scene.textures.createCanvas(this.brushTexture, this.brushSize, this.brushSize);
             if (canvas) {
                 const ctx = canvas.context;
-                const grd = ctx.createRadialGradient(this.brushSize/2, this.brushSize/2, 0, this.brushSize/2, this.brushSize/2, this.brushSize/2);
+                const grd = ctx.createRadialGradient(this.brushSize / 2, this.brushSize / 2, 0, this.brushSize / 2, this.brushSize / 2, this.brushSize / 2);
                 grd.addColorStop(0, 'rgba(255, 255, 255, 1)');
                 grd.addColorStop(1, 'rgba(255, 255, 255, 0)');
                 ctx.fillStyle = grd;
@@ -88,22 +95,22 @@ export class PaintManager {
 
         const rtW = maskImage.width * scale;
         const rtH = maskImage.height * scale;
-        const rt = this.scene.add.renderTexture(x - rtW/2, y - rtH/2, rtW, rtH);
-        
+        const rt = this.scene.add.renderTexture(x - rtW / 2, y - rtH / 2, rtW, rtH);
+
         // @NOTE: clear dữ liệu của GPU để không bị issue tô dữ liệu sai vào vùng nội dung
         rt.clear().setAlpha(0);
-        
+
         // ✅ TỐI ƯU: Không set mask ngay lập tức để giảm tải render
         // rt.setMask(mask); 
         rt.setOrigin(0, 0).setDepth(10);
-        
+
         rt.setData('id', uniqueId);
-        rt.setData('key', key); 
+        rt.setData('key', key);
         rt.setData('isFinished', false);
         rt.setData('mask', mask); // Lưu mask vào data để dùng sau
-        
+
         if (this.ignoreCameraId) rt.cameraFilter = this.ignoreCameraId;
-        
+
         // ✅ LOGIC MÀU: Tạo hitArea với opacity thấp để dễ nhìn
         const hitArea = this.scene.add.image(x, y, key).setScale(scale).setAlpha(0.01).setDepth(50);
         hitArea.setInteractive({ useHandCursor: true, pixelPerfect: true });
@@ -134,7 +141,7 @@ export class PaintManager {
             }
 
             this.activeRenderTexture = activeLayer;
-            
+
             // ✅ QUAN TRỌNG: Lưu vị trí bắt đầu để tính toán LERP
             this.lastX = pointer.x - activeLayer.x;
             this.lastY = pointer.y - activeLayer.y;
@@ -157,15 +164,9 @@ export class PaintManager {
             return;
         }
         if (this.activeRenderTexture) {
-            // ✅ TỐI ƯU: Chỉ check progress nếu đã vẽ đủ nhiều (Throttle)
-            const id = this.activeRenderTexture.getData('id');
-            const dist = this.partUncheckedMetrics.get(id) || 0;
-            
-            if (dist > this.CHECK_THRESHOLD) {
-                this.checkProgress(this.activeRenderTexture);
-                this.partUncheckedMetrics.set(id, 0); // Reset distance
-            }
-            
+            // ✅ "Đúng chuẩn": Mỗi lần nhấc tay là 1 attempt
+            this.checkProgress(this.activeRenderTexture);
+
             this.activeRenderTexture = null;
         }
     }
@@ -175,31 +176,31 @@ export class PaintManager {
         if (currentLayer instanceof Phaser.GameObjects.RenderTexture) {
             const uniqueId = hitArea.getData('id');
             const key = `painted_tex_${uniqueId}`;
-            
+
             // Save current RT content to Texture Manager
             if (this.scene.textures.exists(key)) {
                 this.scene.textures.remove(key);
             }
             currentLayer.saveTexture(key);
-            
+
             // Create static Image replacement
             const img = this.scene.add.image(currentLayer.x, currentLayer.y, key);
             img.setOrigin(0, 0).setDepth(10);
-            
+
             // Transfer Mask
             const storedMask = currentLayer.getData('mask');
             if (storedMask) img.setMask(storedMask);
             if (this.ignoreCameraId) img.cameraFilter = this.ignoreCameraId;
-            
+
             // Transfer Data
             img.setData('id', uniqueId);
             img.setData('key', currentLayer.getData('key'));
             img.setData('isFinished', currentLayer.getData('isFinished'));
             img.setData('mask', storedMask);
-            
+
             // Update link
             hitArea.setData('layer', img);
-            
+
             // Destroy heavy RT
             currentLayer.destroy();
         }
@@ -207,37 +208,37 @@ export class PaintManager {
 
     private unfreezePart(hitArea: Phaser.GameObjects.Image) {
         const currentLayer = hitArea.getData('layer');
-        
+
         // If it's a static Image, convert back to RT
         if (currentLayer instanceof Phaser.GameObjects.Image) {
             const width = currentLayer.width;
             const height = currentLayer.height;
             const x = currentLayer.x;
             const y = currentLayer.y;
-            
+
             const rt = this.scene.add.renderTexture(x, y, width, height);
             rt.setOrigin(0, 0).setDepth(10);
-            
+
             // Clear mask
             currentLayer.clearMask();
 
             // Draw the frozen texture onto the new RT
             rt.draw(currentLayer, 0, 0);
-            
+
             // Restore context
             const storedMask = currentLayer.getData('mask');
             if (storedMask) rt.setMask(storedMask);
             if (this.ignoreCameraId) rt.cameraFilter = this.ignoreCameraId;
-            
+
             // Restore Data
             rt.setData('id', currentLayer.getData('id'));
             rt.setData('key', currentLayer.getData('key'));
             rt.setData('isFinished', currentLayer.getData('isFinished'));
             rt.setData('mask', storedMask);
-            
+
             // Update link
             hitArea.setData('layer', rt);
-            
+
             // Cleanup static Image
             currentLayer.destroy();
         }
@@ -283,7 +284,7 @@ export class PaintManager {
             rt.erase(this.brushTexture, currentX - offset, currentY - offset);
         } else {
             rt.draw(this.brushTexture, currentX - offset, currentY - offset, 1.0, this.brushColor);
-            
+
             // ✅ MOVED OUTSIDE OF LOOP: color tracking only triggers ONCE per paint action
             // Optimization: checking set has/add is fast, but doing it inside loop is wasteful.
             // Since activeRenderTexture is set, we do it here (once per pointermove event).
@@ -301,13 +302,13 @@ export class PaintManager {
     // ✅ HÀM CHECK PROGRESS MỚI: TỐI ƯU BỘ NHỚ
     private checkProgress(rt: Phaser.GameObjects.RenderTexture) {
         if (rt.getData('isFinished')) return;
-        
+
         const id = rt.getData('id');
         const key = rt.getData('key');
 
         rt.snapshot((snapshot) => {
             if (!(snapshot instanceof HTMLImageElement)) return;
-            
+
             const w = snapshot.width;
             const h = snapshot.height;
             const checkW = Math.floor(w / 4);
@@ -318,19 +319,19 @@ export class PaintManager {
 
             if (!ctxPaint) return;
             const paintData = ctxPaint.getImageData(0, 0, checkW, checkH).data;
-            
+
             // ✅ TỐI ƯU HIỆU NĂNG: Lấy Mask Data từ Cache (nếu có) hoặc tính mới 1 lần
             let maskData = this.maskCache.get(id);
 
             if (!maskData) {
-                 const sourceImg = this.scene.textures.get(key).getSourceImage() as HTMLImageElement;
-                 const ctxMask = this.getRecycledContext(this.helperCanvasMask, sourceImg, checkW, checkH);
-                 
-                 if (!ctxMask) return;
-                 
-                 // Lưu vào cache dạng TypedArray
-                 maskData = ctxMask.getImageData(0, 0, checkW, checkH).data;
-                 this.maskCache.set(id, maskData);
+                const sourceImg = this.scene.textures.get(key).getSourceImage() as HTMLImageElement;
+                const ctxMask = this.getRecycledContext(this.helperCanvasMask, sourceImg, checkW, checkH);
+
+                if (!ctxMask) return;
+
+                // Lưu vào cache dạng TypedArray
+                maskData = ctxMask.getImageData(0, 0, checkW, checkH).data;
+                this.maskCache.set(id, maskData);
             }
 
             let match = 0;
@@ -345,14 +346,18 @@ export class PaintManager {
             }
 
             const percentage = total > 0 ? match / total : 0;
-            
+
+            // ✅ GỬI DANH SÁCH MÀU VỀ SCENE
+            const usedColors = this.partColors.get(id) || new Set([this.brushColor]);
+
+            // ✅ LUÔN GỌI onAttempt để tracker ghi nhận history
+            this.onAttempt(id, percentage, total, match, usedColors);
+
             if (percentage > GameConstants.PAINT.WIN_PERCENT) {
                 rt.setData('isFinished', true);
 
-                // ✅ GỬI DANH SÁCH MÀU VỀ SCENE
-                const usedColors = this.partColors.get(id) || new Set([this.brushColor]);
                 this.onPartComplete(id, rt, usedColors);
-                
+
                 // Clear bộ nhớ màu của phần này cho nhẹ
                 this.partColors.delete(id);
                 this.partUncheckedMetrics.delete(id); // Cleanup metrics

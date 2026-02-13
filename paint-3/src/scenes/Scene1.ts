@@ -39,6 +39,11 @@ export default class Scene1 extends Phaser.Scene {
     private isIntroActive: boolean = false; // Cờ chặn tương tác khi đang chạy intro
     private isWaitingForIntroStart: boolean = true; // Cờ chờ người dùng chạm lần đầu
 
+    // --- TRACKING SDK ---
+    private runSeq = 1;
+    private nextItemSeq = 0;
+    private paintTrackers = new Map<string, any>();
+
     // --- UI COMPONENTS ---
 
     private get handHint(): Phaser.GameObjects.Image | undefined {
@@ -92,6 +97,7 @@ export default class Scene1 extends Phaser.Scene {
         (window as any).irukaGameState = {
             startTime: Date.now(),
             currentScore: 0,
+            items: []
         };
         sdk.score(this.score, 0);
         sdk.progress({ levelIndex: 0, total: 1 });
@@ -161,6 +167,12 @@ export default class Scene1 extends Phaser.Scene {
     shutdown() {
         this.stopIntro();
 
+        // Finalize all trackers
+        for (const [partId, t] of this.paintTrackers.entries()) {
+            t.finalize();
+        }
+        this.paintTrackers.clear();
+
         this.paintManager = null as any; // Giải phóng bộ nhớ
         this.scene.stop(SceneKeys.UI);
         if (this.bgm) {
@@ -179,9 +191,15 @@ export default class Scene1 extends Phaser.Scene {
 
         // Khởi tạo PaintManager
         // Callback nhận về: id, renderTexture, và DANH SÁCH MÀU ĐÃ DÙNG (Set<number>)
-        this.paintManager = new PaintManager(this, (id, rt, usedColors) => {
-            this.handlePartComplete(id, rt, usedColors);
-        });
+        this.paintManager = new PaintManager(
+            this,
+            (id, rt, usedColors) => {
+                this.handlePartComplete(id, rt, usedColors);
+            },
+            (id, coverage, total_px, match_px, usedColors) => {
+                this.handleAttempt(id, coverage, total_px, match_px, usedColors);
+            }
+        );
 
         // Cài đặt Idle Manager: Khi rảnh quá lâu thì gọi showHint()
         this.idleManager = new IdleManager(GameConstants.IDLE.THRESHOLD, () =>
@@ -323,6 +341,7 @@ export default class Scene1 extends Phaser.Scene {
     // }
 
     private spawnCharacter(config: any) {
+        const data = this.cache.json.get(DataKeys.LevelS1Config);
         const cx = GameUtils.pctX(this, config.baseX_pct);
         const cy = GameUtils.pctY(this, config.baseY_pct);
 
@@ -355,6 +374,23 @@ export default class Scene1 extends Phaser.Scene {
                 hitArea.setData('hintPoints', part.hintPoints);
 
             }
+
+            // ✅ NEW: fields cho expected Tracker
+            hitArea.setData('partId', id);
+            hitArea.setData('partKey', part.key);
+            hitArea.setData('area_px', part.area_px ?? 0);
+            hitArea.setData('allowed_colors', part.allowed_colors ?? ["any"]);
+            hitArea.setData('correct_color', part.correct_color ?? null);
+
+            // ✅ NEW: rule chung (nếu config có)
+            hitArea.setData('min_region_coverage', data.min_region_coverage ?? GameConstants.PAINT.WIN_PERCENT);
+            hitArea.setData('max_spill_ratio', data.max_spill_ratio ?? 0);
+
+            // Gắn sự kiện pointerdown để tracker ghi nhận onShown
+            hitArea.on('pointerdown', () => {
+                const t = this.getOrCreatePaintTracker(id, part.key);
+                t.onShown(Date.now());
+            });
 
             this.unfinishedPartsMap.set(id, hitArea);
             this.totalParts++;
@@ -408,6 +444,13 @@ export default class Scene1 extends Phaser.Scene {
             console.log('Multi-color artwork preserved!');
         }
 
+        // Finalize tracker
+        const t = this.paintTrackers.get(id);
+        if (t) {
+            t.finalize();
+            this.paintTrackers.delete(id);
+        }
+
         // Xóa khỏi danh sách chưa tô -> Để gợi ý không chỉ vào cái này nữa
         this.unfinishedPartsMap.delete(id);
 
@@ -451,6 +494,119 @@ export default class Scene1 extends Phaser.Scene {
                 this.scene.start(SceneKeys.EndGame);
             });
         }
+    }
+
+    private handleAttempt(id: string, coverage: number, total_px: number, match_px: number, usedColors: Set<number>) {
+        const hitArea = this.unfinishedPartsMap.get(id);
+        if (!hitArea) return;
+
+        const partKey = hitArea.getData('partKey');
+        const t = this.getOrCreatePaintTracker(id, partKey);
+
+        const minCov = hitArea.getData('min_region_coverage');
+
+        // Build response chuẩn
+        const response = {
+            selected_color: usedColors.size === 1 ? this.toHex([...usedColors][0]) : "multi",
+            brush_size: GameConstants.PAINT.BRUSH_SIZE,
+            color_change_count: Math.max(0, usedColors.size - 1),
+            brush_change_count: 0,
+
+            regions_result: [
+                {
+                    region_id: id,
+                    area_px: total_px,
+                    paint_in_px: match_px,
+                    paint_out_px: 0,
+                    coverage,
+                    spill_ratio: 0,
+                },
+            ],
+
+            total_paint_in_px: match_px,
+            total_paint_out_px: 0,
+            completion_pct: coverage,
+            spill_ratio: 0,
+        };
+
+        t.onDone(response, Date.now(), {
+            isCorrect: coverage >= minCov,
+            errorCode: coverage >= minCov ? null : "LOW_COVERAGE",
+        });
+    }
+
+    private toHex(color: number): string {
+        return '0x' + color.toString(16).padStart(6, '0');
+    }
+
+    private getOrCreatePaintTracker(partId: string, partKey: string) {
+        let t = this.paintTrackers.get(partId);
+        if (!t) {
+            const seq = ++this.nextItemSeq;
+            const hitArea = this.unfinishedPartsMap.get(partId);
+
+            const areaPx = hitArea?.getData("area_px") ?? 0;
+            const allowedColors = hitArea?.getData("allowed_colors") ?? ["any"];
+            const correctColor = hitArea?.getData("correct_color") ?? null;
+
+            const minCov =
+                hitArea?.getData("min_region_coverage") ?? GameConstants.PAINT.WIN_PERCENT;
+
+            const maxSpill =
+                hitArea?.getData("max_spill_ratio") ?? 0;
+
+            // Force use custom tracker to ensure data is captured in irukaGameState
+            const itemData = {
+                item_id: `PAINT_${partId}`,
+                item_type: "paint",
+                seq,
+                run_seq: this.runSeq,
+                difficulty: 1,
+                scene_id: SceneKeys.Scene1,
+                scene_seq: seq,
+                scene_type: "paint",
+                skill_ids: [],
+                expected: {
+                    regions: [
+                        {
+                            id: partId,
+                            area_px: areaPx,
+                            allowed_colors: allowedColors,
+                            correct_color: correctColor,
+                        },
+                    ],
+                    min_region_coverage: minCov,
+                    max_spill_ratio: maxSpill,
+                },
+                history: [] as any[],
+            };
+
+            t = {
+                onShown: () => { },
+                onDone: (response: any, time: number, result: any) => {
+                    itemData.history.push({
+                        attempt: itemData.history.length + 1,
+                        started_at_ms: Date.now() - 500, // Estimate
+                        ended_at_ms: Date.now(),
+                        time_spent_ms: 500,
+                        response: response,
+                        is_correct: result?.isCorrect ?? false,
+                        error_code: result?.errorCode ?? null,
+                        hint_used: 0
+                    });
+                },
+                finalize: () => {
+                    const state = (window as any).irukaGameState;
+                    if (state) {
+                        if (!state.items) state.items = [];
+                        state.items.push(itemData);
+                    }
+                }
+            };
+
+            this.paintTrackers.set(partId, t);
+        }
+        return t;
     }
 
     // =================================================================
