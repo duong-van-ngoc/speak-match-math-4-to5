@@ -19,6 +19,8 @@ const SOUND_MAP: Record<string, SoundConfig> = {
   correct_answer_2: { src: `${BASE_PATH}correct_answer_2.mp3`, volume: 1.0 },
   correct_answer_3: { src: `${BASE_PATH}correct_answer_3.mp3`, volume: 1.0 },
   correct_answer_4: { src: `${BASE_PATH}correct_answer_4.mp3`, volume: 1.0 },
+  wrong_answer_1: { src: `${BASE_PATH}wrong_answer_1.mp3`, volume: 1.0 },
+  wrong_answer_2: { src: `${BASE_PATH}wrong_answer_2.mp3`, volume: 1.0 },
 
   bgm_main: { src: `${BASE_PATH}bgm_main.mp3`, loop: true, volume: 0.3, html5: false },
 
@@ -355,6 +357,13 @@ class AudioManager {
   playPrompt(type: 'less' | 'more', animal: string): void {
     const id = `prompt_${type}_${animal}`;
     this.play(id);
+  }
+
+  playWrongAnswer(): string {
+    const randomIndex = Math.floor(Math.random() * 2) + 1;
+    const key = `wrong_answer_${randomIndex}`;
+    this.play(key);
+    return key;
   }
 }
 

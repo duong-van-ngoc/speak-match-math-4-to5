@@ -1,16 +1,15 @@
 import Phaser from 'phaser';
 import AudioManager from './AudioManager';
-import { sdk } from './main';
-// import { game as irukaGame } from '@iruka-edu/mini-game-sdk';
+import { irukaGame, sdk } from './main';
+import { game as irukaSdkGame } from "@iruka-edu/mini-game-sdk";
+const game = irukaGame;
 
 const AUDIO_UNLOCKED_KEY = '__audioUnlocked__';
 const AUDIO_UNLOCKED_EVENT = 'audio-unlocked';
 const SFX_COMPLETE_KEY = 'sfx_correct';
 
-const BANNER_Y = 70; // Shifted higher
+const BANNER_Y = 70;
 const PROMPT_FONT_SIZE = 55;
-
-/* ===================== TYPES ===================== */
 
 type GameState = 'TRACING_INTRO' | 'TRACING' | 'TRACING_END' | 'COUNTING_INTRO' | 'COUNTING' | 'COUNTING_END';
 
@@ -18,6 +17,7 @@ type WindowGameApi = {
   setRandomGameViewportBg?: () => void;
   setGameButtonsVisible?: (visible: boolean) => void;
 } & Record<string, unknown>;
+
 
 /* ===================== SCENE ===================== */
 
@@ -36,6 +36,16 @@ export default class GameScene extends Phaser.Scene {
   private tutorialHand?: Phaser.GameObjects.Image;
   private audioReady = false;
 
+  // ===== SDK Match (items) =====
+  private itemSeq = 0;
+  private runSeq = 1;
+  private matchTracker: any = null;
+  private pendingHint = 0;
+  private activeTargetIndex: number | null = null;
+  private consecutiveWrongAttempts = 0;
+  private lastInteractionTime = 0;
+  private isShowingHint = false;
+
   constructor() {
     super('GameScene');
   }
@@ -45,23 +55,18 @@ export default class GameScene extends Phaser.Scene {
   init(data: { score?: number }) {
     this.score = data.score ?? 0;
     this.hasPlayedInstructionVoice = false;
+    this.consecutiveWrongAttempts = 0;
+    this.lastInteractionTime = Date.now();
 
-    (window as any).irukaGameState = {
-      startTime: Date.now(),
-      currentScore: this.score,
-    };
-    sdk.score(this.score, 0);
+    // Reset sequence counters to prevent payload accumulation
+    this.itemSeq = 0;
+    this.runSeq = 1;
+
+    irukaGame.setTotal?.(4);
+    (window as any).resetHubProgress?.();
 
     const win = window as unknown as Record<string, unknown>;
     this.audioReady = !!win[AUDIO_UNLOCKED_KEY];
-  }
-
-  private recordCorrect() {
-    (window as any).irukaGameState.currentScore = this.score;
-    sdk.score(this.score, 1);
-  }
-
-  private finalizeAttempt() {
   }
 
   /* ===================== CREATE ===================== */
@@ -78,6 +83,7 @@ export default class GameScene extends Phaser.Scene {
     } catch {
       // Optional host helper may not exist.
     }
+
 
     const { width } = this.scale;
     const w = window as unknown as WindowGameApi;
@@ -153,6 +159,7 @@ export default class GameScene extends Phaser.Scene {
 
   private traceParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
   private burstParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private dotCurveIndices: number[] = []; // Indices in curvePathPoints for each pathPoint
 
   private createTracingGame() {
     this.stationImages = [];
@@ -206,6 +213,20 @@ export default class GameScene extends Phaser.Scene {
     // Generate high-resolution points for the entire path once (approx 1px spacing)
     // Using simple array ensures both dashed and painted lines follow the EXACT same geometry
     this.curvePathPoints = this.pathCurve.getSpacedPoints(Math.floor(this.totalCurveLength));
+
+    // Calculate exact curve indices for each dot to cap line drawing
+    this.dotCurveIndices = this.pathPoints.map(dot => {
+      let minDist = Infinity;
+      let bestIdx = 0;
+      this.curvePathPoints.forEach((cp, idx) => {
+        const d = Phaser.Math.Distance.Between(dot.x, dot.y, cp.x, cp.y);
+        if (d < minDist) {
+          minDist = d;
+          bestIdx = idx;
+        }
+      });
+      return bestIdx;
+    });
 
     this.dottedPathGroup = this.add.group();
     const dashedGraphics = this.add.graphics();
@@ -310,14 +331,232 @@ export default class GameScene extends Phaser.Scene {
   }
 
   private startTracingGame() {
+    this.isBlockingInput = false;
     this.gameState = 'TRACING';
-    this.promptText.setVisible(false);
+    this.promptText?.setVisible(false);
     this.traceProgress = 0;
     this.traceIndex = 0;
     this.visitedPoints = new Array(5).fill(false);
-    this.isBlockingInput = false;
     this.updatePaintedPath();
+
+    // ===== SDK MATCH INIT =====
+    this.itemSeq += 1;
+    const nodes = ['NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5'];
+    // Pairs: 1->2, 2->3, 3->4, 4->5
+    // Corresponds to indices: 0->1, 1->2, 2->3, 3->4
+    const correct_pairs = [
+      { from: 'NUMBER_1', to: 'NUMBER_2' },
+      { from: 'NUMBER_2', to: 'NUMBER_3' },
+      { from: 'NUMBER_3', to: 'NUMBER_4' },
+      { from: 'NUMBER_4', to: 'NUMBER_5' },
+    ];
+
+    // --- SDK POLYFILL START ---
+    let createMatchTracker = (irukaSdkGame as any).createMatchTracker;
+
+    if (!createMatchTracker) {
+      console.warn("SDK createMatchTracker not found! Using local polyfill.");
+
+      // Minimal Polyfill Implementation
+      createMatchTracker = (config: any) => {
+        const history: any[] = [];
+        let attemptCounter = 0;
+        let currentStartTs: number | null = null;
+        let currentFromNode: string | null = null;
+        let pendingHintCount = 0;
+        let totalHintUsed = 0;
+        let finalizedItem: any = null;
+
+        // Expose data globally instead of monkey-patching read-only module export
+        (window as any)._getMatchedTrackerData = () => {
+
+          // Only include item data if finalized
+          if (!finalizedItem) return {};
+
+          const items = [finalizedItem];
+          const items_total = 1;
+
+          // Build Summary
+          const items_summary_by_type: any = {};
+          const items_errors_histogram: any = {};
+
+          const type = finalizedItem.item_type;
+          const summary = {
+            item_type: type,
+            itemsCount: 1,
+            passCount: 0,
+            failCount: 0,
+            quitCount: 0,
+            attemptsTotal: finalizedItem.history.length,
+            attemptsAvg: finalizedItem.history.length,
+            hintTotal: finalizedItem.hint_used,
+            hintAvg: finalizedItem.hint_used,
+            timeTotalMs: 0,
+            timeAvgMs: 0,
+            errors: {} as any,
+            metrics: { pathLengthAvgPx: 0 }
+          };
+
+          // Analyze history
+          let correctCount = 0;
+          let totalTimeMs = 0;
+          let totalPathPx = 0;
+
+          finalizedItem.history.forEach((h: any) => {
+            if (h.is_correct) correctCount++;
+            totalTimeMs += h.time_spent_ms;
+            totalPathPx += h.response.path_length_px;
+            if (h.error_code) {
+              summary.errors[h.error_code] = (summary.errors[h.error_code] || 0) + 1;
+              items_errors_histogram[h.error_code] = (items_errors_histogram[h.error_code] || 0) + 1;
+            }
+          });
+
+          if (correctCount > 0) summary.passCount = 1;
+          else summary.failCount = 1; // Simplification
+
+          summary.timeTotalMs = totalTimeMs;
+          summary.timeAvgMs = totalTimeMs;
+          if (finalizedItem.history.length > 0) {
+            summary.metrics.pathLengthAvgPx = totalPathPx / finalizedItem.history.length;
+          }
+
+          items_summary_by_type[type] = summary;
+
+          return {
+            items_total,
+            items,
+            items_summary_by_type,
+            items_errors_histogram
+          };
+        };
+
+        return {
+          onMatchStart: (fromNode: string, ts: number) => {
+            currentStartTs = ts;
+            currentFromNode = fromNode;
+          },
+          onMatchEnd: (response: any, ts: number, result: any) => {
+            attemptCounter++;
+            const startTs = currentStartTs ?? ts;
+            history.push({
+              attempt: attemptCounter,
+              started_at_ms: startTs,
+              ended_at_ms: ts,
+              time_spent_ms: Math.max(0, ts - startTs),
+              response: {
+                from_node: response.from_node || currentFromNode || '',
+                to_node: response.to_node,
+                path_length_px: response.path_length_px
+              },
+              is_correct: result.isCorrect,
+              error_code: result.errorCode,
+              hint_used: pendingHintCount
+            });
+            pendingHintCount = 0;
+            currentStartTs = null;
+            currentFromNode = null;
+          },
+          hint: (count: number) => {
+            pendingHintCount += count;
+            totalHintUsed += count;
+          },
+          finalize: () => {
+            finalizedItem = {
+              ...config.meta,
+              expected: config.expected,
+              history: [...history],
+              hint_used: totalHintUsed
+            };
+          }
+        };
+      };
+    }
+    // --- SDK POLYFILL END ---
+
+    this.matchTracker = createMatchTracker({
+      meta: {
+        item_id: `ORDER_NUMBERS_${this.itemSeq}`,
+        item_type: "match",
+        seq: this.itemSeq,
+        run_seq: this.runSeq,
+        difficulty: 1,
+        scene_id: "SCN_ORDER_01",
+        scene_seq: this.itemSeq,
+        scene_type: "match",
+        skill_ids: ["sap_xep_so_001"],
+      },
+      expected: {
+        nodes,
+        correct_pairs,
+      },
+      errorOnWrong: "WRONG_PAIR",
+    });
+    // We start aiming for index 1 (Point 2) from index 0 (Point 1)
+    // However, the first "Attempt" strictly starts when user drags.
+    // We assume the user has "visited" point 0 implicitly or will start there.
+    this.activeTargetIndex = null; // Will be set on drag start
+
     this.time.delayedCall(500, () => this.playHandTutorial());
+  }
+
+  // Helper to start an attempt
+  private startMatchAttempt(targetIndex: number) {
+    if (this.activeTargetIndex === targetIndex) return; // Already tracking this segment
+
+    // Previous attempt should be closed by now, but safety check?
+    // In this game logic, we only move forward.
+    this.activeTargetIndex = targetIndex;
+
+    const fromIndex = targetIndex - 1;
+    const fromNode = `NUMBER_${fromIndex + 1}`;
+
+    const ts = Date.now();
+    this.matchTracker?.onMatchStart?.(fromNode, ts);
+
+    if (this.pendingHint > 0) {
+      this.matchTracker?.hint?.(this.pendingHint);
+      this.pendingHint = 0;
+    }
+  }
+
+  // Helper to end an attempt
+  private endMatchAttempt(success: boolean, errorCode: string | null = null) {
+    if (this.activeTargetIndex === null) return;
+
+    const fromIndex = this.activeTargetIndex - 1;
+    const toIndex = this.activeTargetIndex;
+
+    const fromNode = `NUMBER_${fromIndex + 1}`;
+    // If success, we reached the target. If abandoned, to_node is null? 
+    // Guide says: to_node: null if USER_ABANDONED.
+    const toNode = success ? `NUMBER_${toIndex + 1}` : null;
+
+    const ts = Date.now();
+    // Path length is approximate in this logic, we can calculate distance between points or trace length
+    // For simplicity, linear distance between the two points:
+    const p1 = this.pathPoints[fromIndex];
+    const p2 = this.pathPoints[toIndex]; // Or current pointer if abandoned?
+    const len = Math.round(Phaser.Math.Distance.Between(p1.x, p1.y, p2.x, p2.y));
+
+    this.matchTracker?.onMatchEnd?.(
+      { from_node: fromNode, to_node: toNode, path_length_px: len },
+      ts,
+      { isCorrect: success, errorCode: errorCode }
+    );
+
+    if (success) {
+      this.consecutiveWrongAttempts = 0;
+    } else if (errorCode && errorCode !== "USER_ABANDONED") {
+      this.consecutiveWrongAttempts++;
+      if (this.consecutiveWrongAttempts >= 2) {
+        this.playHandTutorial(true);
+        this.consecutiveWrongAttempts = 0;
+      }
+    }
+
+    this.activeTargetIndex = null;
+    this.lastInteractionTime = Date.now();
   }
 
   private handlePathPointerDown(pointer: Phaser.Input.Pointer) {
@@ -329,21 +568,73 @@ export default class GameScene extends Phaser.Scene {
 
     if (dist < 100) {
       this.isTracing = true;
+      this.lastInteractionTime = Date.now();
+      this.input.setDefaultCursor('pointer');
       if (this.tutorialHand) {
         this.tutorialHand.destroy();
         this.tutorialHand = undefined;
       }
+
+      // Determine what we are aiming for
+      // Find the last visited point index
+      let lastVisitedIndex = -1;
+      for (let i = 0; i < this.visitedPoints.length; i++) {
+        if (this.visitedPoints[i]) lastVisitedIndex = i;
+        else break;
+      }
+
+      // If we haven't visited 0 yet, we are nominally at start. 
+      // If we visited 0 (Point 1), we aim for 1 (Point 2).
+      // If lastVisitedIndex is -1 (start), we treat it as aiming for 1 (Point 2) *after* we hit Point 1?
+      // Actually, logic below triggers point 0 visit immediately if close.
+      // Let's defer startMatchAttempt until we are sure we have "checked in" at the start node.
+
       if (this.traceProgress < 0.05 && !this.visitedPoints[0]) {
         const distToStart = Phaser.Math.Distance.Between(pointer.x, pointer.y, this.pathPoints[0].x, this.pathPoints[0].y);
         if (distToStart < 100) {
           this.triggerPointVisit(0);
         }
       }
+
+      // After potentially visiting 0, calc target again
+      lastVisitedIndex = -1;
+      for (let i = 0; i < this.visitedPoints.length; i++) {
+        if (this.visitedPoints[i]) lastVisitedIndex = i;
+        else break;
+      }
+
+      // If we have visited X, we are aiming for X+1.
+      if (lastVisitedIndex >= 0 && lastVisitedIndex < 4) {
+        this.startMatchAttempt(lastVisitedIndex + 1);
+      }
+
+      return;
+    }
+
+    // Only record mistake if clicking near ANY station (dot)
+    const isNearAnyStation = this.pathPoints.some(p =>
+      Phaser.Math.Distance.Between(pointer.x, pointer.y, p.x, p.y) < 80
+    );
+    if (isNearAnyStation) {
+      game.recordWrong();
+      AudioManager.play('sfx_wrong');
+      AudioManager.playWrongAnswer();
     }
   }
 
   private handlePathPointerMove(pointer: Phaser.Input.Pointer) {
-    if (this.gameState !== 'TRACING' || !this.isTracing) return;
+    if (this.gameState !== 'TRACING') return;
+
+    if (!this.isTracing) {
+      // Hover effect: Show pointer when near the current drawing tip
+      if (this.curvePathPoints && this.curvePathPoints.length > 0) {
+        const currentP = this.curvePathPoints[this.traceIndex];
+        const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, currentP.x, currentP.y);
+        this.input.setDefaultCursor(dist < 100 ? 'pointer' : 'default');
+      }
+      return;
+    }
+
     if (this.isBlockingInput) return;
     if (!this.curvePathPoints || this.curvePathPoints.length === 0) return;
 
@@ -365,6 +656,15 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
+    // CAP: Don't let the line pass the next unvisited dot
+    let nextUnvisitedIdx = this.visitedPoints.findIndex(v => !v);
+    if (nextUnvisitedIdx !== -1) {
+      const capIndex = this.dotCurveIndices[nextUnvisitedIdx];
+      if (bestIndex > capIndex) {
+        bestIndex = capIndex;
+      }
+    }
+
     if (foundNew && bestIndex > this.traceIndex) {
       this.traceIndex = bestIndex;
       // Sync traceProgress for compatibility with other logic if needed
@@ -376,13 +676,27 @@ export default class GameScene extends Phaser.Scene {
       const tip = this.curvePathPoints[this.traceIndex];
       this.traceParticles.emitParticleAt(tip.x, tip.y);
 
-      // Check for station visits
-      this.pathPoints.forEach((p, i) => {
-        if (!this.visitedPoints[i]) {
-          const dist = Phaser.Math.Distance.Between(pointer.x, pointer.y, p.x, p.y);
-          if (dist < 60) this.triggerPointVisit(i);
+      // Check for station visits based on curve progress
+      this.dotCurveIndices.forEach((capIdx, i) => {
+        if (!this.visitedPoints[i] && this.traceIndex >= capIdx - 10) {
+          this.triggerPointVisit(i);
         }
       });
+
+      // Continuous Tracking Logic:
+      // If we are tracing, and we have passed a point, ensure we have an attempt open for the NEXT point.
+      // But only if input is not blocked (which it usually IS after a visit due to voice).
+      if (!this.isBlockingInput && this.gameState === 'TRACING') {
+        let lastVisitedIndex = -1;
+        for (let j = 0; j < this.visitedPoints.length; j++) {
+          if (this.visitedPoints[j]) lastVisitedIndex = j;
+          else break;
+        }
+        if (lastVisitedIndex >= 0 && lastVisitedIndex < 4) {
+          // We should be aiming for lastVisitedIndex + 1
+          this.startMatchAttempt(lastVisitedIndex + 1);
+        }
+      }
 
       if (this.traceProgress >= 0.99 && !this.isBlockingInput) {
         if (this.visitedPoints.every(v => v)) {
@@ -396,6 +710,12 @@ export default class GameScene extends Phaser.Scene {
     if (this.visitedPoints[index]) return;
 
     this.visitedPoints[index] = true;
+
+    // SDK: If this is the target we were aiming for, record success
+    if (this.activeTargetIndex === index) {
+      this.endMatchAttempt(true);
+    }
+
     this.isBlockingInput = true;
 
     AudioManager.play('sfx_correct');
@@ -416,26 +736,62 @@ export default class GameScene extends Phaser.Scene {
     const voiceKey = `count_${index + 1}`;
     AudioManager.play(voiceKey);
 
+    // SDK: Finish segment timer (except for starting point)
+    // We have 4 segments: 1->2, 2->3, 3->4, 4->5.
+    // index 1 corresponds to NUMBER_2 (end of segment 1)
+    if (index > 0) {
+      irukaGame.finishQuestionTimer?.();
+    }
+
     AudioManager.onceEnded(voiceKey, () => {
+      if (index > 0) {
+        irukaGame.recordCorrect?.({ scoreDelta: 1 });
+        this.score++;
+        (window as any).irukaGameState.currentScore = this.score;
+        sdk.score(this.score, 1);
+        sdk.progress({
+          levelIndex: 0,
+          score: this.score,
+        });
+      }
+
       if (index === 0) {
         this.isBlockingInput = false;
-        // Immediately show Phase 2 hand tutorial (tracing 1 to 2) after count_1 ends
+        // Start first segment timer (1 to 2)
+        irukaGame.startQuestionTimer?.();
         this.playHandTutorial();
       } else if (index === 4) {
-        // Last station: play praise after count finishes
+        this.matchTracker?.finalize?.();
+        this.matchTracker = null;
+        irukaGame.finalizeAttempt?.("pass");
         const correctKey = AudioManager.playCorrectAnswer();
+
+        const finishSafety = this.time.delayedCall(4000, () => {
+          this.isBlockingInput = false;
+          this.handleTracingComplete();
+        });
+
         AudioManager.onceEnded(correctKey, () => {
+          finishSafety.remove();
           this.isBlockingInput = false;
           this.handleTracingComplete();
         });
       } else {
         this.isBlockingInput = false;
+        // Start next segment timer
+        irukaGame.startQuestionTimer?.();
       }
     });
   }
 
   private handlePathPointerUp() {
+    if (this.isTracing) {
+      if (this.activeTargetIndex !== null) {
+        this.endMatchAttempt(false, "USER_ABANDONED");
+      }
+    }
     this.isTracing = false;
+    this.input.setDefaultCursor('default');
   }
 
   private updatePaintedPath() {
@@ -477,20 +833,26 @@ export default class GameScene extends Phaser.Scene {
     this.isTracing = false;
     this.gameState = 'TRACING_END';
     AudioManager.play(SFX_COMPLETE_KEY);
-    this.recordCorrect();
+
+    // Safety: ensure timer is finished
+    game.finishQuestionTimer?.();
+
     this.promptText.setText('Tuyệt vời! Bạn đã kết nối hết các trạm.');
 
     AudioManager.play('voice_complete');
-    this.finalizeAttempt();
+
     this.scene.start('EndGameScene', {
       lessonId: '',
       score: this.score,
-      total: 1,
+      total: 4,
+      startTime: (window as any).irukaGameState?.startTime,
     });
   }
 
-  private playHandTutorial() {
+  private playHandTutorial(isHint = false) {
     if (this.gameState !== 'TRACING' || this.isTracing) return;
+    if (this.isShowingHint) return; // Prevent overlapping tutorials
+
     if (this.tutorialHand) this.tutorialHand.destroy();
 
     // If point 2 already visited, no more tutorial
@@ -507,6 +869,13 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(100)
       .setAlpha(0)
       .setOrigin(0.5, 0);
+
+    this.isShowingHint = true;
+
+    // Record Hint only if forced
+    if (isHint) {
+      this.pendingHint += 1;
+    }
 
     if (!this.visitedPoints[0]) {
       // --- PHASE 1: POINT & TAP AT NUMBER 1 ---
@@ -535,9 +904,8 @@ export default class GameScene extends Phaser.Scene {
                 duration: 400,
                 delay: 200,
                 onComplete: () => {
-                  if (!this.isTracing && this.gameState === 'TRACING') {
-                    this.playHandTutorial();
-                  }
+                  this.isShowingHint = false;
+                  this.lastInteractionTime = Date.now();
                 }
               });
             }
@@ -576,6 +944,15 @@ export default class GameScene extends Phaser.Scene {
           });
         }
       });
+    }
+  }
+
+  update(_time: number, _delta: number) {
+    if (this.gameState === 'TRACING' && !this.isTracing && !this.isShowingHint) {
+      if (Date.now() - this.lastInteractionTime > 10000) {
+        this.playHandTutorial(true);
+        this.lastInteractionTime = Date.now();
+      }
     }
   }
 
