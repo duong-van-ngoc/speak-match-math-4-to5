@@ -1,0 +1,176 @@
+# Tài liệu Khung Game — "Các hoạt động làm quen với Toán 4-5t"
+
+> Dựa trên phân tích **14 trang PDF** + ảnh Figma tham khảo + quy trình Bước 2-3
+
+---
+
+## 1. Tổng quan nội dung PDF (14 trang)
+
+| Trang | Chủ đề | 3 hoạt động mỗi trang |
+|-------|--------|----------------------|
+| 1 | Số 1 | Đếm toa tàu · Nối nhóm đồ vật SL=1 với chữ số 1 · Tô màu chữ số 1 |
+| 2 | Số 2 | Đếm toa tàu · Tô màu nhóm đồ dùng SL=2 & nối chữ số 2 · Tô màu chữ số 2 |
+| 3 | Số 3 | Đếm toa tàu · Nối nhóm con vật SL=3 với chữ số 3 · Tô màu chữ số 3 |
+| 4 | Số 4 | Đếm toa tàu · Nối nhóm cá SL=4 với chữ số 4 · Tô màu chữ số 4 |
+| 5 | Số 5 | Đếm toa tàu · Nối nhóm bánh kẹo SL=5 với chữ số 5 · Tô màu chữ số 5 |
+| 6 | Ôn 1-3 | Nối nhóm đồ vật với chữ số đúng (1, 2, 3) |
+| 7 | Ôn 1-4 | Đếm & nối, sắp xếp (mở rộng đến số 4) |
+| 8 | Ôn 1-5 | Đếm ếch, chuồn chuồn, sóc → nối chữ số 1-5 |
+| 9 | Số 5 nâng cao | Cây với 5 con sóc, 5 quả hạch, thứ tự 1-5 |
+| 10 | So sánh | Cao/thấp, to/nhỏ |
+| 11 | Nối bóng | Nối con vật/đồ vật với bóng (silhouette) |
+| 12 | Vị trí | Trước/sau, trong/ngoài |
+| 13 | Trái/Phải | Nhận biết tay trái, tay phải |
+| 14 | Thời gian | Sáng/Trưa/Chiều/Tối |
+
+---
+
+## 2. Phân loại khung game (Game Templates)
+
+Từ 14 trang, tôi rút ra **3 khung game chính** (trang 1-5 lặp lại pattern):
+
+### Khung A: `count-train` — Đếm số toa tàu trong bức tranh 🚂
+| Mục | Chi tiết |
+|-----|---------|
+| **Cơ chế** | Bé nhìn tranh đoàn tàu → đếm toa → bấm vào mic để nói  |
+| **Win** | Chọn đúng số → hiệu ứng vui → next level |
+| **Lose** | Chọn sai → khích lệ → thử lại |
+| **Áp dụng** | Trang 1 (1 toa), Trang 2 (2 toa), Trang 3 (3 toa), Trang 4 (4 toa), Trang 5 (5 toa) |
+| **Tái sử dụng** | Chỉ thay: số toa, hình toa, background |
+
+### Khung B: `match-number` — Nối nhóm đồ vật với chữ số 🔗
+| Mục | Chi tiết |
+|-----|---------|
+| **Cơ chế** | Hiển thị nhiều nhóm đồ vật + 1 chữ số ở giữa. Bé kéo nối nhóm có SL đúng → chữ số |
+| **Win** | Nối đúng tất cả → hiệu ứng vui |
+| **Lose** | Nối sai → đường nối biến mất → thử lại |
+| **Áp dụng** | Trang 1-5 (hoạt động thứ 2), Trang 6-8 (ôn tập) |
+| **Tái sử dụng** | Thay: hình đồ vật, chữ số mục tiêu |
+
+### Khung C: `color-number` — Tô màu chữ số 🎨
+| Mục | Chi tiết |
+|-----|---------|
+| **Cơ chế** | Hiển thị outline chữ số lớn + bảng màu bên dưới. Bé chọn màu → chạm vào chữ số để tô |
+| **Win** | Tô xong toàn bộ → hiệu ứng vui |
+| **Áp dụng** | Trang 1-5 (hoạt động thứ 3) |
+| **Tái sử dụng** | Thay: chữ số outline (1→2→3→4→5) |
+
+> [!NOTE]
+> Trang 6-14 có thêm các khung khác (so sánh, nối bóng, vị trí trái/phải, thời gian) nhưng **chưa nằm trong scope project hiện tại** (`speak-match-math-4-to5`). Project này tập trung vào **Khung A** trước.
+
+---
+
+## 3. Layout UI — Khung A: `count-train` (chi tiết)
+
+Dựa trên ảnh Figma trang 2:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  🔄 │
+│  Banner xanh: "ĐẾM SỐ TOA TÀU TRONG BỨC TRANH"       │
+├──────┬──────────────────────────────────────────────────┤
+│      │                                                  │
+│  ┌─┐ │     🌳🌿     🌸                                 │
+│  │5│ │                                                  │
+│  ├─┤ │        🚂──🚃──🚃──🚃                           │
+│  │4│ │     ═══════════════════                          │
+│  ├─┤ │                                                  │
+│  │3│ │  Background: cánh đồng, cây cối, bầu trời       │
+│  ├─┤ │                                                  │
+│  │2│ │                                                  │
+│  ├─┤ │                                                  │
+│  │1│ │                                                  │
+│  └─┘ │                                                  │
+│ Bảng │                                                  │
+│ đếm  │                                                  │
+└──────┴──────────────────────────────────────────────────┘
+        ↑ Viền xanh dương bo tròn (border-radius)
+```
+
+| Thành phần | Vị trí | Kích thước ước lượng |
+|-----------|--------|---------------------|
+| Banner ribbon | Top center | ~70% width, ~8% height |
+| Nút Reset 🔄 | Top-right | ~5% height (vuông) |
+| Bảng đếm (1→N) | Left, vertical | ~8% width, ~70% height |
+| Bức tranh (tàu + bg) | Center-right | ~85% width, ~85% height |
+| Viền xanh | Full border | 4-6px solid, border-radius ~20px |
+
+---
+
+## 4. Cấu trúc file (theo mẫu SPEAK-MATCHING-D-GAME)
+
+```
+speak-match-math-4-to5/
+│
+├── docs/                              ← 📖 Tài liệu
+│   ├── GAME_MECHANICS.md             # Cơ chế chơi 3 khung A/B/C
+│   ├── SRC_STRUCTURE_AND_PLAN.md     # Cấu trúc source & kế hoạch
+│   ├── ALGORITHMS.md                 # Thuật toán đếm, scoring
+│   └── DEVELOPMENT.md               # Hướng dẫn dev
+│
+├── public/
+│   └── assets/
+│       ├── animation/                # Mascot sprite sheets
+│       ├── audio/                    # SFX, BGM, voice hướng dẫn
+│       ├── images/
+│       │   ├── bg/                  # Background (cánh đồng, board)
+│       │   ├── ui/                  # Banner, buttons, hand hint
+│       │   └── CountScene/          # Tàu, toa, rail, bảng đếm
+│       └── test_mode/               # Assets test
+│
+├── src/
+│   ├── audio/
+│   │   └── AudioManager.ts
+│   ├── consts/
+│   │   ├── Keys.ts                  # SceneKeys, TextureKeys, AudioKeys
+│   │   └── GameConstants.ts         # Config, levels
+│   ├── scenes/
+│   │   ├── end/
+│   │   │   └── EndScene.ts
+│   │   ├── speak/                   # ← Scene chính
+│   │   │   └── CountTrainScene.ts
+│   │   ├── index.ts
+│   │   ├── BootScene.ts
+│   │   ├── PreloadScene.ts
+│   │   └── SceneBase.ts
+│   ├── utils/
+│   │   ├── GameUtils.ts
+│   │   ├── IdleManager.ts
+│   │   ├── BackgroundManager.ts
+│   │   └── rotateOrientation.ts
+│   └── main.ts
+│
+├── index.html
+├── package.json
+├── tsconfig.json
+└── .gitignore
+```
+
+---
+
+## 5. Asset order cho Designer (Bước 4)
+
+| # | Asset | Size | Format | Ghi chú |
+|---|-------|------|--------|---------|
+| 1 | `bg/background_game.png` | 1920×1080 | PNG | Nền cánh đồng, cây, bầu trời |
+| 2 | `ui/banner.png` | ~1200×120 | PNG | Ribbon xanh dương |
+| 3 | `ui/title_count_train.png` | ~800×60 | PNG | Text "ĐẾM SỐ TOA TÀU..." |
+| 4 | `ui/btn_reset.png` | 80×80 | PNG | Nút mũi tên tròn |
+| 5 | `ui/hand.png` | 80×80 | PNG | Tay gợi ý idle |
+| 6 | `CountScene/train_head.png` | ~200×150 | PNG α | Đầu tàu + lái tàu |
+| 7 | `CountScene/train_car_1..5.png` | ~180×150 | PNG α | Toa chở thú (5 phiên bản) |
+| 8 | `CountScene/railway.png` | 1600×80 | PNG | Đường ray |
+| 9 | `CountScene/counting_board.png` | ~120×600 | PNG | Bảng đếm dọc |
+| 10 | `CountScene/number_1..5.png` | ~60×60 | PNG α | Chữ số trên bảng đếm |
+
+> Phong cách **Iruka Edu**: tươi sáng, bo tròn, thân thiện trẻ em
+
+---
+
+## 6. Verification (Bước 6)
+
+1. `npm run dev` → layout khớp sơ đồ mục 3
+2. Flow: Boot → Preload → CountTrain → End
+3. Nút Reset reload đúng scene
+4. Bảng đếm bên trái click được
+5. Responsive 16:9

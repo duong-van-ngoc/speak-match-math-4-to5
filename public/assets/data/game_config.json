@@ -1,0 +1,29 @@
+{
+    "levels": [
+        {
+            "number": 1,
+            "trainCars": 1,
+            "bg": "bg_field"
+        },
+        {
+            "number": 2,
+            "trainCars": 2,
+            "bg": "bg_field"
+        },
+        {
+            "number": 3,
+            "trainCars": 3,
+            "bg": "bg_field"
+        },
+        {
+            "number": 4,
+            "trainCars": 4,
+            "bg": "bg_field"
+        },
+        {
+            "number": 5,
+            "trainCars": 5,
+            "bg": "bg_field"
+        }
+    ]
+}
