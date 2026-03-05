@@ -75,11 +75,42 @@ export class ReadingFinger {
             }
 
             // Di chuyển dọc theo dòng từ trái sang phải
-            tweenConfigs.push({
-                x: endX,
-                duration: line.duration,
-                ease: 'Linear'
-            });
+            if (line.nodes && line.nodes.length > 0) {
+                for (let j = 0; j < line.nodes.length; j++) {
+                    const nodeX = w * line.nodes[j];
+                    const prevX = j === 0 ? startX : w * line.nodes[j - 1];
+                    const distPercent = (nodeX - prevX) / (endX - startX);
+
+                    tweenConfigs.push({
+                        x: nodeX,
+                        duration: line.duration * distPercent,
+                        ease: 'Linear'
+                    });
+
+                    // Pause at node
+                    tweenConfigs.push({
+                        x: nodeX,
+                        duration: CFG.NODE_DELAY || 200,
+                        ease: 'Linear'
+                    });
+                }
+
+                // Move from last node to the end if not already there
+                const lastNodeX = w * line.nodes[line.nodes.length - 1];
+                if (lastNodeX < endX) {
+                    tweenConfigs.push({
+                        x: endX,
+                        duration: line.duration * ((endX - lastNodeX) / (endX - startX)),
+                        ease: 'Linear'
+                    });
+                }
+            } else {
+                tweenConfigs.push({
+                    x: endX,
+                    duration: line.duration,
+                    ease: 'Linear'
+                });
+            }
         }
 
         // Fade out sau khi đọc xong
@@ -142,11 +173,40 @@ export class ReadingFinger {
                     ease: 'Power2'
                 },
                 // Move along the line
-                {
-                    x: endX,
-                    duration: line.duration,
-                    ease: 'Linear'
-                },
+                ...(line.nodes && line.nodes.length > 0
+                    ? line.nodes.flatMap((nodeX, idx) => {
+                        const prevX = idx === 0 ? startX : w * line.nodes![idx - 1];
+                        const nextX = w * nodeX;
+                        const distPercent = (nextX - prevX) / (endX - startX);
+
+                        return [
+                            {
+                                x: nextX,
+                                duration: line.duration * distPercent,
+                                ease: 'Linear'
+                            },
+                            {
+                                x: nextX,
+                                duration: CFG.NODE_DELAY || 200, // Pause at node
+                                ease: 'Linear'
+                            }
+                        ];
+                    })
+                    : [{
+                        x: endX,
+                        duration: line.duration,
+                        ease: 'Linear'
+                    }]
+                ),
+                // Move from last node to the very end of the line if necessary (or just normal move if no nodes)
+                ...(line.nodes && line.nodes.length > 0 && w * line.nodes[line.nodes.length - 1] < endX
+                    ? [{
+                        x: endX,
+                        duration: line.duration * ((endX - (w * line.nodes[line.nodes.length - 1])) / (endX - startX)),
+                        ease: 'Linear'
+                    }]
+                    : []
+                ),
                 // Fade out
                 {
                     alpha: 0,

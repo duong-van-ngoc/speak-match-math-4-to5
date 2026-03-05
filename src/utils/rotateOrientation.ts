@@ -48,6 +48,8 @@ function getVoicePriority(key: string): number {
  *   playVoiceLocked(this.sound, 'q_...')
  * Nội bộ: dùng AudioManager (Howler), bỏ hẳn Phaser.Sound.
  */
+
+
 export function playVoiceLocked(
     _sound: Phaser.Sound.BaseSoundManager | null,
     key: string

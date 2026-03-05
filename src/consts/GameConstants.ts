@@ -25,6 +25,10 @@ export const GameConstants = {
         MAX_DURATION: 3000,
         /** Thời gian im lặng tối đa trước khi tự động dừng (ms) */
         SILENCE_TIMEOUT: 3000,
+        /** Thời gian calibration đo noise floor ban đầu (ms) */
+        CALIBRATION_DURATION: 2000,
+        /** Biên tạp âm cộng thêm vào ngưỡng (tránh bắt nhầm tiếng ồn) */
+        NOISE_MARGIN: 5,
 
         /** API endpoint gửi audio (production) */
         API_URL: 'http://0.0.0.0:8000/api/v1/voice/eval/4-5',
@@ -84,6 +88,14 @@ export const GameConstants = {
             SHAKE_DURATION: 500,
             FLOAT_DURATION: 1500,
             FLOAT_DISTANCE: 8,
+        },
+        // --- HOẠT HÌNH MIỆNG NÓI (sóng âm) ---
+        SPEAK_ANIMATION: {
+            X: 0.62,  // Nhích nhẹ so với mascot để khớp với miệng
+            Y: 0.81,
+            SCALE: 0.7,
+            FRAMES: ['ani_speak1', 'ani_speak2', 'ani_speak3'],
+            FRAME_DURATION: 500
         },
         // --- THỜI GIAN ---
         TIMING: {
