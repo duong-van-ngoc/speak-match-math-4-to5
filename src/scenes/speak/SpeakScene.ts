@@ -16,6 +16,7 @@ import { GameConstants } from '../../consts/GameConstants';
 import AudioManager from '../../audio/AudioManager';
 import { AnimationFactory } from '../../utils/AnimationFactory';
 import { changeBackground } from '../../utils/BackgroundManager';
+import { playVoiceLocked } from '../../utils/rotateOrientation';
 
 // Helper modules
 import { SpeakUI, type SpeakUIElements } from './SpeakUI';
@@ -26,34 +27,35 @@ import { DebugGrid } from '../../utils/DebugGrid';
 
 export default class SpeakScene extends SceneBase {
     // ========================================================================
-    // REGION: PROPERTIES
+    // KHU VỰC: THUỘC TÍNH (PROPERTIES)
     // ========================================================================
 
-    // UI Elements (from SpeakUI)
+    // Các thành phần UI (kế thừa từ SpeakUI)
     private ui!: SpeakUIElements;
 
-    // Helpers
+    // Các lớp hỗ trợ (Helpers)
     private speakUI!: SpeakUI;
     private speakVoice!: SpeakVoice;
     private readingFinger!: ReadingFinger;
-    private voiceHandler!: VoiceHandler;
     private debugGrid!: DebugGrid;
 
-    // Mascot Animations
+    // Các hoạt ảnh của Mascot
     private mascotRecording!: AnimationFactory;
     private mascotProcessing!: AnimationFactory;
     private mascotHappy!: AnimationFactory;
     private mascotSad!: AnimationFactory;
     private mascotIdle!: AnimationFactory;
 
-    // State
+    // Quản lý trạng thái
     private currentLevel: number = 0;
     private retryCount: number = 0;
     private isMicVisible: boolean = false;
     private isRecordingActive: boolean = false;
 
+    private speakerActiveTween: Phaser.Tweens.Tween | null = null;
+
     // ========================================================================
-    // REGION: LIFECYCLE
+    // KHU VỰC: VÒNG ĐỜI (LIFECYCLE)
     // ========================================================================
 
     constructor() {
@@ -83,7 +85,6 @@ export default class SpeakScene extends SceneBase {
         this.debugGrid?.destroy();
 
         this.readingFinger?.destroy();
-        this.voiceHandler?.destroy();
         this.mascotRecording?.destroy();
         this.mascotProcessing?.destroy();
         this.mascotHappy?.destroy();
@@ -93,17 +94,14 @@ export default class SpeakScene extends SceneBase {
     }
 
     // ========================================================================
-    // REGION: SETUP
+    // KHU VỰC: THIẾT LẬP (SETUP)
     // ========================================================================
 
     private setupHelpers(): void {
-        // VoiceHandler for API calls
-        this.voiceHandler = new VoiceHandler();
-
-        // ReadingFinger for counting animation
+        // Cài đặt ReadingFinger phục vụ hiển thị bàn tay đếm toa
         this.readingFinger = new ReadingFinger(this);
 
-        // SpeakVoice for recording + mic UI
+        // Cài đặt SpeakVoice để xử lý logic ghi âm và UI của mic
         this.speakVoice = new SpeakVoice(
             this,
             this.ui.microBtn,
@@ -116,7 +114,7 @@ export default class SpeakScene extends SceneBase {
     }
 
     /**
-     * Register mascot animations BEFORE createUI
+     * Khởi tạo các Animation của Mascot TRƯỚC KHI tạo giao diện chính
      */
     private setupMascotAnimations(): void {
         const MASCOT = GameConstants.MASCOT_ANIMATIONS;
@@ -140,9 +138,20 @@ export default class SpeakScene extends SceneBase {
         this.retryCount = 0;
 
         this.startWithAudio(() => {
+            // 1. Tạm tắt keyboard trong lúc setup
+            if (this.input.keyboard) this.input.keyboard.enabled = false;
+
+            // 2. Hiện loa (speaker) NGAY LẬP TỨC 
+            this.ui.speakerBtn.setVisible(true);
+            this.ui.speakerBtn.setAlpha(1);
+            this.showButtons();
+
+            // 3. Play BGM và đánh dấu active
             this.playBgm();
             this.isGameActive = true;
-            this.showButtons();
+
+            // 4. Bắt đầu tải Level 0
+            // Việc phát intro sẽ do startVoiceGuide đảm nhiệm sau khi tàu đã trượt ra.
             this.startLevel(0);
         });
     }
@@ -154,7 +163,7 @@ export default class SpeakScene extends SceneBase {
     }
 
     // ========================================================================
-    // REGION: MASCOT CONTROLLERS
+    // KHU VỰC: ĐIỀU KHIỂN MASCOT
     // ========================================================================
 
     private stopAllMascots(): void {
@@ -171,11 +180,11 @@ export default class SpeakScene extends SceneBase {
     }
 
     // ========================================================================
-    // REGION: GAME FLOW
+    // KHU VỰC: LUỒNG TRÒ CHƠI (GAME FLOW)
     // ========================================================================
 
     /**
-     * Start a level
+     * Khởi động một màn chơi (level)
      */
     private startLevel(levelIndex: number): void {
         const LEVELS = GameConstants.SPEAK_SCENE.LEVELS;
@@ -192,75 +201,111 @@ export default class SpeakScene extends SceneBase {
         const level = LEVELS[levelIndex];
         console.log(`[SpeakScene] Level ${level.number}: ${level.trainCars} toa tàu`);
 
-        // Change background
+        // Cài đặt hình nền phù hợp cho level
         changeBackground(level.bg);
 
-        // Hide old result + buttons
+        // Ẩn kết quả cũ và các nút tĩnh trước đó
         this.ui.resultText.setAlpha(0);
         this.ui.microBtn.setAlpha(0);
-        this.ui.speakerBtn.setAlpha(0);
 
-        // Show mascot idle
+        // Chỉ ẩn loa nếu KHÔNG PHẢI level 0 (Vì level 0 Loa đang cần hiện sẵn cho Intro)
+        if (levelIndex > 0) {
+            this.ui.speakerBtn.setAlpha(0);
+        }
+
+        // Hiện trạng thái nghỉ tiêu chuẩn của mascot
         this.showMascotIdle();
 
-        // Show train with animation → then start voice guide
+        // Hiển thị tàu trượt vào bằng animation
         this.speakUI.showTrainAnimation(this.ui.trainImage, level.trainKey, () => {
             this.startVoiceGuide();
         });
     }
 
     /**
-     * Voice guide flow after train appears
+     * Quy trình chạy luồng Giọng nói hướng dẫn sau khi tàu xuất hiện
      *
-     * FLOW:
-     * 1. Intro → "intro-speak" (only on first level)
-     * 2. Voice "Con hãy đếm số toa tàu..."
-     * 3. Hand chỉ toa + voice "Toa thứ nhất"
+     * TRÌNH TỰ (FLOW):
+     * 1. Nhạc Intro → "intro-speak" (Chỉ chạy ở level 0)
+     * 2. Voice hướng dẫn "Con hãy đếm số toa tàu..."
+     * 3. Bàn tay di chuyển chỉ toa + Voice đếm "Toa thứ nhất,.."
      * 4. Voice "Bây giờ bé hãy nhấn vào mic..."
-     * 5. Hand chỉ mic → ready for mic
+     * 5. Bàn tay chỉ vào mic → Vào trạng thái sẵn sàng nghi âm (ready for mic)
      */
     private startVoiceGuide(): void {
         const TIMING = GameConstants.SPEAK_SCENE.TIMING;
 
+        if (this.currentLevel === 0) {
+            // Level 0: Phát intro-speak ngay lập tức (sau khi tàu đã xuất hiện)
+            console.log('[SpeakScene] Step 1: Phát intro-speak');
+
+            // Bật hiệu ứng loa rung
+            this.startSpeakerActiveAnim();
+            this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+
+            AudioManager.playWithCallback('intro-speak', () => {
+                this.stopSpeakerActiveAnim();
+                this.speakUI.stopSpeakerAnimation();
+
+                // Hết intro -> HIỆN TAY CHỈ VÀO LOA
+                this.animateHandHintTo(this.ui.speakerBtn.x, this.ui.speakerBtn.y);
+
+                if (this.isGameActive) this.idleManager.start();
+                if (this.input.keyboard) this.input.keyboard.enabled = true;
+            });
+
+            return;
+        }
+
+        // Các level tiếp theo
         this.time.delayedCall(TIMING.DELAY_SHOW_MIC, () => {
-            // Show buttons
+            // Hiện nút loa (đứng yên)
             this.ui.speakerBtn.setAlpha(1);
 
-            // Step 1: Play intro (only first time)
-            if (this.currentLevel === 0) {
-                console.log('[SpeakScene] Step 1: Play intro-speak');
-                AudioManager.playWithCallback('intro-speak', () => {
-                    this.playInstructionSequence();
-                });
-            } else {
-                // Skip intro on subsequent levels, go straight to instructions
-                this.playInstructionSequence();
-            }
+            // Hiện tay chỉ loa luôn, chờ bé click
+            this.time.delayedCall(100, () => {
+                this.speakUI.showHandToSpeaker(this.ui.speakerBtn);
+            });
+
+            this.time.delayedCall(2000, () => {
+                if (this.isGameActive) {
+                    this.idleManager.start();
+                }
+            });
         });
     }
 
     /**
-     * Play instructions: đếm toa tàu → chỉ toa → nhấn mic
+     * Chuỗi hướng dẫn phát: đếm toa tàu → chỉ hướng → nhấn mic
      */
     private playInstructionSequence(): void {
         const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
         const countVoiceKey = `voice-count-${level.trainCars}`;
 
-        // Step 2: Voice "Con hãy đếm số toa tàu..."
+        // Bước 2: Voice "Con hãy đếm số toa tàu..."
         console.log('[SpeakScene] Step 2: Voice count trains');
+        this.startSpeakerActiveAnim();
+        this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
         AudioManager.playWithCallback('voice-dem-toa-tau', () => {
 
-            // Step 3: Ngón tay chỉ từng toa + voice đếm (1, 2, 3... theo level)
+            // Bước 3: Ngón tay lướt qua từng toa + voice đếm (1, 2, 3... theo level)
             console.log(`[SpeakScene] Step 3: Finger sweep level ${this.currentLevel}`);
             this.readingFinger.countForLevel(this.currentLevel);
+
+            this.startSpeakerActiveAnim();
+            this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
             AudioManager.playWithCallback(countVoiceKey, () => {
 
-                // Step 4: Voice "Nhấn mic"
+                // Bước 4: Voice "Bây giờ bé hãy nhấn vào mic..."
                 console.log('[SpeakScene] Step 4: Voice press mic');
+                this.startSpeakerActiveAnim();
+                this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
                 AudioManager.playWithCallback('voice-nhan-mic', () => {
 
-                    // Step 5: Show mic + hand → ready
+                    // Bước 5: Hiện nút mic + bàn tay gọi ý → sẵn sàng
                     console.log('[SpeakScene] Step 5: Show mic, waiting');
+                    this.stopSpeakerActiveAnim();
+                    this.speakUI.stopSpeakerAnimation();
                     this.showMicWithHint();
                 });
             });
@@ -268,20 +313,20 @@ export default class SpeakScene extends SceneBase {
     }
 
     /**
-     * Show mic button with hand hint
+     * Hiện nút mic cùng với gợi ý bàn tay
      */
     private showMicWithHint(): void {
         this.isMicVisible = true;
 
-        // Show mic with animation
+        // Hiện mic với hoạn ảnh (animation)
         this.speakUI.showMicAnimation(this.ui.microBtn);
 
-        // Hand hint to mic after short delay
+        // Bàn tay chỉ thẳng vào mic sau một khoảng trễ ngắn
         this.time.delayedCall(500, () => {
             this.animateHandHintTo(this.ui.microBtn.x, this.ui.microBtn.y);
         });
 
-        // Start idle timer
+        // Bắt đầu đếm thời gian nhàn rỗi (idle timer) để gợi ý lại
         this.time.delayedCall(2000, () => {
             if (this.isGameActive && !this.isRecordingActive) {
                 this.idleManager.start();
@@ -290,11 +335,11 @@ export default class SpeakScene extends SceneBase {
     }
 
     // ========================================================================
-    // REGION: INTERACTION HANDLERS
+    // KHU VỰC: KHỚP NỐI TƯƠNG TÁC (INTERACTION HANDLERS)
     // ========================================================================
 
     /**
-     * When child clicks Mic
+     * Khi bé nhấn vào phần Mic
      */
     private onMicroClick(): void {
         if (!this.isGameActive || !this.isMicVisible || this.isRecordingActive) return;
@@ -304,66 +349,107 @@ export default class SpeakScene extends SceneBase {
         this.idleManager.stop();
         this.isRecordingActive = true;
 
-        // Switch mascot to recording
+        this.stopSpeakerActiveAnim();
+        this.speakUI.stopSpeakerAnimation();
+
+        // Chuyển mascot sang tư thế ghi âm
         this.stopAllMascots();
         this.mascotRecording.play();
 
-        // Start recording via SpeakVoice (handles glow + tint + pulse)
+        // Bắt đầu quy trình ghi âm qua SpeakVoice (kèm các hiệu ứng glow, bóng quanh mic)
         this.speakVoice.startRecording();
     }
 
     /**
-     * When child clicks Speaker (replay instructions)
+     * Khi bé nhấn vào phần Loa (để nghe lại hướng dẫn)
      */
     private onSpeakerClick(): void {
         if (!this.isGameActive || this.isRecordingActive) return;
 
-        console.log('[SpeakScene] Speaker clicked');
+        console.log('[SpeakScene] Loa được click');
         this.resetIdleState();
         this.idleManager.stop();
 
-        // Button press animation
-        this.speakUI.speakerPressEffect(this.ui.speakerBtn);
+        // Ẩn tay gợi ý đang chỉ vào loa
+        this.speakUI.destroyCurrentHandHint();
 
-        // Replay instruction sequence
+        // Dừng animation cũ (nếu có)
+        this.stopSpeakerActiveAnim();
+        this.speakUI.stopSpeakerAnimation();
+
+        // BẮT ĐẦU animation loa rung + sóng âm (chỉ khi click mới có)
+        this.startSpeakerActiveAnim();
+        this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+
+        // Phát hướng dẫn đếm toa tàu
         this.playInstructionSequence();
+    }
+    private startSpeakerActiveAnim(): void {
+        if (this.speakerActiveTween) return;
+        const CFG = GameConstants.SPEAK_SCENE;
+        this.speakerActiveTween = this.tweens.add({
+            targets: this.ui.speakerBtn,
+            scale: CFG.SPEAKER.SCALE + 0.1,
+            duration: 400,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
+    }
+
+    private stopSpeakerActiveAnim(): void {
+        if (this.speakerActiveTween) {
+            this.speakerActiveTween.stop();
+            this.speakerActiveTween = null;
+        }
+        this.ui.speakerBtn.setScale(GameConstants.SPEAK_SCENE.SPEAKER.SCALE);
     }
 
     // ========================================================================
-    // REGION: RECORDING CALLBACKS
+    // KHU VỰC: PHẢN HỒI GHI ÂM (RECORDING CALLBACKS)
     // ========================================================================
 
     /**
-     * When recording completes successfully
+     * Khi quá trình ghi âm kết thúc thành công
      */
     private async onRecordingComplete(audioBlob: Blob): Promise<void> {
         console.log(`[SpeakScene] Recording complete, size: ${(audioBlob.size / 1024).toFixed(1)}KB`);
 
-        // Switch mascot to processing
+        // Đổi trạng thái mascot sang đang xử lý logic
         this.stopAllMascots();
         this.mascotProcessing.play();
 
-        // Send to API
-        const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
-        const speechResult = await this.voiceHandler.sendToAPI(audioBlob, level.trainCars);
+        try {
+            // Gửi dữ liệu âm thanh tới Backend/API
+            const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
+            const speechResult = await VoiceHandler.sendToBackend(audioBlob, String(level.trainCars));
 
-        // Stop processing mascot
-        this.mascotProcessing.stop();
+            // Kết thúc hiệu ứng mascot xử lý
+            this.mascotProcessing.stop();
 
-        // Reset recording UI
-        this.speakVoice.resetToIdle();
-        this.isRecordingActive = false;
+            // Khôi phục lại trạng thái giao diện ghi âm
+            this.speakVoice.resetToIdle();
+            this.isRecordingActive = false;
 
-        if (speechResult.success && speechResult.spokenNumber !== undefined) {
-            this.checkAnswer(speechResult.spokenNumber, level.trainCars);
-        } else {
-            console.warn('[SpeakScene] API error:', speechResult.error);
-            this.showResult(false, 'Thử lại nhé!');
+            // Phân tích kết quả: Cố gắng lấy số từ lời nói
+            const spokenNumber = parseInt(speechResult.transcript, 10);
+            if (!isNaN(spokenNumber)) {
+                this.checkAnswer(spokenNumber, level.trainCars);
+            } else {
+                console.warn('[SpeakScene] Không nhận diện được số từ bản lời nói (transcript):', speechResult.transcript);
+                this.showResult(false, 'Thử lại nhé!');
+            }
+        } catch (e) {
+            console.error('[SpeakScene] API error:', e);
+            this.mascotProcessing.stop();
+            this.speakVoice.resetToIdle();
+            this.isRecordingActive = false;
+            this.showResult(false, 'Lỗi kết nối, thử lại nhé!');
         }
     }
 
     /**
-     * When recording fails
+     * Khi việc ghi âm gặp sự cố lỗi
      */
     private onRecordingError(error: string): void {
         console.warn('[SpeakScene] Recording error:', error);
@@ -374,23 +460,23 @@ export default class SpeakScene extends SceneBase {
     }
 
     // ========================================================================
-    // REGION: RESULTS
+    // KHU VỰC: CÁC TIẾN TRÌNH KẾT QUẢ (RESULTS)
     // ========================================================================
 
     /**
-     * Check answer
+     * Chức năng kiểm tra đáp án
      */
     private checkAnswer(spoken: number, expected: number): void {
         const isCorrect = spoken === expected;
         console.log(`[SpeakScene] Said: ${spoken}, Expected: ${expected} → ${isCorrect ? '✅' : '❌'}`);
 
         if (isCorrect) {
-            // Correct! Show happy mascot
+            // Đáp án đúng! Hiện mascot vui mừng
             this.stopAllMascots();
             this.mascotHappy.play();
             this.showResult(true, `🎉 Đúng rồi! ${expected} toa tàu!`);
         } else {
-            // Wrong! Show sad mascot
+            // Đáp án sai! Hiện mascot đang buồn
             this.stopAllMascots();
             this.mascotSad.play();
 
@@ -405,22 +491,22 @@ export default class SpeakScene extends SceneBase {
     }
 
     /**
-     * Show result text
+     * Hiện văn bản kèm âm thanh thông báo kết quả lên màn hình
      */
     private showResult(isCorrect: boolean, message: string): void {
-        // SFX
+        // Lệnh phát SFX (hiệu ứng âm thanh)
         try {
             AudioManager.play(isCorrect ? 'sfx-correct' : 'sfx-wrong');
         } catch (e) { /* ignore */ }
 
-        // Show result text
+        // Mở chuỗi kết quả (Văn bản / UI) hiện chữ
         this.speakUI.showResult(this.ui.resultText, isCorrect, message);
 
-        // Next action
+        // Kế hoạch hành động kế tiếp phụ thuộc vào timeout config
         const TIMING = GameConstants.SPEAK_SCENE.TIMING;
 
         if (isCorrect) {
-            // Correct → next level after delay
+            // Đáp án Đúng → Chuyển sang level tiếp theo sau 1 khoảng thời gian Delay
             this.time.delayedCall(TIMING.DELAY_NEXT_LEVEL, () => {
                 this.mascotHappy.stop();
                 this.transitionToNextLevel();
@@ -428,13 +514,13 @@ export default class SpeakScene extends SceneBase {
         } else {
             const maxRetries = GameConstants.VOICE_RECORDING.MAX_RETRIES;
             if (this.retryCount >= maxRetries) {
-                // Out of retries → next level
+                // Đã thử lại quá nhiều lần → Sang level tiếp theo
                 this.time.delayedCall(TIMING.DELAY_NEXT_LEVEL, () => {
                     this.mascotSad.stop();
                     this.transitionToNextLevel();
                 });
             } else {
-                // Retry
+                // Thử lại thông thường
                 this.time.delayedCall(GameConstants.VOICE_RECORDING.RETRY_DELAY, () => {
                     this.mascotSad.stop();
                     this.showMascotIdle();
@@ -447,7 +533,7 @@ export default class SpeakScene extends SceneBase {
     }
 
     /**
-     * Transition to next level
+     * Hiệu ứng mờ chuyển cảnh (transition) sang màn chơi tiếp theo
      */
     private transitionToNextLevel(): void {
         const targets = [this.ui.trainImage, this.ui.microBtn, this.ui.speakerBtn, this.ui.resultText];
@@ -463,11 +549,12 @@ export default class SpeakScene extends SceneBase {
     }
 
     /**
-     * All 5 levels complete
+     * Đã hoàn thành trọn vẹn toàn bộ các levels của Game
      */
     private onAllLevelsComplete(): void {
         console.log('[SpeakScene] All 5 levels complete!');
         this.stopAllMascots();
+        // Chuyển tới màn hình kết thúc Game (EndGame)
         this.scene.start(SceneKeys.EndGame);
     }
 }

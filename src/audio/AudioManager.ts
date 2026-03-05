@@ -23,7 +23,7 @@ const SOUND_MAP: Record<string, SoundConfig> = {
     // ---- Giọng hướng dẫn (Prompt Voice) ----
     'intro-speak': { src: `${BASE_PATH}prompt/intro-speak.mp3`, volume: 1.0 },
     'voice-dem-toa-tau': { src: `${BASE_PATH}prompt/con_hay_dem_so_toa_tau_trong_buc_tranh_cung_co_426daf0c-e8ca-416e-b0dd-742ec22fa969.mp3`, volume: 1.0 },
-    'voice-toa-thu-nhat': { src: `${BASE_PATH}prompt/mot_6460f7fb-6eff-4ad1-aca4-effe646d1535.mp3`, volume: 1.0 },
+    'voice-toa-thu-nhat': { src: `${BASE_PATH}prompt/1.mp3`, volume: 1.0 },
     'voice-nhan-mic': { src: `${BASE_PATH}prompt/bay_gio_be_hay_nhan_vao_mic_de_doc_lai_nhe_23085126-98aa-4885-a80e-19013fb32617.mp3`, volume: 1.0 },
 
     // ---- Voice đếm toa tàu theo level ----
@@ -32,12 +32,9 @@ const SOUND_MAP: Record<string, SoundConfig> = {
     'voice-count-3': { src: `${BASE_PATH}prompt/1_2_3.mp3`, volume: 1.0 },
     'voice-count-4': { src: `${BASE_PATH}prompt/1_2_3_4.mp3`, volume: 1.0 },
     'voice-count-5': { src: `${BASE_PATH}prompt/1_2_3_4_5.mp3`, volume: 1.0 },
-    'intro-voice': { src: `${BASE_PATH}prompt/IntroVoice.mp3`, volume: 1.0 },
-    'voice-speaking': { src: `${BASE_PATH}prompt/Speak.mp3`, volume: 1.0 },
-    'intro-underlinechar': { src: `${BASE_PATH}prompt/IntroUnderlineChar.mp3`, volume: 1.0 },
-    'voice-g2-quaduahau': { src: `${BASE_PATH}prompt/G2_QuaDuaHau.mp3`, volume: 1.0 },
-    'voice-g2-quadua': { src: `${BASE_PATH}prompt/G2_QuaDua.mp3`, volume: 1.0 },
-    'voice-g2-quadautay': { src: `${BASE_PATH}prompt/G2_QuaDauTay.mp3`, volume: 1.0 },
+    'intro-voice': { src: `${BASE_PATH}prompt/intro-speak.mp3`, volume: 1.0 },
+    // 'voice-speaking': { src: `${BASE_PATH}prompt/Speak.mp3`, volume: 1.0 },
+
 
     // ---- Hướng dẫn từng dòng (Line Prompts) ----
     // Các file này chưa được cung cấp đủ nên comment ra để tránh tải lỗi

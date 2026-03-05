@@ -23,7 +23,7 @@ export class SpeakVoice {
     private volumeBar: Phaser.GameObjects.Graphics;
     private callbacks: SpeakVoiceCallbacks;
 
-    // Line-by-line recording state
+    // Quản lý trạng thái ghi âm cho từng dòng câu hỏi/đáp án
     private currentLineIndex: number = 0;
     private recordingTimeout: Phaser.Time.TimerEvent | null = null;
 
@@ -138,7 +138,7 @@ export class SpeakVoice {
 
         // Trả về blob cho SpeakScene xử lý (gửi API async)
         this.callbacks.onRecordingComplete({
-            score: 0,  // Score sẽ được tính bởi LineScoreManager
+            score: 0,  // Điểm số sẽ được xử lý tính toán bên trong LineScoreManager
             status: 'pending',
             passed: false,
             audioBlob: audioBlob
@@ -186,16 +186,16 @@ export class SpeakVoice {
             return;
         }
 
-        // Normal mode: bắt đầu ghi âm thực
+        // Chế độ chơi bình thường: bật mic bắt đầu thu âm
         this.voiceHandler.toggle();
 
-        // Set timeout cho max record time per line
+        // Đặt đồng hồ đếm ngược với thời gian ghi âm tối đa cho một dòng
         this.recordingTimeout = this.scene.time.delayedCall(
             CFG.MAX_RECORD_TIME_PER_LINE,
             () => {
-                console.log(`[SpeakVoice] Line ${lineIndex + 1} max time reached, stopping...`);
+                console.log(`[SpeakVoice] Dòng ${lineIndex + 1} vượt quá thời gian thu âm, đang dừng lại...`);
                 if (this.voiceHandler.isRecording) {
-                    this.voiceHandler.toggle(); // Stop recording
+                    this.voiceHandler.toggle(); // Dừng thu âm
                 }
             }
         );
@@ -211,7 +211,7 @@ export class SpeakVoice {
 
         console.log(`[SpeakVoice] TEST_MODE: Loading audio from ${testAudioPath}`);
 
-        // Simulate recording indicator
+        // Hiện hiệu ứng vàng nhấp nháy giả lập trạng thái đang thu âm
         this.microBtn.setTint(0xFFFF00);
         this.showRecordingIndicator(0xFFFF00);
 
@@ -224,7 +224,7 @@ export class SpeakVoice {
             const audioBlob = await response.blob();
             console.log(`[SpeakVoice] TEST_MODE: Loaded audio, size: ${audioBlob.size} bytes - SENDING API NOW`);
 
-            // GỬI CALLBACK NGAY LẬP TỨC - API sẽ được gọi song song với animation
+            // GỬI CALLBACK NGAY LẬP TỨC - API sẽ được gọi song song với animation đang chạy
             this.callbacks.onRecordingComplete({
                 score: 0,
                 status: 'pending',
@@ -232,7 +232,7 @@ export class SpeakVoice {
                 audioBlob: audioBlob
             });
 
-            // Animation indicator tiếp tục chạy trong background
+            // Hiển thị trạng thái đang thu âm tiếp tục chớp nháy ở background để user không bị cụt hứng
             const LINES = GameConstants.SPEAK_SCENE.READING_FINGER.LINES;
             const lineDuration = LINES[lineIndex]?.duration || 2000;
 
@@ -257,7 +257,7 @@ export class SpeakVoice {
     }
 
     /**
-     * Cleanup
+     * Dọn dẹp bộ nhớ (Cleanup)
      */
     destroy(): void {
         this.voiceHandler?.destroy();

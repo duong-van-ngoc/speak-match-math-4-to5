@@ -120,15 +120,14 @@ export default abstract class SceneBase extends Phaser.Scene {
     /** Khởi động game sau khi đảm bảo audio đã sẵn sàng */
     protected startWithAudio(onStart: () => void): void {
         AudioManager.loadAll().then(() => {
-            // Tạm thời bỏ qua lock của Audio theo yêu cầu của user
-            // Force unlock
-            AudioManager.unlockAudio();
-
-            // Xung kích sự kiện click ảo để lừa trình duyệt mở khóa AudioContext
-            document.body.click();
-            document.dispatchEvent(new MouseEvent('click'));
-
-            onStart();
+            if (AudioManager.isUnlocked) {
+                onStart();
+            } else {
+                this.input.once('pointerdown', () => {
+                    AudioManager.unlockAudio();
+                    onStart();
+                });
+            }
         });
     }
 

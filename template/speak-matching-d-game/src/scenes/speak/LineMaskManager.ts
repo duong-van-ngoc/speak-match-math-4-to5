@@ -77,12 +77,12 @@ export class LineMaskManager {
      * Reset states: dòng 0 = current, còn lại = pending
      */
     resetStates(): void {
-        this.currentLineIndex = 0;
+        this.currentLineIndex = 3;
         this.lineStates = [];
 
         const total = GameConstants.SPEAK_SCENE.LINE_READING.TOTAL_LINES;
         for (let i = 0; i < total; i++) {
-            this.lineStates.push(i === 0 ? 'current' : 'pending');
+            this.lineStates.push(i === 3 ? 'current' : 'pending');
         }
     }
 

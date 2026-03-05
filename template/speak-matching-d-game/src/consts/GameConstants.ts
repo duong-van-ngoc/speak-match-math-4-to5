@@ -135,23 +135,29 @@ export const GameConstants = {
             RECORDING_DURATION: 3000,
             DELAY_NEXT_SCENE: 3500,
         },
-        // --- READING FINGER (ngón tay chỉ đọc text) ---
+        // --- READING FINGER (ngón tay chỉ đọc) ---
         READING_FINGER: {
             ENABLED: true,              // Bật/tắt hiệu ứng
             SCALE: 0.5,                 // Scale của ngón tay
             SPEED: 150,                 // Pixels per second (càng nhỏ càng chậm)
             LINE_DELAY: 900,            // Delay giữa các dòng (ms)
             TRANSITION_DURATION: 300,   // Thời gian di chuyển từ cuối dòng này sang đầu dòng kế (ms)
+            NODE_DELAY: 200,            // Thời gian dừng lại ở mỗi node (toa tàu) (ms)
 
-            // 6 dòng text - mỗi dòng có: startX, endX, y (tỉ lệ 0-1), duration (ms)
-            // Fix: Điều chỉnh Y của dòng 4, 5, 6 để tránh bị lệch
+            // 5 dòng tương ứng với 5 màn (từ 1 toa đến 5 toa)
+            // nodes là mảng các vị trí X (tỉ lệ 0-1) tâm của từng toa tàu mà ngón tay sẽ chỉ vào
+            // y là vị trí Y (tỉ lệ 0-1) của mép dưới tàu (ví dụ 0.6)
             LINES: [
-                { startX: 0.21, endX: 0.43, y: 0.6, duration: 1800 },
-                { startX: 0.21, endX: 0.48, y: 0.655, duration: 1800 },
-                { startX: 0.21, endX: 0.52, y: 0.715, duration: 1300 },
-                { startX: 0.21, endX: 0.51, y: 0.78, duration: 2200 }, // Tăng Y từ 0.77 -> 0.79
-                { startX: 0.21, endX: 0.43, y: 0.83, duration: 1800 }, // Tăng Y từ 0.83 -> 0.85
-                { startX: 0.21, endX: 0.43, y: 0.90, duration: 1700 }, // Tăng Y từ 0.90 -> 0.91
+                // Màn 1: 1 toa
+                { startX: 0.5, endX: 0.55, y: 0.6, duration: 1000, nodes: [0.5] as number[] },
+                // Màn 2: 2 toa
+                { startX: 0.45, endX: 0.60, y: 0.6, duration: 1500, nodes: [0.45, 0.55] as number[] },
+                // Màn 3: 3 toa
+                { startX: 0.4, endX: 0.65, y: 0.6, duration: 2000, nodes: [0.4, 0.5, 0.6] as number[] },
+                // Màn 4: 4 toa
+                { startX: 0.35, endX: 0.70, y: 0.6, duration: 2500, nodes: [0.35, 0.45, 0.55, 0.65] as number[] },
+                // Màn 5: 5 toa
+                { startX: 0.3, endX: 0.75, y: 0.6, duration: 3000, nodes: [0.3, 0.4, 0.5, 0.6, 0.7] as number[] }
             ]
         },
         // --- SCORE BOARD (Bảng điểm/Loading) ---
@@ -190,7 +196,7 @@ export const GameConstants = {
         },
         // --- LINE READING (Đọc từng dòng + Async scoring) ---
         LINE_READING: {
-            TOTAL_LINES: 6,
+            TOTAL_LINES: 5,
             MAX_RECORD_TIME_PER_LINE: 6000,  // 6s max mỗi dòng
             KEYWORDS_PER_LINE: [
                 'Lúa ngô là cô đậu nành',

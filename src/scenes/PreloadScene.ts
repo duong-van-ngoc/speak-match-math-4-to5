@@ -13,11 +13,11 @@ export default class PreloadScene extends Phaser.Scene {
         // ========================================
         // 1. UI Dùng Chung
         // ========================================
-        this.load.image(TextureKeys.BtnReset, 'assets/images/ui/reload.png');
+        this.load.image(TextureKeys.BtnReset, 'assets/images/ui/btn_reset.png');
         this.load.image(TextureKeys.S1_Board, 'assets/images/board/board.png');
         this.load.image(TextureKeys.Ui_Mic, 'assets/images/ui/mic.png');
         this.load.image(TextureKeys.Ui_Speaker, 'assets/images/ui/speaker.png');
-        this.load.image(TextureKeys.Ui_Score, 'assets/images/ui/score.png');
+        // this.load.image(TextureKeys.Ui_Score, 'assets/images/ui/score.png');
         this.load.image(TextureKeys.Speak_Banner, 'assets/images/ui/banner.png');
         this.load.image(TextureKeys.Hand, 'assets/images/ui/hand.png');
         this.load.image(TextureKeys.HandHint, 'assets/images/ui/hand.png'); // Same image as Hand
@@ -53,7 +53,7 @@ export default class PreloadScene extends Phaser.Scene {
         // ========================================
         // 5. UnderlineScene
         // ========================================
-        this.load.image(TextureKeys.Underline_Banner, 'assets/images/UnderlineScene/BAN.png');
+        // this.load.image(TextureKeys.Underline_Banner, 'assets/images/UnderlineScene/BAN.png');
 
         // ========================================
         // 6. Ảnh Điểm Số (4-10)
@@ -73,7 +73,8 @@ export default class PreloadScene extends Phaser.Scene {
     }
 
     create() {
-        // Bắt đầu từ SpeakScene
+        // Bỏ qua tương tác "Chạm để bắt đầu" theo yêu cầu
+        // LƯU Ý: Nếu không có Click, âm thanh tự động (BGM, intro) sẽ bị trình duyệt chặn!
         this.scene.start(SceneKeys.SpeakScene);
     }
 }

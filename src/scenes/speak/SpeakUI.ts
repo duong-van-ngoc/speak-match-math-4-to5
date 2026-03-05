@@ -33,7 +33,7 @@ export class SpeakUI {
     private w: number;
     private h: number;
 
-    // Hand hint tracking
+    // Theo dõi bàn tay gợi ý hiện hành
     private currentHandHint: Phaser.GameObjects.Image | null = null;
 
     constructor(scene: Phaser.Scene) {
@@ -43,7 +43,7 @@ export class SpeakUI {
     }
 
     // ==============================
-    // CREATE ALL UI
+    // TẠO TOÀN BỘ GIAO DIỆN
     // ==============================
 
     /**
@@ -68,7 +68,7 @@ export class SpeakUI {
             .setScale(CFG.TRAIN.SCALE)
             .setDepth(10);
 
-        // 4. SPEAKER BUTTON
+        // 4. NÚT LOA (Sẽ tương tác để đọc lại câu lệnh)
         const speakerBtn = this.scene.add.image(
             this.w * CFG.SPEAKER.X,
             this.h * CFG.SPEAKER.Y,
@@ -79,7 +79,7 @@ export class SpeakUI {
             .setDepth(50)
             .on('pointerdown', callbacks.onSpeakerClick);
 
-        // 5. MICRO BUTTON (ẩn ban đầu)
+        // 5. NÚT MIC (Hiện đang bị ẩn ở trạng thái ban đầu)
         const microBtn = this.scene.add.image(
             this.w * CFG.MICRO.X,
             this.h * CFG.MICRO.Y,
@@ -91,11 +91,11 @@ export class SpeakUI {
             .setDepth(50)
             .on('pointerdown', callbacks.onMicroClick);
 
-        // 6. VOLUME BAR (for recording visual)
+        // 6. THANH ÂM LƯỢNG (Dành cho hiệu ứng khi đang ghi âm)
         const volumeBar = this.scene.add.graphics().setDepth(50);
 
-        // 7. RESULT TEXT
-        const resultText = this.scene.add.text(this.w / 2, this.h * 0.6, '', {
+        // 7. CHỮ KẾT QUẢ (Thông báo đúng sai)
+        const resultText = this.scene.add.text(this.w / 2, this.h * 0.25, '', {
             fontSize: CFG.RESULT.FONT_SIZE,
             fontFamily: 'Fredoka, sans-serif',
             color: CFG.RESULT.CORRECT_COLOR,
@@ -111,11 +111,11 @@ export class SpeakUI {
     }
 
     // ==============================
-    // MIC ANIMATION
+    // HIỆU ỨNG CHO NÚT MIC
     // ==============================
 
     /**
-     * Show mic with animation (fade in + bounce)
+     * Hiển thị nút mic kèm hiệu ứng nảy (bounce)
      */
     showMicAnimation(microBtn: Phaser.GameObjects.Image): void {
         const CFG = GameConstants.SPEAK_SCENE;
@@ -129,11 +129,11 @@ export class SpeakUI {
     }
 
     // ==============================
-    // TRAIN ANIMATION
+    // HIỆU ỨNG TÀU HỎA
     // ==============================
 
     /**
-     * Show train with slide-in animation
+     * Hiển thị tàu hỏa trượt vào màn hình
      */
     showTrainAnimation(trainImage: Phaser.GameObjects.Image, trainKey: string, onComplete?: () => void): void {
         const CFG = GameConstants.SPEAK_SCENE;
@@ -148,18 +148,18 @@ export class SpeakUI {
             targets: trainImage,
             alpha: 1,
             x: targetX,
-            duration: 800,
+            duration: 900,
             ease: 'Back.easeOut',
             onComplete: () => onComplete?.()
         });
     }
 
     // ==============================
-    // HAND HINT ANIMATIONS
+    // CÁC HIỆU ỨNG BÀN TAY GỢI Ý
     // ==============================
 
     /**
-     * Show hand pointing to speaker button
+     * Hiển thị bàn tay chỉ vào nút loa
      */
     showHandToSpeaker(speakerBtn: Phaser.GameObjects.Image): void {
         this.destroyCurrentHandHint();
@@ -192,7 +192,7 @@ export class SpeakUI {
     }
 
     /**
-     * Show hand pointing to mic button
+     * Hiển thị bàn tay chỉ vào nút mic
      */
     showHandToMic(microBtn: Phaser.GameObjects.Image): void {
         this.destroyCurrentHandHint();
@@ -225,7 +225,7 @@ export class SpeakUI {
     }
 
     /**
-     * Show hand pointing to first train car
+     * Hiển thị bàn tay chỉ vào toa tàu đầu tiên
      */
     showHandToTrain(): void {
         this.destroyCurrentHandHint();
@@ -265,11 +265,11 @@ export class SpeakUI {
             }
         });
 
-        // Don't save as currentHandHint since it auto-destroys
+        // Không gán thành currentHandHint vì nó sẽ tự động bị hũy sau khi xong hiệu ứng
     }
 
     /**
-     * Destroy current hand hint
+     * Hủy bỏ quá trình hiển thị bàn tay gợi ý hiện tại
      */
     destroyCurrentHandHint(): void {
         if (this.currentHandHint) {
@@ -280,11 +280,11 @@ export class SpeakUI {
     }
 
     // ==============================
-    // RESULT DISPLAY
+    // THÔNG BÁO KẾT QUẢ
     // ==============================
 
     /**
-     * Show result text (correct/wrong)
+     * Hiển thị thông báo khi bé trả lời (đúng hay sai)
      */
     showResult(resultText: Phaser.GameObjects.Text, isCorrect: boolean, message: string): void {
         const CFG = GameConstants.SPEAK_SCENE.RESULT;
@@ -304,7 +304,7 @@ export class SpeakUI {
     }
 
     /**
-     * Hide result text
+     * Ẩn thông báo kết quả
      */
     hideResult(resultText: Phaser.GameObjects.Text): void {
         this.scene.tweens.add({
@@ -317,11 +317,61 @@ export class SpeakUI {
     }
 
     // ==============================
-    // SPEAKER ANIMATION
+    // HIỆU ỨNG LOA SÓNG ÂM
     // ==============================
 
+    private speakAnimSprite: Phaser.GameObjects.Image | null = null;
+    private speakAnimTimer: Phaser.Time.TimerEvent | null = null;
+    private speakAnimFrame: number = 0;
+
     /**
-     * Speaker button press effect
+     * Bật sóng âm bay lơ lửng ngay cạnh nút Loa
+     */
+    startSpeakerAnimation(speakerBtn: Phaser.GameObjects.Image): void {
+        this.stopSpeakerAnimation();
+
+        const frames = [
+            TextureKeys.Speak_AniSpeak1,
+            TextureKeys.Speak_AniSpeak2,
+            TextureKeys.Speak_AniSpeak3
+        ];
+        this.speakAnimFrame = 0;
+
+        if (this.scene.textures.exists(frames[0])) {
+            this.speakAnimSprite = this.scene.add.image(speakerBtn.x + 50, speakerBtn.y, frames[0])
+                .setOrigin(0, 0.5)
+                .setScale(speakerBtn.scale)
+                .setDepth(speakerBtn.depth - 1)
+                .setAlpha(1);
+        }
+
+        this.speakAnimTimer = this.scene.time.addEvent({
+            delay: GameConstants.SPEAK_SCENE.SPEAK_ANIMATION.FRAME_DURATION,
+            callback: () => {
+                if (!this.speakAnimSprite) return;
+                this.speakAnimFrame = (this.speakAnimFrame + 1) % frames.length;
+                this.speakAnimSprite.setTexture(frames[this.speakAnimFrame]);
+            },
+            loop: true
+        });
+    }
+
+    /**
+     * Dừng hiệu ứng sóng âm đang văng ra
+     */
+    stopSpeakerAnimation(): void {
+        if (this.speakAnimTimer) {
+            this.speakAnimTimer.destroy();
+            this.speakAnimTimer = null;
+        }
+        if (this.speakAnimSprite) {
+            this.speakAnimSprite.destroy();
+            this.speakAnimSprite = null;
+        }
+    }
+
+    /**
+     * Hiệu ứng khi em bé bấm vào nút loa (sẽ co nhẹ lại 1 xíu)
      */
     speakerPressEffect(speakerBtn: Phaser.GameObjects.Image): void {
         const CFG = GameConstants.SPEAK_SCENE;
