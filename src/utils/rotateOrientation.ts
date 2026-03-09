@@ -95,14 +95,9 @@ export function playVoiceLocked(
         currentVoiceKey = null;
 
         const id = AudioManager.play('voice-rotate');
-        if (id === undefined) {
-            console.warn(
-                `[Rotate] Không phát được audio key="voice-rotate" (Howler).`
-            );
-            return;
+        if (id !== undefined) {
+            currentVoiceKey = 'voice-rotate';
         }
-
-        currentVoiceKey = 'voice-rotate';
         return;
     }
 

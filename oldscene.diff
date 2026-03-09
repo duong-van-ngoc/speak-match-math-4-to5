@@ -1,0 +1,1035 @@
+﻿commit e1a5ca943536337aa1c3ef5f9d44cb6a27854b78
+Author: Duong Van Ngoc <duongvanngoc150903@gmail.com>
+Date:   Thu Mar 5 15:49:48 2026 +0700
+
+    fix: giao diß╗çn
+
+diff --git a/src/scenes/speak/SpeakScene.ts b/src/scenes/speak/SpeakScene.ts
+index 13ffe19..b4d6965 100644
+--- a/src/scenes/speak/SpeakScene.ts
++++ b/src/scenes/speak/SpeakScene.ts
+@@ -16,6 +16,7 @@ import { GameConstants } from '../../consts/GameConstants';
+ import AudioManager from '../../audio/AudioManager';
+ import { AnimationFactory } from '../../utils/AnimationFactory';
+ import { changeBackground } from '../../utils/BackgroundManager';
++import { playVoiceLocked } from '../../utils/rotateOrientation';
+ 
+ // Helper modules
+ import { SpeakUI, type SpeakUIElements } from './SpeakUI';
+@@ -26,34 +27,35 @@ import { DebugGrid } from '../../utils/DebugGrid';
+ 
+ export default class SpeakScene extends SceneBase {
+     // ========================================================================
+-    // REGION: PROPERTIES
++    // KHU Vß╗░C: THUß╗ÿC T├ìNH (PROPERTIES)
+     // ========================================================================
+ 
+-    // UI Elements (from SpeakUI)
++    // C├íc th├ánh phß║ºn UI (kß║┐ thß╗½a tß╗½ SpeakUI)
+     private ui!: SpeakUIElements;
+ 
+-    // Helpers
++    // C├íc lß╗¢p hß╗ù trß╗ú (Helpers)
+     private speakUI!: SpeakUI;
+     private speakVoice!: SpeakVoice;
+     private readingFinger!: ReadingFinger;
+-    private voiceHandler!: VoiceHandler;
+     private debugGrid!: DebugGrid;
+ 
+-    // Mascot Animations
++    // C├íc hoß║ít ß║únh cß╗ºa Mascot
+     private mascotRecording!: AnimationFactory;
+     private mascotProcessing!: AnimationFactory;
+     private mascotHappy!: AnimationFactory;
+     private mascotSad!: AnimationFactory;
+     private mascotIdle!: AnimationFactory;
+ 
+-    // State
++    // Quß║ún l├╜ trß║íng th├íi
+     private currentLevel: number = 0;
+     private retryCount: number = 0;
+     private isMicVisible: boolean = false;
+     private isRecordingActive: boolean = false;
+ 
++    private speakerActiveTween: Phaser.Tweens.Tween | null = null;
++
+     // ========================================================================
+-    // REGION: LIFECYCLE
++    // KHU Vß╗░C: V├ÆNG ─Éß╗£I (LIFECYCLE)
+     // ========================================================================
+ 
+     constructor() {
+@@ -83,7 +85,6 @@ export default class SpeakScene extends SceneBase {
+         this.debugGrid?.destroy();
+ 
+         this.readingFinger?.destroy();
+-        this.voiceHandler?.destroy();
+         this.mascotRecording?.destroy();
+         this.mascotProcessing?.destroy();
+         this.mascotHappy?.destroy();
+@@ -93,17 +94,14 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     // ========================================================================
+-    // REGION: SETUP
++    // KHU Vß╗░C: THIß║╛T Lß║¼P (SETUP)
+     // ========================================================================
+ 
+     private setupHelpers(): void {
+-        // VoiceHandler for API calls
+-        this.voiceHandler = new VoiceHandler();
+-
+-        // ReadingFinger for counting animation
++        // C├ái ─æß║╖t ReadingFinger phß╗Ñc vß╗Ñ hiß╗ân thß╗ï b├án tay ─æß║┐m toa
+         this.readingFinger = new ReadingFinger(this);
+ 
+-        // SpeakVoice for recording + mic UI
++        // C├ái ─æß║╖t SpeakVoice ─æß╗â xß╗¡ l├╜ logic ghi ├óm v├á UI cß╗ºa mic
+         this.speakVoice = new SpeakVoice(
+             this,
+             this.ui.microBtn,
+@@ -116,7 +114,7 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     /**
+-     * Register mascot animations BEFORE createUI
++     * Khß╗ƒi tß║ío c├íc Animation cß╗ºa Mascot TR╞»ß╗ÜC KHI tß║ío giao diß╗çn ch├¡nh
+      */
+     private setupMascotAnimations(): void {
+         const MASCOT = GameConstants.MASCOT_ANIMATIONS;
+@@ -140,9 +138,20 @@ export default class SpeakScene extends SceneBase {
+         this.retryCount = 0;
+ 
+         this.startWithAudio(() => {
++            // 1. Tß║ím tß║»t keyboard trong l├║c setup
++            if (this.input.keyboard) this.input.keyboard.enabled = false;
++
++            // 2. Hiß╗çn loa (speaker) NGAY Lß║¼P Tß╗¿C 
++            this.ui.speakerBtn.setVisible(true);
++            this.ui.speakerBtn.setAlpha(1);
++            this.showButtons();
++
++            // 3. Play BGM v├á ─æ├ính dß║Ñu active
+             this.playBgm();
+             this.isGameActive = true;
+-            this.showButtons();
++
++            // 4. Bß║»t ─æß║ºu tß║úi Level 0
++            // Viß╗çc ph├ít intro sß║╜ do startVoiceGuide ─æß║úm nhiß╗çm sau khi t├áu ─æ├ú tr╞░ß╗út ra.
+             this.startLevel(0);
+         });
+     }
+@@ -154,7 +163,7 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     // ========================================================================
+-    // REGION: MASCOT CONTROLLERS
++    // KHU Vß╗░C: ─ÉIß╗ÇU KHIß╗éN MASCOT
+     // ========================================================================
+ 
+     private stopAllMascots(): void {
+@@ -171,11 +180,11 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     // ========================================================================
+-    // REGION: GAME FLOW
++    // KHU Vß╗░C: LUß╗ÆNG TR├Æ CH╞áI (GAME FLOW)
+     // ========================================================================
+ 
+     /**
+-     * Start a level
++     * Khß╗ƒi ─æß╗Öng mß╗Öt m├án ch╞íi (level)
+      */
+     private startLevel(levelIndex: number): void {
+         const LEVELS = GameConstants.SPEAK_SCENE.LEVELS;
+@@ -192,75 +201,111 @@ export default class SpeakScene extends SceneBase {
+         const level = LEVELS[levelIndex];
+         console.log(`[SpeakScene] Level ${level.number}: ${level.trainCars} toa t├áu`);
+ 
+-        // Change background
++        // C├ái ─æß║╖t h├¼nh nß╗ün ph├╣ hß╗úp cho level
+         changeBackground(level.bg);
+ 
+-        // Hide old result + buttons
++        // ß║¿n kß║┐t quß║ú c┼⌐ v├á c├íc n├║t t─⌐nh tr╞░ß╗¢c ─æ├│
+         this.ui.resultText.setAlpha(0);
+         this.ui.microBtn.setAlpha(0);
+-        this.ui.speakerBtn.setAlpha(0);
+ 
+-        // Show mascot idle
++        // Chß╗ë ß║⌐n loa nß║┐u KH├öNG PHß║óI level 0 (V├¼ level 0 Loa ─æang cß║ºn hiß╗çn sß║╡n cho Intro)
++        if (levelIndex > 0) {
++            this.ui.speakerBtn.setAlpha(0);
++        }
++
++        // Hiß╗çn trß║íng th├íi nghß╗ë ti├¬u chuß║⌐n cß╗ºa mascot
+         this.showMascotIdle();
+ 
+-        // Show train with animation ΓåÆ then start voice guide
++        // Hiß╗ân thß╗ï t├áu tr╞░ß╗út v├áo bß║▒ng animation
+         this.speakUI.showTrainAnimation(this.ui.trainImage, level.trainKey, () => {
+             this.startVoiceGuide();
+         });
+     }
+ 
+     /**
+-     * Voice guide flow after train appears
++     * Quy tr├¼nh chß║íy luß╗ông Giß╗ìng n├│i h╞░ß╗¢ng dß║½n sau khi t├áu xuß║Ñt hiß╗çn
+      *
+-     * FLOW:
+-     * 1. Intro ΓåÆ "intro-speak" (only on first level)
+-     * 2. Voice "Con h├úy ─æß║┐m sß╗æ toa t├áu..."
+-     * 3. Hand chß╗ë toa + voice "Toa thß╗⌐ nhß║Ñt"
++     * TR├îNH Tß╗░ (FLOW):
++     * 1. Nhß║íc Intro ΓåÆ "intro-speak" (Chß╗ë chß║íy ß╗ƒ level 0)
++     * 2. Voice h╞░ß╗¢ng dß║½n "Con h├úy ─æß║┐m sß╗æ toa t├áu..."
++     * 3. B├án tay di chuyß╗ân chß╗ë toa + Voice ─æß║┐m "Toa thß╗⌐ nhß║Ñt,.."
+      * 4. Voice "B├óy giß╗¥ b├⌐ h├úy nhß║Ñn v├áo mic..."
+-     * 5. Hand chß╗ë mic ΓåÆ ready for mic
++     * 5. B├án tay chß╗ë v├áo mic ΓåÆ V├áo trß║íng th├íi sß║╡n s├áng nghi ├óm (ready for mic)
+      */
+     private startVoiceGuide(): void {
+         const TIMING = GameConstants.SPEAK_SCENE.TIMING;
+ 
++        if (this.currentLevel === 0) {
++            // Level 0: Ph├ít intro-speak ngay lß║¡p tß╗⌐c (sau khi t├áu ─æ├ú xuß║Ñt hiß╗çn)
++            console.log('[SpeakScene] Step 1: Ph├ít intro-speak');
++
++            // Bß║¡t hiß╗çu ß╗⌐ng loa rung
++            this.startSpeakerActiveAnim();
++            this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
++
++            AudioManager.playWithCallback('intro-speak', () => {
++                this.stopSpeakerActiveAnim();
++                this.speakUI.stopSpeakerAnimation();
++
++                // Hß║┐t intro -> HIß╗åN TAY CHß╗ê V├ÇO LOA
++                this.animateHandHintTo(this.ui.speakerBtn.x, this.ui.speakerBtn.y);
++
++                if (this.isGameActive) this.idleManager.start();
++                if (this.input.keyboard) this.input.keyboard.enabled = true;
++            });
++
++            return;
++        }
++
++        // C├íc level tiß║┐p theo
+         this.time.delayedCall(TIMING.DELAY_SHOW_MIC, () => {
+-            // Show buttons
++            // Hiß╗çn n├║t loa (─æß╗⌐ng y├¬n)
+             this.ui.speakerBtn.setAlpha(1);
+ 
+-            // Step 1: Play intro (only first time)
+-            if (this.currentLevel === 0) {
+-                console.log('[SpeakScene] Step 1: Play intro-speak');
+-                AudioManager.playWithCallback('intro-speak', () => {
+-                    this.playInstructionSequence();
+-                });
+-            } else {
+-                // Skip intro on subsequent levels, go straight to instructions
+-                this.playInstructionSequence();
+-            }
++            // Hiß╗çn tay chß╗ë loa lu├┤n, chß╗¥ b├⌐ click
++            this.time.delayedCall(100, () => {
++                this.speakUI.showHandToSpeaker(this.ui.speakerBtn);
++            });
++
++            this.time.delayedCall(2000, () => {
++                if (this.isGameActive) {
++                    this.idleManager.start();
++                }
++            });
+         });
+     }
+ 
+     /**
+-     * Play instructions: ─æß║┐m toa t├áu ΓåÆ chß╗ë toa ΓåÆ nhß║Ñn mic
++     * Chuß╗ùi h╞░ß╗¢ng dß║½n ph├ít: ─æß║┐m toa t├áu ΓåÆ chß╗ë h╞░ß╗¢ng ΓåÆ nhß║Ñn mic
+      */
+     private playInstructionSequence(): void {
+         const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
+         const countVoiceKey = `voice-count-${level.trainCars}`;
+ 
+-        // Step 2: Voice "Con h├úy ─æß║┐m sß╗æ toa t├áu..."
++        // B╞░ß╗¢c 2: Voice "Con h├úy ─æß║┐m sß╗æ toa t├áu..."
+         console.log('[SpeakScene] Step 2: Voice count trains');
++        this.startSpeakerActiveAnim();
++        this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+         AudioManager.playWithCallback('voice-dem-toa-tau', () => {
+ 
+-            // Step 3: Ng├│n tay chß╗ë tß╗½ng toa + voice ─æß║┐m (1, 2, 3... theo level)
++            // B╞░ß╗¢c 3: Ng├│n tay l╞░ß╗¢t qua tß╗½ng toa + voice ─æß║┐m (1, 2, 3... theo level)
+             console.log(`[SpeakScene] Step 3: Finger sweep level ${this.currentLevel}`);
+             this.readingFinger.countForLevel(this.currentLevel);
++
++            this.startSpeakerActiveAnim();
++            this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+             AudioManager.playWithCallback(countVoiceKey, () => {
+ 
+-                // Step 4: Voice "Nhß║Ñn mic"
++                // B╞░ß╗¢c 4: Voice "B├óy giß╗¥ b├⌐ h├úy nhß║Ñn v├áo mic..."
+                 console.log('[SpeakScene] Step 4: Voice press mic');
++                this.startSpeakerActiveAnim();
++                this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+                 AudioManager.playWithCallback('voice-nhan-mic', () => {
+ 
+-                    // Step 5: Show mic + hand ΓåÆ ready
++                    // B╞░ß╗¢c 5: Hiß╗çn n├║t mic + b├án tay gß╗ìi ├╜ ΓåÆ sß║╡n s├áng
+                     console.log('[SpeakScene] Step 5: Show mic, waiting');
++                    this.stopSpeakerActiveAnim();
++                    this.speakUI.stopSpeakerAnimation();
+                     this.showMicWithHint();
+                 });
+             });
+@@ -268,20 +313,20 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     /**
+-     * Show mic button with hand hint
++     * Hiß╗çn n├║t mic c├╣ng vß╗¢i gß╗úi ├╜ b├án tay
+      */
+     private showMicWithHint(): void {
+         this.isMicVisible = true;
+ 
+-        // Show mic with animation
++        // Hiß╗çn mic vß╗¢i hoß║ín ß║únh (animation)
+         this.speakUI.showMicAnimation(this.ui.microBtn);
+ 
+-        // Hand hint to mic after short delay
++        // B├án tay chß╗ë thß║│ng v├áo mic sau mß╗Öt khoß║úng trß╗à ngß║»n
+         this.time.delayedCall(500, () => {
+             this.animateHandHintTo(this.ui.microBtn.x, this.ui.microBtn.y);
+         });
+ 
+-        // Start idle timer
++        // Bß║»t ─æß║ºu ─æß║┐m thß╗¥i gian nh├án rß╗ùi (idle timer) ─æß╗â gß╗úi ├╜ lß║íi
+         this.time.delayedCall(2000, () => {
+             if (this.isGameActive && !this.isRecordingActive) {
+                 this.idleManager.start();
+@@ -290,11 +335,11 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     // ========================================================================
+-    // REGION: INTERACTION HANDLERS
++    // KHU Vß╗░C: KHß╗ÜP Nß╗ÉI T╞»╞áNG T├üC (INTERACTION HANDLERS)
+     // ========================================================================
+ 
+     /**
+-     * When child clicks Mic
++     * Khi b├⌐ nhß║Ñn v├áo phß║ºn Mic
+      */
+     private onMicroClick(): void {
+         if (!this.isGameActive || !this.isMicVisible || this.isRecordingActive) return;
+@@ -304,66 +349,107 @@ export default class SpeakScene extends SceneBase {
+         this.idleManager.stop();
+         this.isRecordingActive = true;
+ 
+-        // Switch mascot to recording
++        this.stopSpeakerActiveAnim();
++        this.speakUI.stopSpeakerAnimation();
++
++        // Chuyß╗ân mascot sang t╞░ thß║┐ ghi ├óm
+         this.stopAllMascots();
+         this.mascotRecording.play();
+ 
+-        // Start recording via SpeakVoice (handles glow + tint + pulse)
++        // Bß║»t ─æß║ºu quy tr├¼nh ghi ├óm qua SpeakVoice (k├¿m c├íc hiß╗çu ß╗⌐ng glow, b├│ng quanh mic)
+         this.speakVoice.startRecording();
+     }
+ 
+     /**
+-     * When child clicks Speaker (replay instructions)
++     * Khi b├⌐ nhß║Ñn v├áo phß║ºn Loa (─æß╗â nghe lß║íi h╞░ß╗¢ng dß║½n)
+      */
+     private onSpeakerClick(): void {
+         if (!this.isGameActive || this.isRecordingActive) return;
+ 
+-        console.log('[SpeakScene] Speaker clicked');
++        console.log('[SpeakScene] Loa ─æ╞░ß╗úc click');
+         this.resetIdleState();
+         this.idleManager.stop();
+ 
+-        // Button press animation
+-        this.speakUI.speakerPressEffect(this.ui.speakerBtn);
++        // ß║¿n tay gß╗úi ├╜ ─æang chß╗ë v├áo loa
++        this.speakUI.destroyCurrentHandHint();
++
++        // Dß╗½ng animation c┼⌐ (nß║┐u c├│)
++        this.stopSpeakerActiveAnim();
++        this.speakUI.stopSpeakerAnimation();
++
++        // Bß║«T ─Éß║ªU animation loa rung + s├│ng ├óm (chß╗ë khi click mß╗¢i c├│)
++        this.startSpeakerActiveAnim();
++        this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+ 
+-        // Replay instruction sequence
++        // Ph├ít h╞░ß╗¢ng dß║½n ─æß║┐m toa t├áu
+         this.playInstructionSequence();
+     }
++    private startSpeakerActiveAnim(): void {
++        if (this.speakerActiveTween) return;
++        const CFG = GameConstants.SPEAK_SCENE;
++        this.speakerActiveTween = this.tweens.add({
++            targets: this.ui.speakerBtn,
++            scale: CFG.SPEAKER.SCALE + 0.1,
++            duration: 400,
++            yoyo: true,
++            repeat: -1,
++            ease: 'Sine.easeInOut'
++        });
++    }
++
++    private stopSpeakerActiveAnim(): void {
++        if (this.speakerActiveTween) {
++            this.speakerActiveTween.stop();
++            this.speakerActiveTween = null;
++        }
++        this.ui.speakerBtn.setScale(GameConstants.SPEAK_SCENE.SPEAKER.SCALE);
++    }
+ 
+     // ========================================================================
+-    // REGION: RECORDING CALLBACKS
++    // KHU Vß╗░C: PHß║óN Hß╗ÆI GHI ├éM (RECORDING CALLBACKS)
+     // ========================================================================
+ 
+     /**
+-     * When recording completes successfully
++     * Khi qu├í tr├¼nh ghi ├óm kß║┐t th├║c th├ánh c├┤ng
+      */
+     private async onRecordingComplete(audioBlob: Blob): Promise<void> {
+         console.log(`[SpeakScene] Recording complete, size: ${(audioBlob.size / 1024).toFixed(1)}KB`);
+ 
+-        // Switch mascot to processing
++        // ─Éß╗òi trß║íng th├íi mascot sang ─æang xß╗¡ l├╜ logic
+         this.stopAllMascots();
+         this.mascotProcessing.play();
+ 
+-        // Send to API
+-        const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
+-        const speechResult = await this.voiceHandler.sendToAPI(audioBlob, level.trainCars);
++        try {
++            // Gß╗¡i dß╗» liß╗çu ├óm thanh tß╗¢i Backend/API
++            const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
++            const speechResult = await VoiceHandler.sendToBackend(audioBlob, String(level.trainCars));
+ 
+-        // Stop processing mascot
+-        this.mascotProcessing.stop();
++            // Kß║┐t th├║c hiß╗çu ß╗⌐ng mascot xß╗¡ l├╜
++            this.mascotProcessing.stop();
+ 
+-        // Reset recording UI
+-        this.speakVoice.resetToIdle();
+-        this.isRecordingActive = false;
++            // Kh├┤i phß╗Ñc lß║íi trß║íng th├íi giao diß╗çn ghi ├óm
++            this.speakVoice.resetToIdle();
++            this.isRecordingActive = false;
+ 
+-        if (speechResult.success && speechResult.spokenNumber !== undefined) {
+-            this.checkAnswer(speechResult.spokenNumber, level.trainCars);
+-        } else {
+-            console.warn('[SpeakScene] API error:', speechResult.error);
+-            this.showResult(false, 'Thß╗¡ lß║íi nh├⌐!');
++            // Ph├ón t├¡ch kß║┐t quß║ú: Cß╗æ gß║»ng lß║Ñy sß╗æ tß╗½ lß╗¥i n├│i
++            const spokenNumber = parseInt(speechResult.transcript, 10);
++            if (!isNaN(spokenNumber)) {
++                this.checkAnswer(spokenNumber, level.trainCars);
++            } else {
++                console.warn('[SpeakScene] Kh├┤ng nhß║¡n diß╗çn ─æ╞░ß╗úc sß╗æ tß╗½ bß║ún lß╗¥i n├│i (transcript):', speechResult.transcript);
++                this.showResult(false, 'Thß╗¡ lß║íi nh├⌐!');
++            }
++        } catch (e) {
++            console.error('[SpeakScene] API error:', e);
++            this.mascotProcessing.stop();
++            this.speakVoice.resetToIdle();
++            this.isRecordingActive = false;
++            this.showResult(false, 'Lß╗ùi kß║┐t nß╗æi, thß╗¡ lß║íi nh├⌐!');
+         }
+     }
+ 
+     /**
+-     * When recording fails
++     * Khi viß╗çc ghi ├óm gß║╖p sß╗▒ cß╗æ lß╗ùi
+      */
+     private onRecordingError(error: string): void {
+         console.warn('[SpeakScene] Recording error:', error);
+@@ -374,23 +460,23 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     // ========================================================================
+-    // REGION: RESULTS
++    // KHU Vß╗░C: C├üC TIß║╛N TR├îNH Kß║╛T QUß║ó (RESULTS)
+     // ========================================================================
+ 
+     /**
+-     * Check answer
++     * Chß╗⌐c n─âng kiß╗âm tra ─æ├íp ├ín
+      */
+     private checkAnswer(spoken: number, expected: number): void {
+         const isCorrect = spoken === expected;
+         console.log(`[SpeakScene] Said: ${spoken}, Expected: ${expected} ΓåÆ ${isCorrect ? 'Γ£à' : 'Γ¥î'}`);
+ 
+         if (isCorrect) {
+-            // Correct! Show happy mascot
++            // ─É├íp ├ín ─æ├║ng! Hiß╗çn mascot vui mß╗½ng
+             this.stopAllMascots();
+             this.mascotHappy.play();
+             this.showResult(true, `≡ƒÄë ─É├║ng rß╗ôi! ${expected} toa t├áu!`);
+         } else {
+-            // Wrong! Show sad mascot
++            // ─É├íp ├ín sai! Hiß╗çn mascot ─æang buß╗ôn
+             this.stopAllMascots();
+             this.mascotSad.play();
+ 
+@@ -405,22 +491,22 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     /**
+-     * Show result text
++     * Hiß╗çn v─ân bß║ún k├¿m ├óm thanh th├┤ng b├ío kß║┐t quß║ú l├¬n m├án h├¼nh
+      */
+     private showResult(isCorrect: boolean, message: string): void {
+-        // SFX
++        // Lß╗çnh ph├ít SFX (hiß╗çu ß╗⌐ng ├óm thanh)
+         try {
+             AudioManager.play(isCorrect ? 'sfx-correct' : 'sfx-wrong');
+         } catch (e) { /* ignore */ }
+ 
+-        // Show result text
++        // Mß╗ƒ chuß╗ùi kß║┐t quß║ú (V─ân bß║ún / UI) hiß╗çn chß╗»
+         this.speakUI.showResult(this.ui.resultText, isCorrect, message);
+ 
+-        // Next action
++        // Kß║┐ hoß║ích h├ánh ─æß╗Öng kß║┐ tiß║┐p phß╗Ñ thuß╗Öc v├áo timeout config
+         const TIMING = GameConstants.SPEAK_SCENE.TIMING;
+ 
+         if (isCorrect) {
+-            // Correct ΓåÆ next level after delay
++            // ─É├íp ├ín ─É├║ng ΓåÆ Chuyß╗ân sang level tiß║┐p theo sau 1 khoß║úng thß╗¥i gian Delay
+             this.time.delayedCall(TIMING.DELAY_NEXT_LEVEL, () => {
+                 this.mascotHappy.stop();
+                 this.transitionToNextLevel();
+@@ -428,13 +514,13 @@ export default class SpeakScene extends SceneBase {
+         } else {
+             const maxRetries = GameConstants.VOICE_RECORDING.MAX_RETRIES;
+             if (this.retryCount >= maxRetries) {
+-                // Out of retries ΓåÆ next level
++                // ─É├ú thß╗¡ lß║íi qu├í nhiß╗üu lß║ºn ΓåÆ Sang level tiß║┐p theo
+                 this.time.delayedCall(TIMING.DELAY_NEXT_LEVEL, () => {
+                     this.mascotSad.stop();
+                     this.transitionToNextLevel();
+                 });
+             } else {
+-                // Retry
++                // Thß╗¡ lß║íi th├┤ng th╞░ß╗¥ng
+                 this.time.delayedCall(GameConstants.VOICE_RECORDING.RETRY_DELAY, () => {
+                     this.mascotSad.stop();
+                     this.showMascotIdle();
+@@ -447,7 +533,7 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     /**
+-     * Transition to next level
++     * Hiß╗çu ß╗⌐ng mß╗¥ chuyß╗ân cß║únh (transition) sang m├án ch╞íi tiß║┐p theo
+      */
+     private transitionToNextLevel(): void {
+         const targets = [this.ui.trainImage, this.ui.microBtn, this.ui.speakerBtn, this.ui.resultText];
+@@ -463,11 +549,12 @@ export default class SpeakScene extends SceneBase {
+     }
+ 
+     /**
+-     * All 5 levels complete
++     * ─É├ú ho├án th├ánh trß╗ìn vß║╣n to├án bß╗Ö c├íc levels cß╗ºa Game
+      */
+     private onAllLevelsComplete(): void {
+         console.log('[SpeakScene] All 5 levels complete!');
+         this.stopAllMascots();
++        // Chuyß╗ân tß╗¢i m├án h├¼nh kß║┐t th├║c Game (EndGame)
+         this.scene.start(SceneKeys.EndGame);
+     }
+ }
+
+commit 4def000e4fb0b680e1b19dbe10c048d5f268d197
+Author: Duong Van Ngoc <duongvanngoc150903@gmail.com>
+Date:   Wed Mar 4 23:34:13 2026 +0700
+
+    first commit
+
+diff --git a/src/scenes/speak/SpeakScene.ts b/src/scenes/speak/SpeakScene.ts
+new file mode 100644
+index 0000000..13ffe19
+--- /dev/null
++++ b/src/scenes/speak/SpeakScene.ts
+@@ -0,0 +1,473 @@
++/**
++ * SpeakScene - M├án ch╞íi: ─Éß║┐m toa t├áu
++ *
++ * Flow:
++ * 1. Ph├ít nhß║íc nß╗ün + intro
++ * 2. Voice "Con h├úy ─æß║┐m sß╗æ toa t├áu..." ΓåÆ hand chß╗ë toa ΓåÆ voice "Toa thß╗⌐ nhß║Ñt"
++ * 3. Voice "B├óy giß╗¥ b├⌐ h├úy nhß║Ñn v├áo mic..." ΓåÆ hand chß╗ë mic
++ * 4. B├⌐ nhß║Ñn mic ΓåÆ ghi ├óm ΓåÆ gß╗¡i API ΓåÆ kiß╗âm tra ─æ├║ng/sai
++ * 5. ─É├║ng ΓåÆ chuyß╗ân level tiß║┐p | Sai ΓåÆ thß╗¡ lß║íi (max 3 lß║ºn)
++ * 6. Ho├án th├ánh 5 levels ΓåÆ chuyß╗ân EndGame
++ */
++
++import SceneBase from '../SceneBase';
++import { SceneKeys } from '../../consts/Keys';
++import { GameConstants } from '../../consts/GameConstants';
++import AudioManager from '../../audio/AudioManager';
++import { AnimationFactory } from '../../utils/AnimationFactory';
++import { changeBackground } from '../../utils/BackgroundManager';
++
++// Helper modules
++import { SpeakUI, type SpeakUIElements } from './SpeakUI';
++import { SpeakVoice } from './SpeakVoice';
++import { ReadingFinger } from './ReadingFinger';
++import { VoiceHandler } from '../../voice/VoiceHandler';
++import { DebugGrid } from '../../utils/DebugGrid';
++
++export default class SpeakScene extends SceneBase {
++    // ========================================================================
++    // REGION: PROPERTIES
++    // ========================================================================
++
++    // UI Elements (from SpeakUI)
++    private ui!: SpeakUIElements;
++
++    // Helpers
++    private speakUI!: SpeakUI;
++    private speakVoice!: SpeakVoice;
++    private readingFinger!: ReadingFinger;
++    private voiceHandler!: VoiceHandler;
++    private debugGrid!: DebugGrid;
++
++    // Mascot Animations
++    private mascotRecording!: AnimationFactory;
++    private mascotProcessing!: AnimationFactory;
++    private mascotHappy!: AnimationFactory;
++    private mascotSad!: AnimationFactory;
++    private mascotIdle!: AnimationFactory;
++
++    // State
++    private currentLevel: number = 0;
++    private retryCount: number = 0;
++    private isMicVisible: boolean = false;
++    private isRecordingActive: boolean = false;
++
++    // ========================================================================
++    // REGION: LIFECYCLE
++    // ========================================================================
++
++    constructor() {
++        super(SceneKeys.SpeakScene);
++    }
++
++    create() {
++        this.setupSystem();
++        this.setupBackgroundAndAudio();
++        this.createHandHint();
++        this.setupMascotAnimations();
++        this.createUI();
++        this.setupHelpers();
++        this.initGameFlow();
++        this.events.on('wake', this.handleWake, this);
++        // DEBUG: Comment d├▓ng n├áy khi l├¬n production
++        // this.debugGrid = new DebugGrid(this);
++        // this.debugGrid.draw({ showGrid: true, showReadingLines: true });
++    }
++
++    update(_time: number, delta: number) {
++        this.idleManager.update(delta);
++    }
++
++    shutdown() {
++        this.speakVoice?.destroy();
++        this.debugGrid?.destroy();
++
++        this.readingFinger?.destroy();
++        this.voiceHandler?.destroy();
++        this.mascotRecording?.destroy();
++        this.mascotProcessing?.destroy();
++        this.mascotHappy?.destroy();
++        this.mascotSad?.destroy();
++        this.mascotIdle?.destroy();
++        this.cleanupScene();
++    }
++
++    // ========================================================================
++    // REGION: SETUP
++    // ========================================================================
++
++    private setupHelpers(): void {
++        // VoiceHandler for API calls
++        this.voiceHandler = new VoiceHandler();
++
++        // ReadingFinger for counting animation
++        this.readingFinger = new ReadingFinger(this);
++
++        // SpeakVoice for recording + mic UI
++        this.speakVoice = new SpeakVoice(
++            this,
++            this.ui.microBtn,
++            this.ui.volumeBar,
++            {
++                onRecordingComplete: (result) => this.onRecordingComplete(result.audioBlob),
++                onRecordingError: (err) => this.onRecordingError(err),
++            }
++        );
++    }
++
++    /**
++     * Register mascot animations BEFORE createUI
++     */
++    private setupMascotAnimations(): void {
++        const MASCOT = GameConstants.MASCOT_ANIMATIONS;
++        this.mascotRecording = new AnimationFactory(this, { ...MASCOT, ...MASCOT.RECORDING });
++        this.mascotProcessing = new AnimationFactory(this, { ...MASCOT, ...MASCOT.PROCESSING });
++        this.mascotHappy = new AnimationFactory(this, { ...MASCOT, ...MASCOT.RESULT_HAPPY });
++        this.mascotSad = new AnimationFactory(this, { ...MASCOT, ...MASCOT.RESULT_SAD });
++        this.mascotIdle = new AnimationFactory(this, { ...MASCOT, ...MASCOT.IDLE });
++    }
++
++    protected createUI(): void {
++        this.speakUI = new SpeakUI(this);
++        this.ui = this.speakUI.createAll({
++            onSpeakerClick: () => this.onSpeakerClick(),
++            onMicroClick: () => this.onMicroClick(),
++        });
++    }
++    // flow game
++    protected initGameFlow(): void {
++        this.currentLevel = 0;
++        this.retryCount = 0;
++
++        this.startWithAudio(() => {
++            this.playBgm();
++            this.isGameActive = true;
++            this.showButtons();
++            this.startLevel(0);
++        });
++    }
++
++    protected showIdleHint(): void {
++        if (this.isMicVisible && !this.isRecordingActive) {
++            this.animateHandHintTo(this.ui.microBtn.x, this.ui.microBtn.y);
++        }
++    }
++
++    // ========================================================================
++    // REGION: MASCOT CONTROLLERS
++    // ========================================================================
++
++    private stopAllMascots(): void {
++        this.mascotRecording?.stop();
++        this.mascotProcessing?.stop();
++        this.mascotHappy?.stop();
++        this.mascotSad?.stop();
++        this.mascotIdle?.stop();
++    }
++
++    private showMascotIdle(): void {
++        this.stopAllMascots();
++        this.mascotIdle.play();
++    }
++
++    // ========================================================================
++    // REGION: GAME FLOW
++    // ========================================================================
++
++    /**
++     * Start a level
++     */
++    private startLevel(levelIndex: number): void {
++        const LEVELS = GameConstants.SPEAK_SCENE.LEVELS;
++        if (levelIndex >= LEVELS.length) {
++            this.onAllLevelsComplete();
++            return;
++        }
++
++        this.currentLevel = levelIndex;
++        this.retryCount = 0;
++        this.isMicVisible = false;
++        this.isRecordingActive = false;
++
++        const level = LEVELS[levelIndex];
++        console.log(`[SpeakScene] Level ${level.number}: ${level.trainCars} toa t├áu`);
++
++        // Change background
++        changeBackground(level.bg);
++
++        // Hide old result + buttons
++        this.ui.resultText.setAlpha(0);
++        this.ui.microBtn.setAlpha(0);
++        this.ui.speakerBtn.setAlpha(0);
++
++        // Show mascot idle
++        this.showMascotIdle();
++
++        // Show train with animation ΓåÆ then start voice guide
++        this.speakUI.showTrainAnimation(this.ui.trainImage, level.trainKey, () => {
++            this.startVoiceGuide();
++        });
++    }
++
++    /**
++     * Voice guide flow after train appears
++     *
++     * FLOW:
++     * 1. Intro ΓåÆ "intro-speak" (only on first level)
++     * 2. Voice "Con h├úy ─æß║┐m sß╗æ toa t├áu..."
++     * 3. Hand chß╗ë toa + voice "Toa thß╗⌐ nhß║Ñt"
++     * 4. Voice "B├óy giß╗¥ b├⌐ h├úy nhß║Ñn v├áo mic..."
++     * 5. Hand chß╗ë mic ΓåÆ ready for mic
++     */
++    private startVoiceGuide(): void {
++        const TIMING = GameConstants.SPEAK_SCENE.TIMING;
++
++        this.time.delayedCall(TIMING.DELAY_SHOW_MIC, () => {
++            // Show buttons
++            this.ui.speakerBtn.setAlpha(1);
++
++            // Step 1: Play intro (only first time)
++            if (this.currentLevel === 0) {
++                console.log('[SpeakScene] Step 1: Play intro-speak');
++                AudioManager.playWithCallback('intro-speak', () => {
++                    this.playInstructionSequence();
++                });
++            } else {
++                // Skip intro on subsequent levels, go straight to instructions
++                this.playInstructionSequence();
++            }
++        });
++    }
++
++    /**
++     * Play instructions: ─æß║┐m toa t├áu ΓåÆ chß╗ë toa ΓåÆ nhß║Ñn mic
++     */
++    private playInstructionSequence(): void {
++        const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
++        const countVoiceKey = `voice-count-${level.trainCars}`;
++
++        // Step 2: Voice "Con h├úy ─æß║┐m sß╗æ toa t├áu..."
++        console.log('[SpeakScene] Step 2: Voice count trains');
++        AudioManager.playWithCallback('voice-dem-toa-tau', () => {
++
++            // Step 3: Ng├│n tay chß╗ë tß╗½ng toa + voice ─æß║┐m (1, 2, 3... theo level)
++            console.log(`[SpeakScene] Step 3: Finger sweep level ${this.currentLevel}`);
++            this.readingFinger.countForLevel(this.currentLevel);
++            AudioManager.playWithCallback(countVoiceKey, () => {
++
++                // Step 4: Voice "Nhß║Ñn mic"
++                console.log('[SpeakScene] Step 4: Voice press mic');
++                AudioManager.playWithCallback('voice-nhan-mic', () => {
++
++                    // Step 5: Show mic + hand ΓåÆ ready
++                    console.log('[SpeakScene] Step 5: Show mic, waiting');
++                    this.showMicWithHint();
++                });
++            });
++        });
++    }
++
++    /**
++     * Show mic button with hand hint
++     */
++    private showMicWithHint(): void {
++        this.isMicVisible = true;
++
++        // Show mic with animation
++        this.speakUI.showMicAnimation(this.ui.microBtn);
++
++        // Hand hint to mic after short delay
++        this.time.delayedCall(500, () => {
++            this.animateHandHintTo(this.ui.microBtn.x, this.ui.microBtn.y);
++        });
++
++        // Start idle timer
++        this.time.delayedCall(2000, () => {
++            if (this.isGameActive && !this.isRecordingActive) {
++                this.idleManager.start();
++            }
++        });
++    }
++
++    // ========================================================================
++    // REGION: INTERACTION HANDLERS
++    // ========================================================================
++
++    /**
++     * When child clicks Mic
++     */
++    private onMicroClick(): void {
++        if (!this.isGameActive || !this.isMicVisible || this.isRecordingActive) return;
++
++        console.log('[SpeakScene] Mic clicked');
++        this.resetIdleState();
++        this.idleManager.stop();
++        this.isRecordingActive = true;
++
++        // Switch mascot to recording
++        this.stopAllMascots();
++        this.mascotRecording.play();
++
++        // Start recording via SpeakVoice (handles glow + tint + pulse)
++        this.speakVoice.startRecording();
++    }
++
++    /**
++     * When child clicks Speaker (replay instructions)
++     */
++    private onSpeakerClick(): void {
++        if (!this.isGameActive || this.isRecordingActive) return;
++
++        console.log('[SpeakScene] Speaker clicked');
++        this.resetIdleState();
++        this.idleManager.stop();
++
++        // Button press animation
++        this.speakUI.speakerPressEffect(this.ui.speakerBtn);
++
++        // Replay instruction sequence
++        this.playInstructionSequence();
++    }
++
++    // ========================================================================
++    // REGION: RECORDING CALLBACKS
++    // ========================================================================
++
++    /**
++     * When recording completes successfully
++     */
++    private async onRecordingComplete(audioBlob: Blob): Promise<void> {
++        console.log(`[SpeakScene] Recording complete, size: ${(audioBlob.size / 1024).toFixed(1)}KB`);
++
++        // Switch mascot to processing
++        this.stopAllMascots();
++        this.mascotProcessing.play();
++
++        // Send to API
++        const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
++        const speechResult = await this.voiceHandler.sendToAPI(audioBlob, level.trainCars);
++
++        // Stop processing mascot
++        this.mascotProcessing.stop();
++
++        // Reset recording UI
++        this.speakVoice.resetToIdle();
++        this.isRecordingActive = false;
++
++        if (speechResult.success && speechResult.spokenNumber !== undefined) {
++            this.checkAnswer(speechResult.spokenNumber, level.trainCars);
++        } else {
++            console.warn('[SpeakScene] API error:', speechResult.error);
++            this.showResult(false, 'Thß╗¡ lß║íi nh├⌐!');
++        }
++    }
++
++    /**
++     * When recording fails
++     */
++    private onRecordingError(error: string): void {
++        console.warn('[SpeakScene] Recording error:', error);
++        this.speakVoice.resetToIdle();
++        this.isRecordingActive = false;
++        this.showMascotIdle();
++        this.showResult(false, 'Thß╗¡ lß║íi nh├⌐!');
++    }
++
++    // ========================================================================
++    // REGION: RESULTS
++    // ========================================================================
++
++    /**
++     * Check answer
++     */
++    private checkAnswer(spoken: number, expected: number): void {
++        const isCorrect = spoken === expected;
++        console.log(`[SpeakScene] Said: ${spoken}, Expected: ${expected} ΓåÆ ${isCorrect ? 'Γ£à' : 'Γ¥î'}`);
++
++        if (isCorrect) {
++            // Correct! Show happy mascot
++            this.stopAllMascots();
++            this.mascotHappy.play();
++            this.showResult(true, `≡ƒÄë ─É├║ng rß╗ôi! ${expected} toa t├áu!`);
++        } else {
++            // Wrong! Show sad mascot
++            this.stopAllMascots();
++            this.mascotSad.play();
++
++            this.retryCount++;
++            const maxRetries = GameConstants.VOICE_RECORDING.MAX_RETRIES;
++            if (this.retryCount >= maxRetries) {
++                this.showResult(false, `─É├íp ├ín l├á ${expected} toa t├áu!`);
++            } else {
++                this.showResult(false, `Ch╞░a ─æ├║ng! Thß╗¡ lß║íi nh├⌐! (${this.retryCount}/${maxRetries})`);
++            }
++        }
++    }
++
++    /**
++     * Show result text
++     */
++    private showResult(isCorrect: boolean, message: string): void {
++        // SFX
++        try {
++            AudioManager.play(isCorrect ? 'sfx-correct' : 'sfx-wrong');
++        } catch (e) { /* ignore */ }
++
++        // Show result text
++        this.speakUI.showResult(this.ui.resultText, isCorrect, message);
++
++        // Next action
++        const TIMING = GameConstants.SPEAK_SCENE.TIMING;
++
++        if (isCorrect) {
++            // Correct ΓåÆ next level after delay
++            this.time.delayedCall(TIMING.DELAY_NEXT_LEVEL, () => {
++                this.mascotHappy.stop();
++                this.transitionToNextLevel();
++            });
++        } else {
++            const maxRetries = GameConstants.VOICE_RECORDING.MAX_RETRIES;
++            if (this.retryCount >= maxRetries) {
++                // Out of retries ΓåÆ next level
++                this.time.delayedCall(TIMING.DELAY_NEXT_LEVEL, () => {
++                    this.mascotSad.stop();
++                    this.transitionToNextLevel();
++                });
++            } else {
++                // Retry
++                this.time.delayedCall(GameConstants.VOICE_RECORDING.RETRY_DELAY, () => {
++                    this.mascotSad.stop();
++                    this.showMascotIdle();
++                    this.speakUI.hideResult(this.ui.resultText);
++                    this.isMicVisible = true;
++                    this.animateHandHintTo(this.ui.microBtn.x, this.ui.microBtn.y);
++                });
++            }
++        }
++    }
++
++    /**
++     * Transition to next level
++     */
++    private transitionToNextLevel(): void {
++        const targets = [this.ui.trainImage, this.ui.microBtn, this.ui.speakerBtn, this.ui.resultText];
++        this.tweens.add({
++            targets,
++            alpha: 0,
++            duration: 500,
++            ease: 'Power2',
++            onComplete: () => {
++                this.startLevel(this.currentLevel + 1);
++            }
++        });
++    }
++
++    /**
++     * All 5 levels complete
++     */
++    private onAllLevelsComplete(): void {
++        console.log('[SpeakScene] All 5 levels complete!');
++        this.stopAllMascots();
++        this.scene.start(SceneKeys.EndGame);
++    }
++}

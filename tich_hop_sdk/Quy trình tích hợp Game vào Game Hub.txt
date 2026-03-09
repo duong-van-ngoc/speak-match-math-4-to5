@@ -1,0 +1,871 @@
+﻿Quy trình tích hợp Game vào Game Hub
+QUY TRÌNH LÀM GAME MỚI TÍCH HỢP SDK ĐỂ KẾT NỐI GAME VÀ GAMEHUB
+
+
+
+1. Quy trình tạo game mới gồm các bước: 
+
+
+1. Thêm vào script trong file package.json (có thể thay pnpm bằng npm, tải các thư viện kèm theo: dotenv)
+"setup": "pnpm dlx dotenv-cli -- pnpm add @iruka-edu/game-core @iruka-edu/mini-game-sdk"
+2. thêm file .npmrc với nội dung:
+# Trỏ scope @iruka-edu về GitHub Registry
+@iruka-edu:registry=https://npm.pkg.github.com
+
+
+# Cấu hình xác thực (Auth)
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+3. thêm biến GITHUB_TOKEN vào file .env: (token github tự tạo)
+GITHUB_TOKEN=
+4. chạy lệnh setup:
+pnpm run setup
+
+
+        
+
+2. Quy trình thêm code vào game để kết nối được với gamehub:
+
+   * Bước 1: Trong file main.ts thêm đoạn code:
+
+
+import { game } from "@iruka-edu/mini-game-sdk";
+
+
+function applyResize(width: number, height: number) {
+    const gameDiv = document.getElementById('game-container');
+    if (gameDiv) {
+        gameDiv.style.width = `${width}px`;
+        gameDiv.style.height = `${height}px`;
+    }
+    // Phaser Scale FIT: gọi resize để canvas update
+    gamePhaser.scale.resize(width, height);
+}
+
+
+function broadcastSetState(payload: any) {
+    // chuyển xuống scene đang chạy để bạn route helper (audio/score/timer/result...)
+    const scene = gamePhaser.scene.getScenes(true)[0] as any;
+    scene?.applyHubState?.(payload);
+}
+
+
+// lấy hubOrigin: tốt nhất từ query param, fallback document.referrer
+function getHubOrigin(): string {
+  const qs = new URLSearchParams(window.location.search);
+  const o = qs.get("hubOrigin");
+  if (o) return o;
+
+
+  // fallback: origin của referrer (hub)
+  try {
+    const ref = document.referrer;
+    if (ref) return new URL(ref).origin;
+  } catch {}
+  return "*"; // nếu protocol của bạn bắt buộc origin cụ thể thì KHÔNG dùng "*"
+}
+
+
+export const sdk = game.createGameSdk({
+  hubOrigin: getHubOrigin(),
+
+
+  onInit(ctx) {
+    // reset stats session nếu bạn muốn
+    // game.resetAll(); hoặc statsCore.resetAll()
+
+
+    // báo READY sau INIT
+    sdk.ready({
+      capabilities: ["resize", "score", "complete", "save_load", "set_state","stats", "hint"],
+    });
+  },
+
+
+  onStart() {
+    gamePhaser.scene.resume("CompareScene");
+    gamePhaser.scene.resume("EndGameScene");
+  },
+
+
+  onPause() {
+    gamePhaser.scene.pause("CompareScene");
+  },
+
+
+  onResume() {
+    gamePhaser.scene.resume("CompareScene");
+  },
+
+
+  onResize(size) {
+    applyResize(size.width, size.height);
+  },
+
+
+  onSetState(state) {
+    broadcastSetState(state);
+  },
+
+
+  onQuit() {
+    // QUIT: chốt attempt là quit + gửi complete
+    game.finalizeAttempt("quit");
+    sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "hub_quit", stats: game.prepareSubmitData() },
+    });
+  },
+});
+
+
+
+
+        Tên màn có thay đổi theo tên tự đặt (ví dụ CompareScene thành GameScene)
+        Chú ý: thêm loại game phía sau mảng sdk.ready (nếu game có nhiều loại thì thêm nhiều loại vào). Có các loại game là: 
+        
+    "trace",
+    "paint",
+    "select",
+    "drag",
+    "match",
+    "pronunciation",
+    "hold",
+    "circle_select",
+
+
+Ví dụ: 
+      sdk.ready({
+           capabilities: ["resize", "score", "complete", "save_load", "set_state","stats", "hint", "select"],
+    });
+
+
+
+
+
+
+
+
+
+
+   * Bước 2: Trong màn game chính
+   * Trong hàm create() ở đầu thêm code:
+game.setTotal(5);
+        
+        để set tổng (ví dụ đây là tổng số câu hỏi, tổng số yêu cầu cần làm trong game). Và ở cuối sẽ thêm code gửi điểm và tiến trình:
+(window as any).irukaGameState = {
+            startTime: Date.now(),
+            currentScore: 0,
+        };
+sdk.score( this.score, 0 );
+sdk.progress({ levelIndex: 0, total: this.levels.length });
+
+
+        
+   * Khi trả lời đúng câu hỏi hoặc hoàn thành một thử thách nhỏ sẽ cập nhật thông tin, ví dụ code:
+game.recordCorrect({ scoreDelta: 1 });
+
+
+(window as any).irukaGameState.currentScore = this.score;
+sdk.score(this.score, 1);
+sdk.progress({
+      levelIndex: this.currentLevelIndex,
+      score: this.score,
+});
+
+
+
+
+cách thức chấm điểm sẽ tùy thuộc vào từng game.
+
+
+   * Khi trả lời sai câu hỏi hoặc làm thử thách không chính xác, thêm đoạn code:
+game.recordWrong();
+
+
+   * Mỗi khi gợi ý cho bé sẽ gọi hàm để tính toán số lần gợi ý:
+        
+        game.addHint();
+
+
+   * Khi bắt đầu một câu hỏi hoặc phase:
+        game.startQuestionTimer();
+
+
+   * Khi trả lời đúng câu hỏi hoặc hoàn thành thử thách, trước khi chuyển câu hỏi mới hay màn mới:
+        game.finishQuestionTimer();
+
+
+   * Khi chuyển level sẽ gọi hàm lưu và gửi tiến trình:
+
+
+sdk.requestSave({
+                score: this.score,
+                levelIndex: this.currentLevelIndex,
+            });
+
+
+            this.currentLevelIndex += 1;
+            sdk.progress({
+                levelIndex: this.currentLevelIndex,
+                total: this.levels.length,
+                score: this.score,
+            });
+
+
+
+
+   * Khi chuyển sang màn EndGame cần gửi thông tin hoàn thành 1 lần chơi:
+
+game.finalizeAttempt();
+
+
+      * Khi restart game (nhấn nút reset) thêm một hàm để tính số lần chơi lại:
+game.retryFromStart();
+
+
+      * Bước 3: Trong màn EndGameScene sử dụng phaser helper màn EndGame có sẵn trong sdk (tùy chọn có thể dùng hoặc không). Ví dụ code:
+
+import { hideGameButtons, sdk } from '../main';
+import { phaser } from '@iruka-edu/mini-game-sdk';
+import { play, stopAll } from '../audio/audio';
+import { game } from "@iruka-edu/mini-game-sdk";
+
+
+const { createEndGameScene } = phaser;
+game.prepareSubmitData();
+
+
+export const EndGameScene = createEndGameScene({
+    sceneKey: 'EndGameScene',
+    assets: {
+        banner: {
+            key: 'banner_congrat',
+            url: 'assets/images/ui/banner_congrat.png',
+        },
+        icon: { key: 'icon', url: 'assets/images/ui/icon.png' },
+        replayBtn: { key: 'btn_reset', url: 'assets/images/ui/btn_reset.png' },
+        exitBtn: { key: 'btn_exit', url: 'assets/images/ui/btn_exit.png' },
+    },
+    audio: {
+        play: (k) => play(k),
+        stopAll: () => stopAll(),
+    },
+    sounds: {
+        enter: 'complete',
+        fireworks: 'fireworks',
+        applause: 'applause',
+        click: 'sfx_click',
+    },
+    replaySceneKey: 'CompareScene',
+    onEnter: () => hideGameButtons(),
+    reportComplete: (payload) => {
+        sdk.complete(payload);
+    },
+});
+
+
+
+
+Chú ý nếu không dùng màn EndGameScene có sẵn thì lúc nhấn nút X thoát trò chơi thì phải thêm code gửi hoàn thành:
+
+
+sdk.complete({
+      timeMs: Date.now() - ((window as any).irukaGameState?.startTime ?? Date.now()),
+      extras: { reason: "user_exit", stats: game.prepareSubmitData() },
+    });
+
+
+
+
+        Và nút reset phải thêm:
+        game.retryFromStart();
+
+
+
+
+         3. Quy trình tích hợp SDK vào cho từng loại game khác nhau
+File Markdown
+
+
+
+
+         4. Quy trình thêm code vào game để chạy được auto test:
+
+
+         * Bước 1: Thêm folder e2e trong src, trong folder e2e thêm file installIrukaE2E.ts với nội dung code:
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { game } from "@iruka-edu/mini-game-sdk";
+import { __testSpy } from "@iruka-edu/mini-game-sdk";
+
+
+declare global {
+  interface Window {
+    __irukaSpy?: any;
+    __irukaTest?: any;
+  }
+}
+
+
+export function isE2EEnabled(): boolean {
+  const qs = new URLSearchParams(window.location.search);
+  const v = (qs.get("e2e") || "").toLowerCase();
+  return v === "1" || v === "true";
+}
+
+
+
+
+function clampInt(n: any, def = 1) {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x <= 0) return def;
+  return Math.floor(x);
+}
+
+
+/**
+ * sdk: instance createGameSdk trong game của bạn
+ * (file này không cần import runtime, vì bạn đã có sdk ở chỗ khác)
+ */
+export function installIrukaE2E(sdk: {
+  score: (score: number, delta?: number) => void;
+  complete: (payload: { score?: number; timeMs: number; extras?: any }) => void;
+}) {
+  if (!isE2EEnabled()) return;
+
+
+  // enable spy + expose
+  const spy = __testSpy;
+  if (spy?.enable) {
+    spy.enable();
+    window.__irukaSpy = spy;
+  }
+
+
+  const t0 = performance.now();
+
+
+  window.__irukaTest = {
+    setTotal(n: number) { game.setTotal(n); },
+    startQ(n = 1) { for (let i=0;i<n;i++) game.startQuestionTimer(); },
+    finishQ(n = 1) { for (let i=0;i<n;i++) game.finishQuestionTimer(); },
+    makeWrong(n = 1) {
+      n = clampInt(n, 1);
+      for (let i = 0; i < n; i++) game.recordWrong();
+    },
+
+
+    makeCorrect(n = 1) {
+      n = clampInt(n, 1);
+      for (let i = 0; i < n; i++) game.recordCorrect({ scoreDelta: 1 });
+
+
+      const snap = game.getStatsSnapshot();
+      sdk.score(snap.finalScore);
+    },
+
+
+    useHint(n = 1) {
+      n = clampInt(n, 1);
+      for (let i = 0; i < n; i++) game.addHint();
+    },
+
+
+    itemsReset() { game.resetItemsAll(); },
+
+
+    itemsCreate(meta: any, expected: any) {
+      return game.createItem(meta, expected);
+    },
+
+
+    itemsBegin(handle: string, timingExtra?: any) {
+      return game.beginAttempt(handle, timingExtra);
+    },
+
+
+    itemsHint(handle: string, n = 1) {
+      return game.useHint(handle, n);
+    },
+
+
+    itemsEnd(handle: string, response: any, opts?: any) {
+      return game.endAttempt(handle, response, opts);
+    },
+
+
+    itemsFinalize(handle: string) {
+      return game.finalizeItem(handle);
+    },
+
+
+    finish() {
+      game.finalizeAttempt();
+      const submit = game.prepareSubmitData();
+      const timeMs = Math.round(performance.now() - t0);
+
+
+      sdk.complete({
+        score: submit.finalScore,
+        timeMs,
+        extras: {
+          reason: "e2e",
+          stats: submit,
+        },
+      });
+    },
+
+
+    snapshot() {
+      return {
+        stats: game.getStatsSnapshot(),
+        submit: game.prepareSubmitData(),
+        spySummary: spy?.getSummary?.(),
+      };
+    },
+  };
+}
+
+
+
+
+
+
+
+
+
+
+            * Bước 2: Trong main.ts gọi hàm:
+
+installIrukaE2E(sdk);
+
+
+Quy trình Upload game
+               1. Đăng nhập với tài khoản DEV  
+               2. Vào trang Game của tôi và bấm “Tạo game mới”  
+               3. Tải game và điền đầy đủ thông tin    
+               4. Chọn game mới tạo  
+               5. Chỉnh sửa thông tin hoặc upload lại  
+               6. Tự kiểm tra trước khi gửi QC  
+               7. Gửi QC  
+               8. Cập nhật lại code nếu qc yêu cầu sửa lại (không tạo ra version mới)  
+Quy Trình Test game
+QUY TRÌNH QC TEST - WEB QUẢN LÝ GAME IRUKA
+Phiên bản: 1.0
+Ngày cập nhật: 22/12/2025
+________________
+
+
+📋 MỤC LỤC
+                  1. Tổng quan
+                  2. Cấu trúc dữ liệu
+                  3. Quy trình làm việc
+                  4. Tính năng chi tiết
+                  5. Quyền hạn
+                  6. Best Practices
+                  7. Troubleshooting
+                  8. Metrics & Reporting
+________________
+
+
+1. TỔNG QUAN
+Mục đích
+Hệ thống QC Test của Iruka đảm bảo chất lượng game trước khi phát hành cho người dùng cuối. Quy trình được thiết kế để:
+                  * Phát hiện lỗi sớm, giảm chi phí sửa lỗi.
+                  * Chuẩn hóa tiêu chí đánh giá chất lượng.
+                  * Theo dõi và cải thiện quy trình phát triển.
+                  * Đảm bảo trải nghiệm người dùng tốt nhất.
+Vai trò chính
+Vai trò
+	Trách nhiệm
+	Developer (Dev)
+	Phát triển game, tự kiểm tra (Self-QA), gửi QC.
+	QC Tester
+	Kiểm tra chất lượng, phê duyệt hoặc từ chối.
+	Admin/CTO
+	Duyệt cuối cùng và publish game.
+	________________
+
+
+2. CẤU TRÚC DỮ LIỆU
+2.1. Game Version
+Mỗi game được quản lý theo từng phiên bản (version). QC được thực hiện trên version cụ thể, không phải game tổng thể.
+Thông tin chính của Version:
+                  * Version number: Số phiên bản theo chuẩn Semantic Versioning (ví dụ: 1.0.0, 1.0.1).
+                  * Status: Trạng thái hiện tại (draft, uploaded, qc_passed, qc_failed, approved, published).
+                  * Build files: Đường dẫn lưu trữ file game trên cloud.
+                  * Self-QA Checklist: Kết quả tự kiểm tra của Dev.
+                  * Submission info: Thông tin người gửi và thời gian gửi QC.
+Self-QA Checklist (Bắt buộc trước khi gửi QC):
+                  * ☑ Đã test trên các thiết bị mục tiêu (Mobile, Tablet, Desktop).
+                  * ☑ Đã test âm thanh trên nhiều trình duyệt.
+                  * ☑ Đã chơi hết tất cả màn game.
+                  * ☑ Đã đối chiếu nội dung với tài liệu SGK.
+2.2. QC Report
+Mỗi lần QC tạo ra một report độc lập, lưu trữ toàn bộ kết quả kiểm tra.
+Thông tin chính: Reviewer, Version, Result (Pass/Fail), Severity, Checklist chi tiết, Notes, Evidence, Attempt number.
+QC Checklist Categories:
+Category
+	Tiếng Việt
+	Nội dung kiểm tra
+	UI/UX
+	Giao diện
+	Thiết kế, bố cục, responsive, màu sắc, font chữ.
+	Audio
+	Âm thanh
+	Hiệu ứng âm, nhạc nền, đồng bộ.
+	Performance
+	Hiệu năng
+	Tốc độ load, FPS, memory usage, lag.
+	Gameplay
+	Logic game
+	Cơ chế chơi, tính năng, tương tác.
+	Content
+	Nội dung
+	Độ chính xác nội dung, chính tả, phù hợp với SGK.
+	Mức đánh giá:
+                  * ✅ OK: Đạt yêu cầu.
+                  * ⚠️ Warning: Có vấn đề nhỏ nhưng chấp nhận được.
+                  * ❌ Fail: Không đạt, cần sửa.
+Severity Levels (Bắt buộc khi Fail):
+Level
+	Mô tả
+	Ví dụ
+	🟡 Minor
+	Lỗi nhỏ, không ảnh hưởng gameplay
+	Typo nhỏ, màu sắc chưa đẹp.
+	🟠 Major
+	Ảnh hưởng trải nghiệm người dùng
+	UI lỗi, logic game sai, âm thanh sai.
+	🔴 Critical
+	Game không thể chơi được
+	Crash, không load, tính năng chính hỏng.
+	________________
+
+
+3. QUY TRÌNH LÀM VIỆC (FLOW)
+Version Status Flow (Luồng trạng thái)
+                  1. DRAFT: Dev tạo hoặc chỉnh sửa version.
+                  2. UPLOADED: Dev submit QC (Chờ QC review).
+                  3. QC_PROCESSING: QC Tester đang tiến hành test.
+                  4. Kết quả QC:
+                  * Nếu PASS → Chuyển sang trạng thái QC_PASSED.
+                  * Nếu FAIL → Chuyển sang trạng thái QC_FAILED (Dev phải sửa và quay lại bước Uploaded).
+                  5. APPROVED: Admin duyệt version đã pass QC.
+                  6. PUBLISHED: Admin phát hành game.
+________________
+
+
+4. TÍNH NĂNG CHI TIẾT
+A. DEV WORKFLOW
+1. Hoàn thành Self-QA
+                  * Mục đích: Đảm bảo Dev tự kiểm tra kỹ trước khi gửi QC.
+                  * Yêu cầu: Tick đủ 4 mục trong checklist.
+                  * Validation: Hệ thống sẽ từ chối request nếu chưa hoàn thành.
+2. Submit game để QC
+                  * Điều kiện: User là Dev/Admin (Owner), Status là draft hoặc qc_failed, đã xong Self-QA.
+                  * Kết quả: Status chuyển sang uploaded, QC nhận được thông báo.
+3. Xử lý khi bị QC Fail
+                  * Quy trình:
+                  1. Đọc kỹ notes và checklist từ QC.
+                  2. Xem evidence (ảnh/video) để hiểu lỗi.
+                  3. Sửa lỗi theo độ ưu tiên (Critical → Major → Minor).
+                  4. Test lại kỹ (Self-QA) và Submit lại.
+                  * Lưu ý: Game gửi lại sẽ có badge "Re-test".
+B. QC WORKFLOW
+1. QC Inbox
+                  * Hiển thị danh sách các version có status uploaded.
+                  * Ưu tiên: Badge "Re-test" (màu vàng) được hiển thị đầu tiên.
+2. Review Page
+Giao diện gồm 2 phần:
+                  * Game Preview (Cột trái): Chơi game trực tiếp trên giả lập Mobile, Tablet, Desktop.
+                  * QC Panel (Cột phải):
+                  * Thông tin game & Self-QA của Dev.
+                  * QC Checklist (5 categories).
+                  * Severity Selection (Bắt buộc nếu Fail).
+                  * Note cho Dev (Bắt buộc nếu Fail).
+                  * Nút Action: Approve hoặc Reject.
+3. Submit kết quả
+                  * Pass: Status chuyển thành qc_passed.
+                  * Fail: Status chuyển thành qc_failed, tạo QC Report gửi về Dev.
+C. RE-TEST WORKFLOW
+                  * Giao diện hiển thị đặc biệt: Background màu vàng nhạt, Badge "Re-test".
+                  * QC cần tập trung kiểm tra lại các lỗi đã báo ở lần trước và verify việc sửa lỗi của Dev.
+________________
+
+
+5. QUYỀN HẠN
+Action
+	Permission
+	Roles được phép
+	Xem QC Inbox
+	games:review
+	QC, Admin
+	Submit game to QC
+	games:submit
+	Dev, Admin
+	Review game
+	games:review
+	QC, Admin
+	Approve game
+	games:approve
+	Admin, CTO
+	Publish game
+	games:publish
+	Admin
+	Lưu ý về quyền sở hữu (Ownership): Dev chỉ được submit game do mình tạo (hoặc thuộc team mình). QC có thể review tất cả game.
+________________
+
+
+6. BEST PRACTICES
+Cho Developer
+                  * ✅ Chơi hết tất cả màn game ít nhất 2 lần.
+                  * ✅ Test trên 3 devices: Mobile, Tablet, Desktop.
+                  * ✅ Test âm thanh trên ít nhất 2 trình duyệt (Chrome, Safari).
+                  * ✅ Khi sửa lỗi: Ghi chú rõ "Đã sửa [chi tiết]" để QC dễ check.
+Cho QC Tester
+                  * 📱 Test trên ít nhất 2 devices (Mobile + Desktop).
+                  * ⚠️ Khi FAIL: Bắt buộc chọn Severity và viết Note chi tiết (Lỗi gì? Ở đâu? Cách tái hiện?).
+                  * 📸 Luôn kèm screenshot hoặc video minh chứng lỗi.
+                  * Cách viết Note tốt:
+                  * Bad: "Lỗi UI".
+                  * Good: "UI/UX: Nút 'Tiếp tục' bị che bởi popup chúc mừng khi hoàn thành Level 1 trên iPad (768px)".
+Cho Admin/CTO
+                  * Chỉ Approve khi game đã Pass QC.
+                  * Nên Spot check (chơi thử nhanh) trước khi Publish.
+________________
+
+
+7. TROUBLESHOOTING
+Vấn đề 1: "No version found for this game"
+                  * Nguyên nhân: Game chưa có version nào được upload.
+                  * Giải pháp: Dev cần upload version và file game lên cloud trước.
+Vấn đề 2: "Cannot submit version in [status]"
+                  * Giải pháp: Chỉ được submit khi status là draft hoặc qc_failed. Không thể submit khi đang uploaded hoặc qc_processing.
+Vấn đề 3: Self-QA validation failed
+                  * Giải pháp: Dev phải tick đủ 4 mục: testedDevices, testedAudio, gameplayComplete, contentVerified.
+________________
+
+
+8. METRICS & KPI
+Quality Metrics:
+                  * First-time QC Pass Rate: Mục tiêu ≥ 70%.
+                  * Average QC Attempts: Mục tiêu ≤ 1.5 lần/game.
+Efficiency Metrics:
+                  * QC Turnaround Time: Thời gian từ lúc submit đến có kết quả < 24h.
+                  * Dev Fix Time: Thời gian sửa lỗi < 48h.
+________________
+
+
+9. QUY TRÌNH TỔNG HỢP (TÓM TẮT)
+                  1. DEV: Upload Game → Self-QA → Submit to QC.
+                  2. QC: Nhận game từ Inbox → Review trên thiết bị giả lập → Đánh giá (Checklist/Severity).
+                  * Nếu FAIL: Gửi lại Dev (kèm Note/Evidence) → Dev sửa → Re-submit.
+                  * Nếu PASS: Chuyển trạng thái Pass.
+                  3. ADMIN: Review lần cuối → Approve → Publish.
+________________
+
+
+🛠 HƯỚNG DẪN THAO TÁC QC (STEP-BY-STEP)
+Đây là quy trình bắt buộc dành cho QC Tester khi thực hiện kiểm tra một game trên hệ thống Iruka. Hãy thực hiện tuần tự theo 5 bước sau:
+⏳ BƯỚC 1: TIẾP NHẬN & SÀNG LỌC (1-2 phút)
+Mục tiêu: Xác định đúng game cần test và ưu tiên các game quan trọng.
+                  1. Truy cập vào QC Inbox trên hệ thống Web.
+                  2. Quan sát danh sách chờ, ưu tiên chọn game theo thứ tự:
+                  * 1️⃣ Game có Badge "Re-test" (Màu vàng): Đây là game đã sửa lỗi, cần check lại gấp.
+                  * 2️⃣ Game sắp đến deadline: Kiểm tra ngày gửi.
+                  * 3️⃣ Game mới gửi: (Theo thứ tự thời gian).
+                  3. Click vào game để mở màn hình Review Page.
+                  4. Đọc thông tin:
+                  * Xem "Self-QA Checklist" để biết Dev đã tự test những gì.
+                  * Nếu là Re-test: Đọc kỹ "Lỗi lần trước" để biết cần tập trung soi chỗ nào.
+________________
+
+
+🚦 BƯỚC 2: SMOKE TEST - KIỂM TRA SƠ BỘ (2-3 phút)
+Mục tiêu: Đảm bảo game chạy được trước khi test sâu. Nếu bước này Fail, trả game về ngay.
+                  1. Quan sát màn hình Game Preview (bên trái).
+                  2. Kiểm tra nhanh:
+                  * Game có load được vào màn hình Start không? (Hay bị trắng màn hình/loading mãi mãi).
+                  * Bấm nút "Chơi ngay/Start" có vào được game không?
+                  * Thông tin Môn/Lớp/Unit hiển thị trên Web có khớp với nội dung trong game không?
+                  3. Quyết định nhanh:
+                  * 🔴 Nếu game không load hoặc crash ngay lập tức: REJECT NGAY (Chọn Severity: Critical).
+                  * 🟢 Nếu game chạy ổn: Chuyển sang Bước 3.
+________________
+
+
+🔍 BƯỚC 3: TEST CHI TIẾT - IN-DEPTH TEST (10-15 phút)
+Mục tiêu: Tìm lỗi theo 4 hạng mục chính. Hãy sử dụng thanh công cụ đổi thiết bị trên Web.
+3.1. Kiểm tra Giao diện (UI/UX)
+                  * Chuyển view sang 📱 Mobile (375x667):
+                  * Các nút bấm có bị quá nhỏ hoặc bị che khuất không?
+                  * Text có bị tràn ra ngoài khung không?
+                  * Popup thông báo có hiển thị đầy đủ không?
+                  * Chuyển view sang 💻 Desktop/Tablet:
+                  * Background có bị vỡ hoặc có khoảng đen vô lý không?
+3.2. Kiểm tra Gameplay (Logic)
+                  * Chơi thắng: Hoàn thành game đúng luật → Kiểm tra màn hình Win (Có hiện điểm/sao đúng không?).
+                  * Chơi thua: Cố tình chọn sai/làm sai → Kiểm tra màn hình Lose (Có hiện nút chơi lại không?).
+                  * Thao tác: Bấm liên tục vào một nút (spam click) xem game có bị đơ không.
+3.3. Kiểm tra Âm thanh (Audio)
+                  * Nghe nhạc nền (BGM) và âm thanh hiệu ứng (SFX).
+                  * Bấm nút Mute (Tắt tiếng) trong game → Đảm bảo game im lặng hoàn toàn.
+                  * Bấm nút Unmute → Đảm bảo âm thanh có lại bình thường.
+3.4. Kiểm tra Nội dung (Content)
+                  * Soi lỗi chính tả tiếng Việt/Tiếng Anh.
+                  * Đối chiếu với yêu cầu của bài học (Ví dụ: Game dạy toán lớp 1 thì không được có phép nhân).
+________________
+
+
+📝 BƯỚC 4: GHI NHẬN KẾT QUẢ & BÁO CÁO (Quan trọng nhất)
+Mục tiêu: Cung cấp thông tin chính xác để Dev sửa lỗi hoặc Admin duyệt.
+Tại cột bên phải (QC Panel), thực hiện hành động dựa trên kết quả Bước 3:
+🔴 TRƯỜNG HỢP 1: CÓ LỖI (FAIL)
+                  1. Tại mục bị lỗi (ví dụ UI), chọn trạng thái Fail.
+                  2. Chọn mức độ nghiêm trọng (Severity):
+                  * Minor: Lỗi chính tả, xấu đẹp (Vẫn chơi được).
+                  * Major: Lỗi tính năng, sai logic (Ảnh hưởng trải nghiệm).
+                  * Critical: Crash, không chơi được (Chặn đứng quy trình).
+                  3. Viết Note (Bắt buộc):
+                  * Mô tả: "Lỗi [A] xảy ra khi làm hành động [B]".
+                  * Cách tái hiện: "Vào màn 2 > Bấm nút Pause > Game bị treo".
+                  4. Evidence: Upload ảnh chụp màn hình hoặc link video quay màn hình.
+                  5. Bấm nút 🔴 YÊU CẦU SỬA.
+🟢 TRƯỜNG HỢP 2: KHÔNG CÓ LỖI (PASS)
+                  1. Đánh dấu OK cho tất cả các mục trong Checklist.
+                  2. (Tùy chọn) Viết lời khen hoặc lưu ý nhỏ ở mục Note (ví dụ: "Game mượt, nhưng nên giảm dung lượng ảnh").
+                  3. Bấm nút 🟢 DUYỆT (PASS).
+________________
+
+
+🔄 BƯỚC 5: VERIFY - KIỂM TRA LẠI (Dành cho game Re-test)
+Mục tiêu: Xác nhận Dev đã sửa đúng lỗi được báo.
+                  * Chỉ áp dụng khi bạn nhận được game có nhãn Re-test.
+                  1. Đọc lại Note lỗi bạn đã báo lần trước.
+                  2. Vào đúng vị trí đó trong game để kiểm tra.
+                  3. Nếu đã sửa: Đánh dấu Pass.
+                  4. Nếu chưa sửa hoặc sinh ra lỗi mới: Tiếp tục Fail và ghi rõ "Lỗi cũ chưa fix" hoặc "Phát sinh lỗi mới".
+________________
+
+
+💡 MẸO NHANH CHO QC
+                  * Quy tắc 3 thiết bị: Luôn check Mobile trước, Tablet sau, Desktop cuối cùng.
+                  * Quy tắc "Ngón tay to": Hãy thử bấm trượt ra ngoài nút bấm xem game có phản ứng sai không.
+                  * Copy Paste: Dùng template báo lỗi có sẵn để tiết kiệm thời gian gõ phím.
+
+
+CHI TIẾT CÁC BƯỚC THỰC HIỆN
+                     1. Kiểm tra yêu cầu game cần test  
+                     2. Kiểm tra theo checklist (có màn chơi thử)  
+                     3. Trả lại kết quả cho DEV hoặc gửi cho admin/cto/ceo duyệt  
+Quy trinh duyệt game
+                        1. Đăng nhập bằng tài khoản Admin hoặc CTO/CEO và vào trang “chờ duyệt”.
+                        2. Trong danh sách game chờ duyệt, chọn game và bấm vào nút “duyệt”  
+                        3. Bấm nút “xác nhận” để hoàn thành duyệt game  
+                        4. Nếu game chưa đạt tiêu chuẩn, bấm nút “yêu cầu sửa” để gửi thông tin về cho dev  
+Cách sử dụng voice trong sdk
+CÁCH SỬ DỤNG CÁC HÀM VOICE TRONG SDK
+
+                           * Trong màn game xử lý voice thêm code:
+
+
+import { configureSdkContext } from "@iruka-edu/mini-game-sdk";
+import { voice } from "@iruka-edu/mini-game-sdk";
+
+
+configureSdkContext({
+  fallback: {
+    gameId: "local-game-001",
+    lessonId: "local-lesson-001",
+    gameVersion: "0.0.0",
+  },
+});
+
+
+Hàm configureSdkContext để mock dữ liệu khi game không ở trên hub để game vẫn có thể chạy voice độc lập khi ko có dữ liệu của hub. Dữ liệu mock này có thể thay đổi tùy theo anh em dev.
+
+
+
+
+                           * Khi tạo mới session sẽ gọi hàm:
+
+const response = await voice.StartSession({ testmode: true });
+
+
+
+
+
+
+                              * Khi kết thúc session sẽ gọi hàm:
+
+const response = await voice.EndSession({ totalQuestionsExpect: totalLines, isUserAborted: false, testmode: true });
+
+
+totalLines ở đây là tổng số câu hỏi dự kiến
+
+
+
+
+                                 * Khi submit kết quả sẽ gọi hàm:
+
+const response = await voice.Submit({
+      audioFile: audioFile,
+      questionIndex: lineIndex + 1,
+      targetText: targetTextObj,
+      durationMs: durationMs,
+      exerciseType: ExerciseType.NURSERY_RHYME,
+      testmode: this.config.testmode //true or false
+});
+
+
+Cách sử dụng sdk trace chấm điểm trong game tô nét
+QUY TRÌNH CHUẨN: TÍCH HỢP SDK TRACE CHẤM ĐIỂM VÀO GAME TÔ NÉT
+1) Import
+import { trace } from "@iruka-edu/mini-game-sdk";
+
+
+________________
+
+
+2) Khi cần chấm 1 nét → chuẩn bị dữ liệu cho SDK
+SDK cần đúng 2 thứ:
+userPath (nét user vừa vẽ)
+const userPath: trace.TracePoint[] = userStroke.map((p, i) => ({
+  x: p.x,
+  y: p.y,
+  t: userTimes[i], // có thể bỏ nếu không cần
+}));
+modelPath (nét mẫu tương ứng strokeIndex)
+const modelPath: trace.Point[] = referenceStroke.map(p => ({
+  x: p.x,
+  y: p.y,
+}));
+⚠️ Bắt buộc:
+                                    * userPath và modelPath phải cùng hệ tọa độ (pixel/world)
+________________
+
+
+3) Gọi SDK chấm điểm
+const result = trace.evaluateTraceAttempt({
+  userPath,
+  modelPath,
+  cfg: trace.DEFAULT_TRACE_CONFIG,
+  liftCount: 1,
+});
+
+
+________________
+
+
+4) Đọc kết quả
+Pass / Fail:
+result.is_correct
+
+
+Điểm tổng:
+result.score.total
+
+
+Lý do fail (nếu có):
+result.error_code
