@@ -16,14 +16,23 @@ import { GameConstants } from '../../consts/GameConstants';
 import AudioManager from '../../audio/AudioManager';
 import { AnimationFactory } from '../../utils/AnimationFactory';
 import { changeBackground } from '../../utils/BackgroundManager';
-import { playVoiceLocked } from '../../utils/rotateOrientation';
+
 
 // Helper modules
 import { SpeakUI, type SpeakUIElements } from './SpeakUI';
 import { SpeakVoice } from './SpeakVoice';
 import { ReadingFinger } from './ReadingFinger';
-import { VoiceHandler } from '../../voice/VoiceHandler';
 import { DebugGrid } from '../../utils/DebugGrid';
+import { voice } from '@iruka-edu/mini-game-sdk';
+
+/**
+ * Lược đồ (Schema) cho payload targetText
+ * Đảm bảo dữ liệu gửi đi ở dạng dictionary hoặc chuỗi hợp lệ, không bị lỗi ép kiểu sang integer.
+ */
+interface TargetTextPayload {
+    text: string;
+    value: number;
+}
 
 export default class SpeakScene extends SceneBase {
     // ========================================================================
@@ -107,7 +116,7 @@ export default class SpeakScene extends SceneBase {
             this.ui.microBtn,
             this.ui.volumeBar,
             {
-                onRecordingComplete: (result) => this.onRecordingComplete(result.audioBlob),
+                onRecordingComplete: (result) => this.onRecordingComplete(result.audioBlob, result.durationMs),
                 onRecordingError: (err) => this.onRecordingError(err),
             }
         );
@@ -138,6 +147,13 @@ export default class SpeakScene extends SceneBase {
         this.retryCount = 0;
 
         this.startWithAudio(() => {
+            // Delay chạy StartSession sau khi vào game 1 đoạn để chờ user gesture (Do Autoplay policy yêu cầu user click vô tab mới cho bật Mic/AudioContext)
+            // hoặc tốt nhất mình chuyển nó xuống click event của Scene nhưng tạm thời để Start qua try-catch ko block process.
+            try {
+                voice.StartSession({ testmode: GameConstants.VOICE_RECORDING.TEST_MODE })
+                    .catch(e => console.warn("[SpeakScene] StartSession mồi thất bại tự gọi lại sau:", e));
+            } catch (e) { }
+
             // 1. Tạm tắt keyboard trong lúc setup
             if (this.input.keyboard) this.input.keyboard.enabled = false;
 
@@ -239,11 +255,18 @@ export default class SpeakScene extends SceneBase {
             // Level 0: Phát intro-speak ngay lập tức (sau khi tàu đã xuất hiện)
             console.log('[SpeakScene] Step 1: Phát intro-speak');
 
-            // Bật hiệu ứng loa rung
-            this.startSpeakerActiveAnim();
-            this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+            // Bật delay hiệu ứng loa rung chờ đến khi thực sự nói ("Hôm nay...")
+            const introDelay = TIMING.DELAY_INTRO_SPEAKER || 200;
+            const introAnimTimer = this.time.delayedCall(introDelay, () => {
+                // Check if intro is still playing and game is active
+                if (this.isGameActive && !this.isRecordingActive) {
+                    this.startSpeakerActiveAnim();
+                    this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+                }
+            });
 
             AudioManager.playWithCallback('intro-speak', () => {
+                introAnimTimer.destroy(); // Cancel if audio finishes super early
                 this.stopSpeakerActiveAnim();
                 this.speakUI.stopSpeakerAnimation();
 
@@ -296,17 +319,25 @@ export default class SpeakScene extends SceneBase {
             this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
             AudioManager.playWithCallback(countVoiceKey, () => {
 
-                // Bước 4: Voice "Bây giờ bé hãy nhấn vào mic..."
-                console.log('[SpeakScene] Step 4: Voice press mic');
-                this.startSpeakerActiveAnim();
-                this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
-                AudioManager.playWithCallback('voice-nhan-mic', () => {
+                // Dừng nhép miệng/loa trong lúc chờ delay
+                this.stopSpeakerActiveAnim();
+                this.speakUI.stopSpeakerAnimation();
 
-                    // Bước 5: Hiện nút mic + bàn tay gọi ý → sẵn sàng
-                    console.log('[SpeakScene] Step 5: Show mic, waiting');
-                    this.stopSpeakerActiveAnim();
-                    this.speakUI.stopSpeakerAnimation();
-                    this.showMicWithHint();
+                const delay = GameConstants.SPEAK_SCENE.TIMING.DELAY_BEFORE_MIC || 1000;
+
+                this.time.delayedCall(delay, () => {
+                    // Bước 4: Voice "Bây giờ bé hãy nhấn vào mic..."
+                    console.log('[SpeakScene] Step 4: Voice press mic');
+                    this.startSpeakerActiveAnim();
+                    this.speakUI.startSpeakerAnimation(this.ui.speakerBtn);
+                    AudioManager.playWithCallback('voice-nhan-mic', () => {
+
+                        // Bước 5: Hiện nút mic + bàn tay gọi ý → sẵn sàng
+                        console.log('[SpeakScene] Step 5: Show mic, waiting');
+                        this.stopSpeakerActiveAnim();
+                        this.speakUI.stopSpeakerAnimation();
+                        this.showMicWithHint();
+                    });
                 });
             });
         });
@@ -412,7 +443,7 @@ export default class SpeakScene extends SceneBase {
     /**
      * Khi quá trình ghi âm kết thúc thành công
      */
-    private async onRecordingComplete(audioBlob: Blob): Promise<void> {
+    private async onRecordingComplete(audioBlob: Blob, durationMs: number = 3000): Promise<void> {
         console.log(`[SpeakScene] Recording complete, size: ${(audioBlob.size / 1024).toFixed(1)}KB`);
 
         // Đổi trạng thái mascot sang đang xử lý logic
@@ -420,9 +451,26 @@ export default class SpeakScene extends SceneBase {
         this.mascotProcessing.play();
 
         try {
-            // Gửi dữ liệu âm thanh tới Backend/API
             const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
-            const speechResult = await VoiceHandler.sendToBackend(audioBlob, String(level.trainCars));
+
+            // Lược đồ đối tượng targetText phục vụ SDK chấm điểm
+            const targetTextObj: TargetTextPayload = {
+                text: String(level.trainCars),
+                value: level.trainCars
+            };
+
+            // Đóng gói âm thanh chuẩn WAV của sếp thành một File cho SDK backend đọc 
+            const wavRecordFile = new File([audioBlob], 'game_record.wav', { type: 'audio/wav' });
+
+            // Sử dụng hàm Submit của Iruka SDK để gọi Backend
+            const response = await voice.Submit({
+                audioFile: wavRecordFile,
+                questionIndex: this.currentLevel,
+                targetText: targetTextObj as any, // Ép kiểu lướt qua Warning typescript nếu type SDK ngáo
+                durationMs: durationMs,
+                exerciseType: "COUNTING" as any,
+                testmode: GameConstants.VOICE_RECORDING.TEST_MODE
+            });
 
             // Kết thúc hiệu ứng mascot xử lý
             this.mascotProcessing.stop();
@@ -431,13 +479,14 @@ export default class SpeakScene extends SceneBase {
             this.speakVoice.resetToIdle();
             this.isRecordingActive = false;
 
-            // Phân tích kết quả: Cố gắng lấy số từ lời nói
-            const spokenNumber = parseInt(speechResult.transcript, 10);
-            if (!isNaN(spokenNumber)) {
-                this.checkAnswer(spokenNumber, level.trainCars);
+            console.log(`[SpeakScene] Voice SDK Result: score=${response.score}`);
+
+            // Cập nhật điểm SDK nếu >= 50 thì cho là đúng
+            if (response.score >= 50) {
+                this.checkAnswer(level.trainCars, level.trainCars);
             } else {
-                console.warn('[SpeakScene] Không nhận diện được số từ bản lời nói (transcript):', speechResult.transcript);
-                this.showResult(false, 'Thử lại nhé!');
+                console.warn('[SpeakScene] SDK chấm chưa đạt:', response);
+                this.checkAnswer(-1, level.trainCars); // Trả lời sai
             }
         } catch (e) {
             console.error('[SpeakScene] API error:', e);
@@ -554,6 +603,14 @@ export default class SpeakScene extends SceneBase {
     private onAllLevelsComplete(): void {
         console.log('[SpeakScene] All 5 levels complete!');
         this.stopAllMascots();
+
+        // Kết thúc session voice của Iruka SDK
+        voice.EndSession({
+            totalQuestionsExpect: GameConstants.SPEAK_SCENE.LEVELS.length,
+            isUserAborted: false,
+            testmode: GameConstants.VOICE_RECORDING.TEST_MODE
+        }).catch(e => console.error("EndSession error:", e));
+
         // Chuyển tới màn hình kết thúc Game (EndGame)
         this.scene.start(SceneKeys.EndGame);
     }

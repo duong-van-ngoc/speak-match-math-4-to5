@@ -23,15 +23,15 @@ const SOUND_MAP: Record<string, SoundConfig> = {
     // ---- Giọng hướng dẫn (Prompt Voice) ----
     'intro-speak': { src: `${BASE_PATH}prompt/intro-speak.mp3`, volume: 1.0 },
     'voice-dem-toa-tau': { src: `${BASE_PATH}prompt/con_hay_dem_so_toa_tau_trong_buc_tranh_cung_co_426daf0c-e8ca-416e-b0dd-742ec22fa969.mp3`, volume: 1.0 },
-    'voice-toa-thu-nhat': { src: `${BASE_PATH}prompt/1.mp3`, volume: 1.0 },
+    'voice-toa-thu-nhat': { src: `${BASE_PATH}prompt/1_toa_tau.mp3`, volume: 1.0 },
     'voice-nhan-mic': { src: `${BASE_PATH}prompt/bay_gio_be_hay_nhan_vao_mic_de_doc_lai_nhe_23085126-98aa-4885-a80e-19013fb32617.mp3`, volume: 1.0 },
 
     // ---- Voice đếm toa tàu theo level ----
-    'voice-count-1': { src: `${BASE_PATH}prompt/1.mp3`, volume: 1.0 },
-    'voice-count-2': { src: `${BASE_PATH}prompt/1_2.mp3`, volume: 1.0 },
-    'voice-count-3': { src: `${BASE_PATH}prompt/1_2_3.mp3`, volume: 1.0 },
-    'voice-count-4': { src: `${BASE_PATH}prompt/1_2_3_4.mp3`, volume: 1.0 },
-    'voice-count-5': { src: `${BASE_PATH}prompt/1_2_3_4_5.mp3`, volume: 1.0 },
+    'voice-count-1': { src: `${BASE_PATH}prompt/1_toa_tau.mp3`, volume: 1.0 },
+    'voice-count-2': { src: `${BASE_PATH}prompt/1_2_toa_tau.mp3`, volume: 1.0 },
+    'voice-count-3': { src: `${BASE_PATH}prompt/1_2_3_toa_tau.mp3`, volume: 1.0 },
+    'voice-count-4': { src: `${BASE_PATH}prompt/1_2_3_4_toa_tau.mp3`, volume: 1.0 },
+    'voice-count-5': { src: `${BASE_PATH}prompt/1_2_3_4_5_toa_tau.mp3`, volume: 1.0 },
     'intro-voice': { src: `${BASE_PATH}prompt/intro-speak.mp3`, volume: 1.0 },
     // 'voice-speaking': { src: `${BASE_PATH}prompt/Speak.mp3`, volume: 1.0 },
 
@@ -67,6 +67,10 @@ class AudioManager {
     // Khai báo kiểu dữ liệu cho Map chứa các đối tượng Howl
     private sounds: Record<string, Howl> = {};
     private isLoaded: boolean = false;
+
+    // ----- QUẢN LÝ KÊNH GIỌNG NÓI (VOICE CHANNEL) -----
+    private activeVoiceKey: string | null = null;
+    private activeVoiceId: number | null = null;
 
     constructor() {
         // Cấu hình quan trọng cho iOS
@@ -134,31 +138,81 @@ class AudioManager {
      */
     play(id: string): number | undefined {
         if (!this.isLoaded || !this.sounds[id]) {
-            console.warn(
-                `[AudioManager] Không tìm thấy hoặc chưa load: ${id}`
-            );
+            // Loại trừ 'voice-rotate' khỏi cảnh báo vì template hiện tại đang không tích hợp sẵn file này
+            if (id !== 'voice-rotate') {
+                console.warn(
+                    `[AudioManager] Không tìm thấy hoặc chưa load: ${id}`
+                );
+            }
             return;
         }
         return this.sounds[id].play();
     }
 
     /**
-     * Phát âm thanh và gọi callback khi phát xong
+     * Phát âm thanh ĐỘC QUYỀN (chỉ 1 voice tại 1 thời điểm).
+     * Dùng cho hướng dẫn giọng nói để tránh bị chồng chéo.
      * @param {string} id - ID âm thanh
      * @param {Function} onEnd - Callback khi phát xong
      */
     playWithCallback(id: string, onEnd: () => void): void {
+        // Nếu có 1 voice đang xếp hàng phát -> Tắt cuộc hội thoại đó đi định tuyến lại
+        this.stopCurrentVoice();
+
         if (!this.isLoaded || !this.sounds[id]) {
             console.warn(`[AudioManager] Không tìm thấy: ${id}`);
-            onEnd(); // Vẫn gọi callback để không bị kẹt
+            onEnd(); // Vẫn gọi callback để flow game không bị kẹt chết
             return;
         }
+
         const soundId = this.sounds[id].play();
+
+        // Cập nhật thẻ Voice hiện tại
+        this.activeVoiceKey = id;
+        this.activeVoiceId = soundId as number;
+
         if (soundId !== undefined) {
-            this.sounds[id].once('end', onEnd, soundId);
+            // Lắng nghe sự kiện end để dọn dẹp biến theo dõi
+            this.sounds[id].once('end', () => {
+                if (this.activeVoiceId === soundId) {
+                    this.clearActiveVoice();
+                    onEnd(); // Chỉ trigger callback nếu voice này KHÔNG bị ngắt ngang
+                }
+            }, soundId);
         } else {
+            this.clearActiveVoice();
             onEnd();
         }
+    }
+
+    /**
+     * Dừng ngay giọng nói đang phát
+     */
+    stopCurrentVoice(): void {
+        if (this.activeVoiceKey && this.activeVoiceId !== null) {
+            const currentHowl = this.sounds[this.activeVoiceKey];
+
+            // Xóa bộ lắng nghe sự kiện 'end' cũ để nó không kích hoạt callback của luồng cũ
+            currentHowl.off('end', undefined, this.activeVoiceId);
+            currentHowl.stop(this.activeVoiceId);
+
+            this.clearActiveVoice();
+        }
+    }
+
+    private clearActiveVoice(): void {
+        this.activeVoiceKey = null;
+        this.activeVoiceId = null;
+    }
+
+    /**
+     * Trả về true nếu đang có hướng dẫn giọng nói phát ra loa
+     */
+    isVoicePlaying(): boolean {
+        if (this.activeVoiceKey && this.activeVoiceId !== null) {
+            return this.sounds[this.activeVoiceKey].playing(this.activeVoiceId);
+        }
+        return false;
     }
 
     /**

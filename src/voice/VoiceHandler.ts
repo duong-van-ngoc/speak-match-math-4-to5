@@ -19,7 +19,12 @@ export interface VoiceEvalResponse {
     latency_seconds: number;
 }
 
-export type RecordingState = 'idle' | 'calibrating' | 'recording' | 'processing';
+export interface RecordingCompleteResult {
+    audioBlob: Blob;
+    durationMs: number;
+}
+
+export type RecordingState = 'idle' | 'starting' | 'calibrating' | 'recording' | 'processing';
 
 // ===== TEST MODE CONFIG =====
 // Đường dẫn hardcode cho file test audio (sử dụng khi TEST_MODE=true)
@@ -34,13 +39,17 @@ export class VoiceHandler {
     private analyser: AnalyserNode | null = null;
     private mediaStream: MediaStream | null = null;
 
-    // Audio filters for noise reduction
+    // Các bộ lọc âm thanh để giảm thiểu tiếng ồn
+    private audioFilterNodes: BiquadFilterNode[] = [];
     private highpassFilter: BiquadFilterNode | null = null;
     private lowpassFilter: BiquadFilterNode | null = null;
     private notchFilter: BiquadFilterNode | null = null;
 
     private audioChunks: Blob[] = [];
     private state: RecordingState = 'idle';
+    private timeDomainBuffer?: Uint8Array;
+    private recordingStartedAtMs: number | null = null;
+    private recordingFinishedAtMs: number | null = null;
 
     // ===== ADAPTIVE VAD (Voice Activity Detection) =====
     // Sử dụng Exponential Moving Average thay vì baseline cố định
@@ -68,7 +77,7 @@ export class VoiceHandler {
         SPEECH_MIN_VOLUME: 35,          // Chỉ tính sample có vol > 35 (Hỗ trợ giọng nói nhỏ)
     };
 
-    // Silence detection
+    // Phát hiện khoảng lặng
     private lastSoundTime: number = 0;
     private silenceCheckInterval: number | null = null;
     private consecutiveSilentFrames: number = 0;
@@ -79,19 +88,19 @@ export class VoiceHandler {
     private speechVolumeAvg: number = 0;      // Trung bình âm lượng giọng nói
     private speechSampleCount: number = 0;    // Số sample giọng nói đã thu
 
-    // Timeout
+    // Hết giờ
     private recordingTimeout: number | null = null;
 
-    // Callbacks
+    // Các hàm gọi lại
     private onStateChange?: (state: RecordingState) => void;
     private onVolumeChange?: (volume: number, isAboveThreshold: boolean) => void;
-    private onComplete?: (audioBlob: Blob) => void;
+    private onComplete?: (result: RecordingCompleteResult) => void;
     private onError?: (error: string) => void;
 
     constructor(callbacks?: {
         onStateChange?: (state: RecordingState) => void;
         onVolumeChange?: (volume: number, isAboveThreshold: boolean) => void;
-        onComplete?: (audioBlob: Blob) => void;
+        onComplete?: (result: RecordingCompleteResult) => void;
         onError?: (error: string) => void;
     }) {
         this.onStateChange = callbacks?.onStateChange;
@@ -101,7 +110,7 @@ export class VoiceHandler {
     }
 
     // ========================================================================
-    // REGION: GETTERS & PUBLIC API
+    // KHU VỰC: GETTERS VÀ PUBLIC API
     // ========================================================================
 
     get currentState(): RecordingState {
@@ -120,17 +129,15 @@ export class VoiceHandler {
         const CFG = GameConstants.VOICE_RECORDING;
 
         // ===== TEST MODE: Skip recording, load test file and call API directly =====
-        if (CFG.TEST_MODE) {
-            if (this.state === 'idle') {
-                await this.handleTestMode();
-            }
+        if (CFG.TEST_MODE && this.state === 'idle') {
+            await this.handleTestMode();
             return;
         }
 
         // ===== NORMAL MODE: Recording flow =====
         if (this.state === 'idle') {
             await this.start();
-        } else if (this.state === 'recording' || this.state === 'calibrating') {
+        } else if (['starting', 'recording', 'calibrating'].includes(this.state)) {
             this.stop();
         }
     }
@@ -141,21 +148,28 @@ export class VoiceHandler {
     async start(): Promise<void> {
         if (this.state !== 'idle') return;
 
+        this.setState('starting');
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            this.onError?.('Microphone API is not supported in this browser environment.');
+            this.cleanup();
+            return;
+        }
+
         try {
-            // Request microphone
+            // Yêu cầu quyền truy cập microphone
             this.mediaStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
-                    autoGainControl: true,
-                    sampleRate: 16000, // 16kHz for speech
+                    autoGainControl: true
                 }
             });
 
-            // Setup audio context for volume analysis
+            // Thiết lập audio context để phân tích âm lượng
             this.setupAudioContext();
 
-            // Setup MediaRecorder
+            // Thiết lập MediaRecorder
             const mimeType = MediaRecorder.isTypeSupported('audio/webm')
                 ? 'audio/webm'
                 : 'audio/mp4';
@@ -170,11 +184,16 @@ export class VoiceHandler {
             };
 
             this.mediaRecorder.onstop = () => {
-                this.processRecording();
+                this.processRecording().catch(err => {
+                    console.error('Failed to process recording:', err);
+                    this.onError?.('Lỗi xử lý ghi âm');
+                });
             };
 
-            // Start recording
-            this.mediaRecorder.start(100); // Collect data every 100ms
+            // Bắt đầu thu âm
+            this.mediaRecorder.start(100); // Thu thập dữ liệu mỗi 100ms
+            this.recordingStartedAtMs = performance.now();
+            this.recordingFinishedAtMs = null;
             this.lastSoundTime = Date.now();
 
             // Phase 1: Calibration (5s đầu phân tích baseline)
@@ -198,6 +217,7 @@ export class VoiceHandler {
         this.clearTimers();
 
         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+            this.recordingFinishedAtMs = performance.now();
             this.mediaRecorder.stop();
         }
 
@@ -205,14 +225,14 @@ export class VoiceHandler {
     }
 
     /**
-     * Dispose handler
+     * Dọn dẹp và hủy (dispose)
      */
     destroy(): void {
         this.cleanup();
     }
 
     // ========================================================================
-    // REGION: PRIVATE - SETUP & HELPERS
+    // KHU VỰC: PRIVATE - THIẾT LẬP VÀ HÀM HỖ TRỢ
     // ========================================================================
 
     private setupAudioContext(): void {
@@ -240,7 +260,7 @@ export class VoiceHandler {
         this.notchFilter.frequency.value = 50; // 50Hz (điện lưới VN)
         this.notchFilter.Q.value = 10; // Narrow notch
 
-        // Connect filter chain: source -> highpass -> notch -> lowpass -> analyser
+        // Kết nối chuỗi bộ lọc: source -> highpass -> notch -> lowpass -> analyser
         source.connect(this.highpassFilter);
         this.highpassFilter.connect(this.notchFilter);
         this.notchFilter.connect(this.lowpassFilter);
@@ -248,6 +268,9 @@ export class VoiceHandler {
         this.analyser = this.audioContext.createAnalyser();
         this.analyser.fftSize = 256;
         this.lowpassFilter.connect(this.analyser);
+
+        this.audioFilterNodes = [this.highpassFilter, this.notchFilter, this.lowpassFilter];
+        this.timeDomainBuffer = new Uint8Array(this.analyser.frequencyBinCount);
         // ===== END AUDIO FILTERS =====
     }
 
@@ -261,6 +284,8 @@ export class VoiceHandler {
 
         // Chuyển sang processing - UI sẽ hiển thị loading ngay
         this.setState('processing');
+        this.recordingStartedAtMs = performance.now();
+        this.recordingFinishedAtMs = null;
 
         try {
             const response = await fetch(TEST_AUDIO_PATH);
@@ -269,10 +294,14 @@ export class VoiceHandler {
             }
 
             const audioBlob = await response.blob();
+            this.recordingFinishedAtMs = performance.now();
             console.log(`VoiceHandler [TEST_MODE]: Loaded audio file, size: ${audioBlob.size} bytes`);
 
             // Callback với audio blob - SpeakVoice sẽ gọi API và xử lý kết quả
-            this.onComplete?.(audioBlob);
+            this.onComplete?.({
+                audioBlob,
+                durationMs: this.getRecordingDurationMs()
+            });
 
         } catch (err) {
             console.error('VoiceHandler [TEST_MODE]: Error', err);
@@ -282,7 +311,7 @@ export class VoiceHandler {
     }
 
     // ========================================================================
-    // REGION: PRIVATE - CALIBRATION
+    // KHU VỰC: PRIVATE - HIỆU CHỈNH (CALIBRATION)
     // ========================================================================
 
     /**
@@ -309,8 +338,8 @@ export class VoiceHandler {
                 const p25Index = Math.floor(sorted.length * 0.25);
                 const p25 = sorted[p25Index];
 
-                // Sanity check: Cap baseline theo MAX_BASELINE
-                const clampedBaseline = Math.min(p25, VAD.MAX_BASELINE);
+                // Sanity check: Clamp baseline theo MIN_BASELINE và MAX_BASELINE
+                const clampedBaseline = Math.max(VAD.MIN_BASELINE, Math.min(VAD.MAX_BASELINE, p25));
 
                 // Khởi tạo adaptive baseline
                 this.adaptiveBaseline = clampedBaseline;
@@ -333,7 +362,7 @@ export class VoiceHandler {
     }
 
     // ========================================================================
-    // REGION: PRIVATE - RECORDING & VAD
+    // KHU VỰC: PRIVATE - THU ÂM VÀ VAD (RECORDING & VAD)
     // ========================================================================
 
     /**
@@ -467,24 +496,24 @@ export class VoiceHandler {
     }
 
     // ========================================================================
-    // REGION: PRIVATE - AUDIO PROCESSING & UTILS
+    // KHU VỰC: PRIVATE - XỬ LÝ ÂM THANH VÀ TIỆN ÍCH
     // ========================================================================
 
     /**
      * Lấy volume hiện tại từ analyser
      */
     private getCurrentVolume(): number {
-        if (!this.analyser) return 0;
+        if (!this.analyser || !this.timeDomainBuffer) return 0;
 
-        const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-        this.analyser.getByteFrequencyData(dataArray);
+        this.analyser.getByteTimeDomainData(this.timeDomainBuffer as any);
 
-        // RMS (Root Mean Square) cho volume
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-            sum += dataArray[i] * dataArray[i];
+        let sumSquares = 0;
+        for (let i = 0; i < this.timeDomainBuffer.length; i++) {
+            const normalized = (this.timeDomainBuffer[i] - 128) / 128.0;
+            sumSquares += normalized * normalized;
         }
-        return Math.sqrt(sum / dataArray.length);
+        const rms = Math.sqrt(sumSquares / this.timeDomainBuffer.length);
+        return rms * 255;
     }
 
     /**
@@ -502,11 +531,17 @@ export class VoiceHandler {
             const mimeType = this.mediaRecorder?.mimeType || 'audio/webm';
             const audioBlob = new Blob(this.audioChunks, { type: mimeType });
 
-            // Convert to WAV (nếu cần)
+            // Chuyển đổi sang WAV
             const wavBlob = await this.convertToWav(audioBlob);
 
-            // Callback với audio blob
-            this.onComplete?.(wavBlob);
+            // Bật tự động lưu file WAV xuống máy để sếp dễ dàng Debug file trước khi gửi BE
+            VoiceHandler.saveWavLocally(wavBlob, `debug_recording_${Date.now()}.wav`);
+
+            // Callback trả về audio blob (WAV) cho Game (SpeakScene) gọi API
+            this.onComplete?.({
+                audioBlob: wavBlob,
+                durationMs: this.getRecordingDurationMs()
+            });
 
         } catch (err) {
             console.error('VoiceHandler: Failed to process recording', err);
@@ -517,8 +552,8 @@ export class VoiceHandler {
     }
 
     /**
-     * Convert audio blob to WAV format
-     * Lightweight implementation using AudioContext
+     * Chuyển đổi audio blob sang định dạng WAV
+     * Triển khai nhẹ xử lý qua AudioContext thay vì dùng thư viện
      */
     private async convertToWav(audioBlob: Blob): Promise<Blob> {
         try {
@@ -526,7 +561,7 @@ export class VoiceHandler {
             const audioContext = new AudioContext({ sampleRate: 16000 });
             const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-            // Get PCM data
+            // Lấy dữ liệu PCM
             const pcmData = audioBuffer.getChannelData(0);
             const wavBuffer = this.encodeWav(pcmData, audioBuffer.sampleRate);
 
@@ -539,13 +574,13 @@ export class VoiceHandler {
     }
 
     /**
-     * Encode PCM data to WAV format
+     * Mã hóa dữ liệu PCM sang định dạng WAV
      */
     private encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
         const buffer = new ArrayBuffer(44 + samples.length * 2);
         const view = new DataView(buffer);
 
-        // WAV header
+        // Cấu trúc phần đầu của chuẩn WAV
         const writeString = (offset: number, str: string) => {
             for (let i = 0; i < str.length; i++) {
                 view.setUint8(offset + i, str.charCodeAt(i));
@@ -566,7 +601,7 @@ export class VoiceHandler {
         writeString(36, 'data');
         view.setUint32(40, samples.length * 2, true);
 
-        // Convert float to 16-bit PCM
+        // Chuyển đổi float thành 16-bit PCM
         let offset = 44;
         for (let i = 0; i < samples.length; i++) {
             const s = Math.max(-1, Math.min(1, samples[i]));
@@ -610,7 +645,12 @@ export class VoiceHandler {
             this.audioContext = null;
         }
 
-        // Cleanup audio nodes
+        // Dọn dẹp bộ lọc âm thanh
+        this.audioFilterNodes.forEach(node => {
+            if (node) node.disconnect();
+        });
+        this.audioFilterNodes = [];
+
         this.analyser = null;
         this.highpassFilter = null;
         this.lowpassFilter = null;
@@ -618,7 +658,10 @@ export class VoiceHandler {
 
         this.mediaRecorder = null;
         this.audioChunks = [];
+        this.timeDomainBuffer = undefined;
         this.calibrationSamples = [];
+        this.recordingStartedAtMs = null;
+        this.recordingFinishedAtMs = null;
 
         // Reset VAD state
         this.adaptiveBaseline = 0;
@@ -633,8 +676,17 @@ export class VoiceHandler {
         this.setState('idle');
     }
 
+    private getRecordingDurationMs(): number {
+        if (this.recordingStartedAtMs === null) {
+            return GameConstants.VOICE_RECORDING.MAX_DURATION;
+        }
+
+        const endAt = this.recordingFinishedAtMs ?? performance.now();
+        return Math.max(1, Math.round(endAt - this.recordingStartedAtMs));
+    }
+
     // ========================================================================
-    // REGION: STATIC UTILS
+    // KHU VỰC: CÁC TIỆN ÍCH TĨNH (STATIC UTILS)
     // ========================================================================
 
     /**

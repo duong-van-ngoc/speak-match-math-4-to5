@@ -31,7 +31,7 @@ export const GameConstants = {
         NOISE_MARGIN: 5,
 
         /** API endpoint gửi audio (production) */
-        API_URL: 'http://0.0.0.0:8000/api/v1/voice/eval/4-5',
+        
 
         /** Chế độ test: false = dùng mic thật */
         TEST_MODE: true,
@@ -89,9 +89,9 @@ export const GameConstants = {
             FLOAT_DURATION: 1500,
             FLOAT_DISTANCE: 8,
         },
-        // --- HOẠT HÌNH MIỆNG NÓI (sóng âm) ---
+        // --- HOẠT HÌNH  (sóng âm) ---
         SPEAK_ANIMATION: {
-            X: 0.62,  // Nhích nhẹ so với mascot để khớp với miệng
+            X: 0.62,
             Y: 0.81,
             SCALE: 0.7,
             FRAMES: ['ani_speak1', 'ani_speak2', 'ani_speak3'],
@@ -101,6 +101,10 @@ export const GameConstants = {
         TIMING: {
             /** Delay trước khi hiện mic (ms) */
             DELAY_SHOW_MIC: 1000,
+            /** Thời gian chờ từ lúc đếm xong đến lúc nhắc click mic (ms) */
+            DELAY_BEFORE_MIC: 1000,
+            /** Trễ trước khi bắt đầu hiệu ứng sóng âm cho tiếng Intro (ms) */
+            DELAY_INTRO_SPEAKER: 200,
             /** Thời gian ghi âm (ms) */
             RECORDING_DURATION: 5000,
             /** Delay trước khi chuyển level tiếp (ms) */
