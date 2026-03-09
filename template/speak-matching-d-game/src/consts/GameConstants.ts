@@ -44,7 +44,7 @@ export const GameConstants = {
         /** Thời gian im lặng tối đa trước khi tự động dừng (ms). 5000-10000 */
         SILENCE_TIMEOUT: 3000,      // 3 giây
         /** Thời gian calibration để tính baseline volume (ms) */
-        CALIBRATION_DURATION: 2000, // 2 giây
+        CALIBRATION_DURATION: 1000, // 2 giây
         /** Margin thêm vào baseline để lọc tạp âm (0-50) - Logic VAD mới thông minh hơn nên cần margin nhỏ */
         NOISE_MARGIN: 2,
 
