@@ -21,7 +21,7 @@ export interface SpeakVoiceCallbacks {
 export class SpeakVoice {
     private scene: Phaser.Scene;
     private voiceHandler!: VoiceHandler; // Đối tượng xử lý logic ghi âm từ microphone (MediaRecorder)
-    private microBtn: Phaser.GameObjects.Image; // Nút microphone trên màn hình (để đổi màu/scale)
+    private microBtn: Phaser.GameObjects.Image; // Nút microphone trên màn hình (đ ể đổi màu/scale)
     private recordingIndicator: Phaser.GameObjects.Graphics | null = null; // Vòng tròn nền báo hiệu đang thu âm phía sau mic
     private volumeBar: Phaser.GameObjects.Graphics; // Thanh hiển thị/vòng tròn phản hồi dựa trên âm lượng
     private callbacks: SpeakVoiceCallbacks; // Các hàm callback gọi ngược về scene chính khi có kết quả

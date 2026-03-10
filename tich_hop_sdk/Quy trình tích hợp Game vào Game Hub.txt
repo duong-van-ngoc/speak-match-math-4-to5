@@ -763,7 +763,9 @@ Quy trinh duyệt game
                         1. Đăng nhập bằng tài khoản Admin hoặc CTO/CEO và vào trang “chờ duyệt”.
                         2. Trong danh sách game chờ duyệt, chọn game và bấm vào nút “duyệt”  
                         3. Bấm nút “xác nhận” để hoàn thành duyệt game  
-                        4. Nếu game chưa đạt tiêu chuẩn, bấm nút “yêu cầu sửa” để gửi thông tin về cho dev  
+                        4. Nếu game chưa đạt tiêu chuẩn, bấm nút “yêu cầu sửa” để gửi thông tin về cho dev 
+                        
+                         
 Cách sử dụng voice trong sdk
 CÁCH SỬ DỤNG CÁC HÀM VOICE TRONG SDK
 

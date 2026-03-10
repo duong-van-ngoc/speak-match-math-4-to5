@@ -29,12 +29,29 @@ export type RecordingState = 'idle' | 'starting' | 'calibrating' | 'recording' |
 // ===== TEST MODE CONFIG =====
 // Đường dẫn hardcode cho file test audio (sử dụng khi TEST_MODE=true)
 const TEST_AUDIO_PATH = 'assets/test_mode/NoiNgong.wav';
+const TARGET_SAMPLE_RATE = 16000;
+
+interface AudioStats {
+    peak: number;
+    rms: number;
+    speechPeak: number;
+    speechRms: number;
+    speechRatio: number;
+    clippedRatio: number;
+    sampleCount: number;
+}
+
+interface NormalizationPlan {
+    multiplier: number;
+    speechThreshold: number;
+}
 
 export class VoiceHandler {
     // ========================================================================
     // REGION: PROPERTIES
     // ========================================================================
     private processorNode: ScriptProcessorNode | null = null;
+    private workletNode: AudioWorkletNode | null = null;
     private dummyGain: GainNode | null = null;
     private audioContext: AudioContext | null = null;
     private analyser: AnalyserNode | null = null;
@@ -53,6 +70,8 @@ export class VoiceHandler {
     private timeDomainBuffer?: Uint8Array;
     private recordingStartedAtMs: number | null = null;
     private recordingFinishedAtMs: number | null = null;
+    private recordingSampleRate: number = TARGET_SAMPLE_RATE;
+    private captureSettings: MediaTrackSettings | null = null;
 
     // ===== ADAPTIVE VAD (Voice Activity Detection) =====
     // Sử dụng Exponential Moving Average thay vì baseline cố định
@@ -152,15 +171,24 @@ export class VoiceHandler {
         if (this.state !== 'idle') return;
 
         try {
+            this.recordingStartedAtMs = performance.now();
+            this.recordingFinishedAtMs = null;
+
             // Request microphone
             this.mediaStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
+                    channelCount: 1,
                     echoCancellation: true,
                     noiseSuppression: true,
-                    autoGainControl: false, // TẮT AGC của trình duyệt để ngăn bị tự động hạ âm do tiếng ồn
-                    sampleRate: 16000, // 16kHz for speech
+                    autoGainControl: true,
+                    sampleRate: TARGET_SAMPLE_RATE,
+                    sampleSize: 16,
                 }
             });
+
+            const audioTrack = this.mediaStream.getAudioTracks()[0];
+            this.captureSettings = audioTrack?.getSettings?.() ?? null;
+            this.logCaptureSettings();
 
             // Setup audio pipeline: Mic → Filter → Analyser & Destination (kèm Gain)
             await this.setupAudioContext();
@@ -208,10 +236,11 @@ export class VoiceHandler {
     private async setupAudioContext(): Promise<void> {
         if (!this.mediaStream) return;
 
-        this.audioContext = new AudioContext({ sampleRate: 16000 });
+        this.audioContext = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
         if (this.audioContext.state === "suspended") {
             await this.audioContext.resume();
         }
+        this.recordingSampleRate = this.audioContext.sampleRate;
         const source = this.audioContext.createMediaStreamSource(this.mediaStream);
 
         // ===== AUDIO FILTERS CHAIN =====
@@ -233,50 +262,92 @@ export class VoiceHandler {
         this.notchFilter.frequency.value = 50; // 50Hz (điện lưới VN)
         this.notchFilter.Q.value = 10; // Narrow notch
 
-        // Kết nối chuỗi bộ lọc: source -> highpass -> notch -> lowpass
+        // 4. Gain Node - Tăng âm lượng đầu vào nhẹ nhàng trước khi nén (đã bật lại AGC)
+        this.gainNode = this.audioContext.createGain();
+        this.gainNode.gain.value = this.getInputGainValue();
+
+        // Kết nối chuỗi bộ lọc: source -> highpass -> notch -> lowpass -> gainNode
         source.connect(this.highpassFilter);
         this.highpassFilter.connect(this.notchFilter);
         this.notchFilter.connect(this.lowpassFilter);
+        this.lowpassFilter.connect(this.gainNode);
 
         // --- NHÁNH 1: Phân tích âm thanh (VAD) ---
-        // Giữ nguyên nhánh đo âm lượng để bộ nhận diện (VAD) chạy đúng logic như cũ
+        // Theo dõi đúng tín hiệu sau khi đã áp gain để log và VAD bám sát file gửi BE hơn.
         this.analyser = this.audioContext.createAnalyser();
         this.analyser.fftSize = 256;
-        this.lowpassFilter.connect(this.analyser);
+        this.gainNode.connect(this.analyser);
 
         // --- NHÁNH 2: Ghi âm (Record) ---
-        // 1. Thêm DynamicsCompressorNode để nén và tự động kéo âm thanh nhỏ lên to, chống vỡ màng loa (clipping)
+        // Chỉ nén nhẹ để chặn clipping khi bé nói to, không đè phẳng toàn bộ giọng nói.
         this.compressorNode = this.audioContext.createDynamicsCompressor();
-        this.compressorNode.threshold.value = -50; // Kích hoạt nén với âm thanh từ -50dB trở lên
-        this.compressorNode.knee.value = 40;
-        this.compressorNode.ratio.value = 12; // Tỉ lệ nén cực mạnh
-        this.compressorNode.attack.value = 0;
-        this.compressorNode.release.value = 0.25;
+        this.compressorNode.threshold.value = -20;
+        this.compressorNode.knee.value = 18;
+        this.compressorNode.ratio.value = 2.5;
+        this.compressorNode.attack.value = 0.002;
+        this.compressorNode.release.value = 0.18;
 
-        // 2. Thay vì dùng MediaStreamDestination, ta dùng ScriptProcessor để bắt trực tiếp tín hiệu RAW PCM
-        // Dùng buffer 4096 frames cho 1 kênh Input, 1 kênh Output
-        this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
-        this.processorNode.onaudioprocess = (e) => {
-            // Chỉ bắt đầu lưu dữ liệu nếu đã vượt qua pha Calibration và chuyển sang Recording
-            if (this.state === 'recording') {
-                // Copy dữ liệu âm thanh FLOAT32 từ Channel 0 và gộp vào mảng
-                this.pcmChunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-            }
-        };
+        await this.setupCaptureNode();
 
-        // Dummy Gain để lừa trình duyệt chạy ScriptProcessorNode (do Safari/iOS sẽ không kích hoạt process nếu stream bị cụt ở đích)
+        // Dummy Gain để giữ node capture luôn được clock tới nhưng không phát tiếng ra loa.
         this.dummyGain = this.audioContext.createGain();
         this.dummyGain.gain.value = 0; // Tắt tiếng, không bao giờ phát ra loa
 
-        // Nối dây: Lọc Lowpass -> Bộ Nén -> Bắt Raw PCM -> Dummy (Mute) -> Default Speaker
-        this.lowpassFilter.connect(this.compressorNode);
-        this.compressorNode.connect(this.processorNode);
-        this.processorNode.connect(this.dummyGain);
+        // Nối dây: gainNode -> compressorNode -> captureNode -> dummyGain -> destination
+        this.gainNode.connect(this.compressorNode);
+        if (this.workletNode) {
+            this.compressorNode.connect(this.workletNode);
+            this.workletNode.connect(this.dummyGain);
+        } else if (this.processorNode) {
+            this.compressorNode.connect(this.processorNode);
+            this.processorNode.connect(this.dummyGain);
+        } else {
+            throw new Error('VoiceHandler: No audio capture node available');
+        }
         this.dummyGain.connect(this.audioContext.destination);
 
         this.audioFilterNodes = [this.highpassFilter, this.notchFilter, this.lowpassFilter];
-        this.timeDomainBuffer = new Uint8Array(this.analyser.frequencyBinCount);
+        this.timeDomainBuffer = new Uint8Array(this.analyser.fftSize);
         // ===== END AUDIO FILTERS =====
+    }
+
+    private async setupCaptureNode(): Promise<void> {
+        if (!this.audioContext) return;
+
+        if (typeof AudioWorkletNode !== 'undefined' && this.audioContext.audioWorklet) {
+            try {
+                const moduleUrl = new URL('./pcmCaptureProcessor.js', import.meta.url).href;
+                await this.audioContext.audioWorklet.addModule(moduleUrl);
+
+                this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-capture-processor', {
+                    numberOfInputs: 1,
+                    numberOfOutputs: 1,
+                    outputChannelCount: [1],
+                });
+
+                this.workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+                    this.handleCapturedChunk(event.data);
+                };
+
+                console.log('VoiceHandler: Using AudioWorkletNode for PCM capture');
+                return;
+            } catch (error) {
+                console.warn('VoiceHandler: AudioWorklet unavailable, fallback to ScriptProcessorNode', error);
+                this.workletNode = null;
+            }
+        }
+
+        // Fallback cho trình duyệt cũ.
+        this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+        this.processorNode.onaudioprocess = (e) => {
+            this.handleCapturedChunk(e.inputBuffer.getChannelData(0));
+        };
+        console.log('VoiceHandler: Using ScriptProcessorNode fallback for PCM capture');
+    }
+
+    private handleCapturedChunk(chunk: Float32Array): void {
+        if (this.state !== 'recording' && this.state !== 'calibrating') return;
+        this.pcmChunks.push(new Float32Array(chunk));
     }
 
     /**
@@ -557,41 +628,63 @@ export class VoiceHandler {
      */
     private async convertToWav(chunks: Float32Array[]): Promise<Blob> {
         try {
-            // Nối toàn bộ pcmChunks thành một chuỗi Float32Array duy nhất dài
-            let totalLength = 0;
-            for (const chunk of chunks) {
-                totalLength += chunk.length;
-            }
+            const pcmData = this.mergePcmChunks(chunks);
+            const rawStats = VoiceHandler.analyzeAudio(pcmData);
+            const trimmedPcm = this.trimSilence(pcmData, this.recordingSampleRate, rawStats);
+            const trimmedStats = VoiceHandler.analyzeAudio(trimmedPcm);
+            const normalization = VoiceHandler.buildNormalizationPlan(trimmedStats);
 
-            const pcmData = new Float32Array(totalLength);
-            let offset = 0;
-            for (const chunk of chunks) {
-                pcmData.set(chunk, offset);
-                offset += chunk.length;
-            }
-
-            // --- AUDIO NORMALIZATION (Khắc phục tiếng nhỏ) ---
-            // Quét đỉnh âm thanh cao nhất và dùng đó để tính hệ số khuếch đại lên max cho toàn bộ file
-            let maxAmplitude = 0;
-            for (let i = 0; i < pcmData.length; i++) {
-                const abs = Math.abs(pcmData[i]);
-                if (abs > maxAmplitude) maxAmplitude = abs;
-            }
-
-            // Khống chế đỉnh biên độ 0.9 để file đầu ra luôn to, rõ ràng và chống vỡ tiếng (chỉ nhân lên khi có âm thanh thực tế)
-            let multiplier = 1.0;
-            if (maxAmplitude > 0) {
-                multiplier = 0.9 / maxAmplitude;
-                multiplier = Math.min(multiplier, 20.0); // Khống chế tối đa tăng 20 lần để không rít tiếng ồn
-            }
-
-            // Build header WAV với rate 16000Hz (do getUserMedia đã ép cứng sampleRate 16000)
-            const wavBuffer = this.encodeWav(pcmData, 16000, multiplier);
+            // Build header WAV với sample rate thực tế của AudioContext để không sai metadata.
+            const wavBuffer = this.encodeWav(trimmedPcm, this.recordingSampleRate, normalization.multiplier);
+            const finalStats = VoiceHandler.analyzeAudio(trimmedPcm, normalization.multiplier);
+            this.logAudioTelemetry(rawStats, trimmedStats, finalStats, normalization, pcmData.length, trimmedPcm.length);
             return new Blob([wavBuffer], { type: 'audio/wav' });
         } catch (err) {
             console.error('VoiceHandler: WAV conversion failed', err);
             throw err;
         }
+    }
+
+    private mergePcmChunks(chunks: Float32Array[]): Float32Array {
+        let totalLength = 0;
+        for (const chunk of chunks) {
+            totalLength += chunk.length;
+        }
+
+        const pcmData = new Float32Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            pcmData.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        return pcmData;
+    }
+
+    private trimSilence(samples: Float32Array, sampleRate: number, stats?: AudioStats): Float32Array {
+        if (samples.length === 0) return samples;
+
+        const baseStats = stats ?? VoiceHandler.analyzeAudio(samples);
+        const threshold = Math.max(0.004, Math.min(0.03, Math.max(baseStats.speechPeak, baseStats.peak) * 0.12));
+        const paddingSamples = Math.round(sampleRate * 0.12);
+
+        let start = 0;
+        while (start < samples.length && Math.abs(samples[start]) < threshold) {
+            start++;
+        }
+
+        let end = samples.length - 1;
+        while (end > start && Math.abs(samples[end]) < threshold) {
+            end--;
+        }
+
+        if (start >= end) {
+            return samples;
+        }
+
+        const trimmedStart = Math.max(0, start - paddingSamples);
+        const trimmedEnd = Math.min(samples.length, end + paddingSamples + 1);
+        return samples.slice(trimmedStart, trimmedEnd);
     }
 
     /**
@@ -639,6 +732,40 @@ export class VoiceHandler {
         this.onStateChange?.(state);
     }
 
+    private getInputGainValue(): number {
+        const settings = this.captureSettings as Record<string, unknown> | null;
+        const autoGainEnabled = settings?.autoGainControl === true;
+        return autoGainEnabled ? 2.6 : 3.2;
+    }
+
+    private logCaptureSettings(): void {
+        console.log('VoiceHandler: Mic capture settings', {
+            requestedSampleRate: TARGET_SAMPLE_RATE,
+            actualSettings: this.captureSettings,
+        });
+    }
+
+    private logAudioTelemetry(
+        rawStats: AudioStats,
+        trimmedStats: AudioStats,
+        finalStats: AudioStats,
+        normalization: NormalizationPlan,
+        rawSampleCount: number,
+        trimmedSampleCount: number
+    ): void {
+        console.log('VoiceHandler: Audio telemetry', {
+            sampleRate: this.recordingSampleRate,
+            inputGain: this.gainNode?.gain.value ?? null,
+            rawDurationMs: Math.round(rawSampleCount / this.recordingSampleRate * 1000),
+            trimmedDurationMs: Math.round(trimmedSampleCount / this.recordingSampleRate * 1000),
+            normalizationMultiplier: Number(normalization.multiplier.toFixed(2)),
+            speechThreshold: Number(normalization.speechThreshold.toFixed(4)),
+            raw: VoiceHandler.formatAudioStats(rawStats),
+            trimmed: VoiceHandler.formatAudioStats(trimmedStats),
+            final: VoiceHandler.formatAudioStats(finalStats),
+        });
+    }
+
     private clearTimers(): void {
         if (this.calibrationTimeout) {
             clearTimeout(this.calibrationTimeout);
@@ -660,6 +787,12 @@ export class VoiceHandler {
         if (this.mediaStream) {
             this.mediaStream.getTracks().forEach(track => track.stop());
             this.mediaStream = null;
+        }
+
+        if (this.workletNode) {
+            this.workletNode.port.onmessage = null;
+            this.workletNode.disconnect();
+            this.workletNode = null;
         }
 
         if (this.processorNode) {
@@ -704,6 +837,8 @@ export class VoiceHandler {
         this.calibrationSamples = [];
         this.recordingStartedAtMs = null;
         this.recordingFinishedAtMs = null;
+        this.recordingSampleRate = TARGET_SAMPLE_RATE;
+        this.captureSettings = null;
 
         // Reset VAD state
         this.adaptiveBaseline = 0;
@@ -725,6 +860,111 @@ export class VoiceHandler {
 
         const endAt = this.recordingFinishedAtMs ?? performance.now();
         return Math.max(1, Math.round(endAt - this.recordingStartedAtMs));
+    }
+
+    private static analyzeAudio(samples: Float32Array, multiplier: number = 1): AudioStats {
+        if (samples.length === 0) {
+            return {
+                peak: 0,
+                rms: 0,
+                speechPeak: 0,
+                speechRms: 0,
+                speechRatio: 0,
+                clippedRatio: 0,
+                sampleCount: 0,
+            };
+        }
+
+        let peak = 0;
+        let sumSquares = 0;
+        let clippedSamples = 0;
+
+        for (let i = 0; i < samples.length; i++) {
+            const value = Math.max(-1, Math.min(1, samples[i] * multiplier));
+            const abs = Math.abs(value);
+            if (abs > peak) peak = abs;
+            sumSquares += value * value;
+            if (abs >= 0.995) clippedSamples++;
+        }
+
+        const rms = Math.sqrt(sumSquares / samples.length);
+        const speechThreshold = Math.max(0.006, Math.min(0.03, peak * 0.1));
+        let speechPeak = 0;
+        let speechSquares = 0;
+        let speechSamples = 0;
+
+        for (let i = 0; i < samples.length; i++) {
+            const value = Math.max(-1, Math.min(1, samples[i] * multiplier));
+            const abs = Math.abs(value);
+            if (abs >= speechThreshold) {
+                if (abs > speechPeak) speechPeak = abs;
+                speechSquares += value * value;
+                speechSamples++;
+            }
+        }
+
+        return {
+            peak,
+            rms,
+            speechPeak,
+            speechRms: speechSamples > 0 ? Math.sqrt(speechSquares / speechSamples) : 0,
+            speechRatio: speechSamples / samples.length,
+            clippedRatio: clippedSamples / samples.length,
+            sampleCount: samples.length,
+        };
+    }
+
+    private static buildNormalizationPlan(stats: AudioStats): NormalizationPlan {
+        const speechThreshold = Math.max(0.006, Math.min(0.03, Math.max(stats.speechPeak, stats.peak) * 0.1));
+        const sourceSpeechRms = stats.speechRms > 0 ? stats.speechRms : stats.rms;
+        const lowConfidenceSpeech = stats.speechRatio < 0.015 && stats.speechPeak < 0.08;
+
+        if (stats.peak <= 0 || sourceSpeechRms <= 0) {
+            return {
+                multiplier: 1,
+                speechThreshold,
+            };
+        }
+
+        const peakTargetMultiplier = 0.92 / stats.peak;
+        const targetSpeechRms = lowConfidenceSpeech ? 0.12 : 0.18;
+        const speechTargetMultiplier = targetSpeechRms / sourceSpeechRms;
+        let multiplier = Math.min(peakTargetMultiplier, speechTargetMultiplier);
+
+        if (!Number.isFinite(multiplier) || multiplier <= 0) {
+            multiplier = 1;
+        }
+
+        multiplier = Math.max(1, Math.min(multiplier, lowConfidenceSpeech ? 8 : 24));
+
+        return {
+            multiplier,
+            speechThreshold,
+        };
+    }
+
+    private static formatAudioStats(stats: AudioStats): Record<string, number> {
+        return {
+            peak: Number(stats.peak.toFixed(4)),
+            peakDbfs: Number(VoiceHandler.toDb(stats.peak).toFixed(2)),
+            rms: Number(stats.rms.toFixed(4)),
+            rmsDbfs: Number(VoiceHandler.toDb(stats.rms).toFixed(2)),
+            speechPeak: Number(stats.speechPeak.toFixed(4)),
+            speechPeakDbfs: Number(VoiceHandler.toDb(stats.speechPeak).toFixed(2)),
+            speechRms: Number(stats.speechRms.toFixed(4)),
+            speechRmsDbfs: Number(VoiceHandler.toDb(stats.speechRms).toFixed(2)),
+            speechRatio: Number(stats.speechRatio.toFixed(4)),
+            clippedRatio: Number(stats.clippedRatio.toFixed(4)),
+            sampleCount: stats.sampleCount,
+        };
+    }
+
+    private static toDb(value: number): number {
+        if (value <= 0) {
+            return -999;
+        }
+
+        return 20 * Math.log10(value);
     }
 
     // ========================================================================

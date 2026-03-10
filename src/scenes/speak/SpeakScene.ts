@@ -24,7 +24,6 @@ import { SpeakVoice } from './SpeakVoice';
 import { ReadingFinger } from './ReadingFinger';
 import { DebugGrid } from '../../utils/DebugGrid';
 import { voice } from '@iruka-edu/mini-game-sdk';
-
 /**
  * Lược đồ (Schema) cho payload targetText
  * Đảm bảo dữ liệu gửi đi ở dạng dictionary hoặc chuỗi hợp lệ, không bị lỗi ép kiểu sang integer.
@@ -32,6 +31,7 @@ import { voice } from '@iruka-edu/mini-game-sdk';
 interface TargetTextPayload {
     text: string;
     value: number;
+    aliases?: string[];
 }
 
 export default class SpeakScene extends SceneBase {
@@ -58,8 +58,12 @@ export default class SpeakScene extends SceneBase {
     // Quản lý trạng thái
     private currentLevel: number = 0;
     private retryCount: number = 0;
+    private levelScores: number[] = [0, 0, 0, 0, 0];
     private isMicVisible: boolean = false;
     private isRecordingActive: boolean = false;
+
+    // Quản lý SDK Session
+    private voiceSessionStarted: boolean = false;
 
     private speakerActiveTween: Phaser.Tweens.Tween | null = null;
 
@@ -145,15 +149,9 @@ export default class SpeakScene extends SceneBase {
     protected initGameFlow(): void {
         this.currentLevel = 0;
         this.retryCount = 0;
+        this.voiceSessionStarted = false;
 
         this.startWithAudio(() => {
-            // Delay chạy StartSession sau khi vào game 1 đoạn để chờ user gesture (Do Autoplay policy yêu cầu user click vô tab mới cho bật Mic/AudioContext)
-            // hoặc tốt nhất mình chuyển nó xuống click event của Scene nhưng tạm thời để Start qua try-catch ko block process.
-            try {
-                voice.StartSession({ testmode: GameConstants.VOICE_RECORDING.TEST_MODE })
-                    .catch(e => console.warn("[SpeakScene] StartSession mồi thất bại tự gọi lại sau:", e));
-            } catch (e) { }
-
             // 1. Tạm tắt keyboard trong lúc setup
             if (this.input.keyboard) this.input.keyboard.enabled = false;
 
@@ -166,7 +164,10 @@ export default class SpeakScene extends SceneBase {
             this.playBgm();
             this.isGameActive = true;
 
-            // 4. Bắt đầu tải Level 0
+            // 4. Khởi động Voice Session ngay lúc bắt đầu Game
+            this.ensureVoiceSession().catch(e => console.error('[SpeakScene] StartSession failed:', e));
+
+            // 5. Bắt đầu tải Level 0
             // Việc phát intro sẽ do startVoiceGuide đảm nhiệm sau khi tàu đã trượt ra.
             this.startLevel(0);
         });
@@ -453,24 +454,29 @@ export default class SpeakScene extends SceneBase {
         try {
             const level = GameConstants.SPEAK_SCENE.LEVELS[this.currentLevel];
 
-            // Lược đồ đối tượng targetText phục vụ SDK chấm điểm
-            const targetTextObj: TargetTextPayload = {
-                text: String(level.trainCars),
-                value: level.trainCars
-            };
+            // Gửi targetText sát câu bé được hướng dẫn nói để backend dễ chấm hơn.
+            const targetTextObj = this.buildCountingTargetText(level.trainCars);
 
             // Đóng gói âm thanh chuẩn WAV của sếp thành một File cho SDK backend đọc 
             const wavRecordFile = new File([audioBlob], 'game_record.wav', { type: 'audio/wav' });
 
+            await this.ensureVoiceSession();
+
+            // Lượt thử (attempt): Lần đầu retryCount là 0 -> attempt 1. Lần thử lại -> attempt 2...
+            const attempt = this.retryCount + 1;
+
             // Sử dụng hàm Submit của Iruka SDK để gọi Backend
-            const response = await voice.Submit({
+            const submitPayload: any = {
                 audioFile: wavRecordFile,
-                questionIndex: this.currentLevel,
-                targetText: targetTextObj as any, // Ép kiểu lướt qua Warning typescript nếu type SDK ngáo
+                questionIndex: this.currentLevel + 1,
+                targetText: targetTextObj as any,
                 durationMs: durationMs,
-                exerciseType: "COUNTING" as any,
-                testmode: GameConstants.VOICE_RECORDING.TEST_MODE
-            });
+                exerciseType: voice.ExerciseType.COUNTING,
+                testmode: this.getVoiceSdkTestMode(),
+                answerAttempt: attempt // Truyền số lượt nói (1, 2, 3...) cho API
+            };
+
+            const response = await voice.Submit(submitPayload);
 
             // Kết thúc hiệu ứng mascot xử lý
             this.mascotProcessing.stop();
@@ -479,13 +485,38 @@ export default class SpeakScene extends SceneBase {
             this.speakVoice.resetToIdle();
             this.isRecordingActive = false;
 
-            console.log(`[SpeakScene] Voice SDK Result: score=${response.score}`);
+            console.log('[SpeakScene] Voice SDK Result:', response);
 
-            // Cập nhật điểm SDK nếu >= 50 thì cho là đúng
-            if (response.score >= 50) {
+            const transcript = this.extractVoiceTranscript(response);
+            const matchedKeyword = this.extractMatchedKeyword(response);
+            const transcriptNumber = this.extractSpokenCount(transcript);
+            const matchedKeywordNumber = this.extractSpokenCount(matchedKeyword);
+            const isSemanticMatch = transcriptNumber === level.trainCars || matchedKeywordNumber === level.trainCars;
+
+            // Theo tài liệu Iruka: Submit trả về thang 100.
+            // Ta giữ nguyên điểm gốc này để so sánh. 
+            // Vượt ngưỡng PASS_THRESHOLD (ví dụ 7 điểm -> 70%) HOẶC nói đúng ý nghĩa số -> Pass
+            const score100 = response.score;
+            const passThreshold100 = GameConstants.VOICE_RECORDING.PASS_THRESHOLD * 10; // 70/100
+
+            console.log('[SpeakScene] Voice semantic debug:', {
+                expected: level.trainCars,
+                API_Score_100: score100,
+                transcript,
+                transcriptNumber,
+                matchedKeyword,
+                matchedKeywordNumber,
+                isSemanticMatch,
+            });
+
+            // Lưu giữ điểm số cao nhất trong các lần thử của Level này để chống bị API cộng dồn
+            const pointsToSave = isSemanticMatch ? Math.max(score100, passThreshold100) : score100;
+            this.levelScores[this.currentLevel] = Math.max(this.levelScores[this.currentLevel], pointsToSave);
+
+            if (score100 >= passThreshold100 || isSemanticMatch) {
                 this.checkAnswer(level.trainCars, level.trainCars);
             } else {
-                console.warn('[SpeakScene] SDK chấm chưa đạt:', response);
+                console.warn(`[SpeakScene] SDK chấm chưa đạt (${score100} điểm):`, response);
                 this.checkAnswer(-1, level.trainCars); // Trả lời sai
             }
         } catch (e) {
@@ -597,21 +628,151 @@ export default class SpeakScene extends SceneBase {
         });
     }
 
-    /**
-     * Đã hoàn thành trọn vẹn toàn bộ các levels của Game
-     */
     private onAllLevelsComplete(): void {
         console.log('[SpeakScene] All 5 levels complete!');
         this.stopAllMascots();
 
-        // Kết thúc session voice của Iruka SDK
-        voice.EndSession({
-            totalQuestionsExpect: GameConstants.SPEAK_SCENE.LEVELS.length,
-            isUserAborted: false,
-            testmode: GameConstants.VOICE_RECORDING.TEST_MODE
-        }).catch(e => console.error("EndSession error:", e));
+        // Không tự tính điểm nữa, submitData.finalScore của Game sẽ do Iruka SDK Backend tự tính
+        // và trả về theo Thang điểm 10 khi gọi EndSession.
+        this.endVoiceSession(false);
 
         // Chuyển tới màn hình kết thúc Game (EndGame)
         this.scene.start(SceneKeys.EndGame);
+    }
+
+    handleExternalReset(): void {
+        this.endVoiceSession(true);
+    }
+
+    handleHubQuit(): void {
+        this.endVoiceSession(true);
+    }
+
+    private isStandaloneRuntime(): boolean {
+        try {
+            return window.self === window.top;
+        } catch {
+            return false;
+        }
+    }
+
+    private getVoiceSdkTestMode(): boolean {
+        // Ưu tiên config ghi đè (true/false) nếu có
+        const override = GameConstants.VOICE_RECORDING.SDK_TEST_MODE;
+        if (typeof override === 'boolean') {
+            return override;
+        }
+
+        // Nếu chạy local (standalone) -> BẬT testMode để không đòi Auth Token
+        // Nếu chạy trên Hub (iframe) -> TẮT testMode để lấy điểm thật
+        return this.isStandaloneRuntime();
+    }
+
+    private buildCountingTargetText(trainCars: number): TargetTextPayload {
+        const digit = String(trainCars);
+        const word = this.getVietnameseNumberWord(trainCars);
+        const digitPhrase = `${digit} toa tàu`;
+        const wordPhrase = `${word} toa tàu`;
+
+        return {
+            text: digitPhrase,
+            value: trainCars,
+            aliases: [digit, word, digitPhrase, wordPhrase],
+        };
+    }
+
+    private getVietnameseNumberWord(value: number): string {
+        const words: Record<number, string> = {
+            1: 'một',
+            2: 'hai',
+            3: 'ba',
+            4: 'bốn',
+            5: 'năm',
+        };
+
+        return words[value] ?? String(value);
+    }
+
+    private extractVoiceTranscript(response: { score: number }): string | null {
+        const raw = response as Record<string, unknown>;
+        const transcript = raw.transcript;
+        return typeof transcript === 'string' && transcript.trim().length > 0 ? transcript.trim() : null;
+    }
+
+    private extractMatchedKeyword(response: { score: number }): string | null {
+        const raw = response as Record<string, unknown>;
+        const matchedKeyword = raw.matched_keyword;
+        return typeof matchedKeyword === 'string' && matchedKeyword.trim().length > 0 ? matchedKeyword.trim() : null;
+    }
+
+    private extractSpokenCount(text: string | null): number | null {
+        if (!text) return null;
+
+        const normalized = this.normalizeVietnameseText(text);
+        const digitMatch = normalized.match(/\b([1-5])\b/);
+        if (digitMatch) {
+            return parseInt(digitMatch[1], 10);
+        }
+
+        const dictionary: Array<{ words: string[]; value: number }> = [
+            { words: ['mot'], value: 1 },
+            { words: ['hai'], value: 2 },
+            { words: ['ba'], value: 3 },
+            { words: ['bon', 'tu'], value: 4 },
+            { words: ['nam', 'lam'], value: 5 },
+        ];
+
+        for (const entry of dictionary) {
+            if (entry.words.some(word => normalized.includes(word))) {
+                return entry.value;
+            }
+        }
+
+        return null;
+    }
+
+    private normalizeVietnameseText(text: string): string {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/đ/g, 'd')
+            .replace(/Đ/g, 'D')
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    private async ensureVoiceSession(): Promise<void> {
+        if (this.voiceSessionStarted) return;
+        this.voiceSessionStarted = true; // Set cờ ngay lập tức để chặn các call đồng thời
+
+        const testMode = this.getVoiceSdkTestMode();
+        console.log('[SpeakScene] Starting voice session', {
+            runtime: this.isStandaloneRuntime() ? 'standalone' : 'hub',
+            testMode,
+        });
+
+        try {
+            await voice.StartSession({ testmode: testMode });
+        } catch (e) {
+            this.voiceSessionStarted = false; // Rollback nếu lỗi
+            throw e;
+        }
+    }
+
+    private endVoiceSession(isUserAborted: boolean): void {
+        if (!this.voiceSessionStarted) return;
+        const testMode = this.getVoiceSdkTestMode();
+
+        voice.EndSession({
+            totalQuestionsExpect: GameConstants.SPEAK_SCENE.LEVELS.length,
+            isUserAborted,
+            testmode: testMode
+        })
+            .catch(e => console.error('EndSession error:', e))
+            .finally(() => {
+                this.voiceSessionStarted = false;
+            });
     }
 }
