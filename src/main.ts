@@ -5,7 +5,7 @@ import { SceneKeys } from './consts/Keys';
 import { installIrukaE2E } from './e2e/installIrukaE2E';
 import { PreloadScene, SpeakScene, UnderlineCharScene, EndGameScene } from './scenes';
 import { initRotateOrientation } from './utils/rotateOrientation';
-
+// aaa
 declare global {
     interface Window {
         gameScene: any;

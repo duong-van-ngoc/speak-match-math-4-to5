@@ -27,3 +27,5 @@ dist-ssr
 node_modules
 template/speak-matching-d-game/
 tich_hop_sdk/
+.vite
+dist
