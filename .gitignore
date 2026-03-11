@@ -24,4 +24,6 @@ dist-ssr
 *.sw?
 .env
 .agent
-
+node_modules
+template/speak-matching-d-game/
+tich_hop_sdk/

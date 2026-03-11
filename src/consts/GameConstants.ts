@@ -26,18 +26,30 @@ export const GameConstants = {
         /** Thời gian im lặng tối đa trước khi tự động dừng (ms) */
         SILENCE_TIMEOUT: 3000,
         /** Thời gian calibration đo noise floor ban đầu (ms) */
-        CALIBRATION_DURATION: 2000,
+        CALIBRATION_DURATION: 500,
         /** Biên tạp âm cộng thêm vào ngưỡng (tránh bắt nhầm tiếng ồn) */
-        NOISE_MARGIN: 5,
+        NOISE_MARGIN: 2,
 
         /** API endpoint gửi audio (production) */
-        
 
-        /** Chế độ test: false = dùng mic thật */
-        TEST_MODE: true,
+
+        /** Chế độ test của recorder: true = bỏ qua mic thật, dùng file mẫu cục bộ */
+        TEST_MODE: false,
+        /** Override testmode cho SDK voice. `null` = tự suy ra theo runtime (standalone=true, Hub=false) */
+        SDK_TEST_MODE: null as boolean | null,
 
         /** Thời gian chờ trước khi cho phép thử lại (ms) */
         RETRY_DELAY: 2000,
+        // ===== SCORING CONFIG (hệ 10) =====
+        /** Điểm tối thiểu (4/10) */
+        MIN_SCORE: 4,
+        /** Điểm trung bình - ngưỡng đạt (7/10) */
+        AVERAGE_SCORE: 7,
+        /** Điểm tốt (9/10) */
+        GOOD_SCORE: 9,
+        /** Điểm >= AVERAGE_SCORE sẽ pass (mascot vui), < AVERAGE_SCORE sẽ fail (mascot buồn) */
+        PASS_THRESHOLD: 7,
+
         /** Số lần thử lại tối đa mỗi level */
         MAX_RETRIES: 3,
     },

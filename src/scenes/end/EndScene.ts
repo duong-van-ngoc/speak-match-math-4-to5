@@ -24,7 +24,6 @@ export default class EndGameScene extends Phaser.Scene {
         const submitData = game.prepareSubmitData();
         window.irukaGameState = {
             ...(window.irukaGameState || {}),
-            currentScore: submitData.finalScore,
             attemptFinalized: true,
         };
 
